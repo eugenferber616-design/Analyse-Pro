@@ -1,0 +1,20 @@
+universe:
+  regions: [US, EU]
+  exchanges_eu: [DE, FR, NL, IT, ES, GB, SE, CH]
+  max_symbols: 12000
+earnings:
+  lookahead_days: 210
+  window_days: 14
+  cache_ttl_days: 7
+fred:
+  series:
+    - {id: CPIAUCSL, label: CPI, transform: pct_change_12m}
+    - {id: UNRATE, label: Unemployment}
+  out_heatmap: docs/fred_heatmap.json
+pages:
+  scanner_json: docs/scanner_basics.json
+  coverage_json: docs/coverage_report.json
+rate_limits:
+  finnhub_per_minute: 30
+  finnhub_sleep_ms: 2500
+watchlists_dir: watchlists

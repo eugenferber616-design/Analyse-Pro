@@ -1,139 +1,65 @@
-import os
-import csv
-import requests
-import sys
-import time
+import os, csv, requests, sys, time
 from util import load_env
 from cache import RateLimiter
 
-API   = "https://finnhub.io/api/v1"
-ENV   = load_env() or {}
+API = "https://finnhub.io/api/v1"
+ENV = load_env()
 TOKEN = ENV.get("FINNHUB_TOKEN") or ENV.get("FINNHUB_API_KEY")
 
-# -------- Helpers --------
-
-def read_list(path: str):
-    """
-    Liest eine Watchlist-Datei (TXT oder CSV) ein.
-    - Leerzeilen/Kommentare (# ...) werden ignoriert.
-    - Headerzeilen wie 'symbol,...' werden ignoriert.
-    - Nimmt die erste Spalte als Symbol.
-    """
-    out = []
+def read_list(path):
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            raw = line.strip()
-            if not raw or raw.startswith("#"):
-                continue
-            # CSV? nimm erstes Feld
-            sym = raw.split(",")[0].strip()
-            if not sym or sym.lower().startswith("symbol"):
-                continue
-            out.append(sym.upper())
-    return out
+        return [l.strip() for l in f if l.strip() and not l.lower().startswith("symbol")]
 
-def get_json(url: str, params: dict, retries: int = 3, sleep_sec: float = 2.0):
-    for attempt in range(retries):
-        r = requests.get(url, params=params, timeout=30)
-        if r.status_code == 429 and attempt + 1 < retries:
-            time.sleep(sleep_sec)
-            continue
-        r.raise_for_status()
-        return r.json() or {}
-    return {}
-
-def val(d, *keys):
-    """Sicherer Zugriff mit mehreren Kandidat-Schlüsseln; gibt None wenn alle fehlen."""
-    for k in keys:
-        if isinstance(d, dict) and k in d and d[k] not in (None, "", []):
-            return d[k]
-    return None
-
-# -------- Main logic --------
-
-def fetch_one_etf(symbol: str, token: str, rl: RateLimiter) -> dict:
-    """Versucht mehrere Endpunkte, um möglichst viele Felder zu füllen."""
-    base = {
-        "symbol": symbol,
-        "name": None,
-        "category": None,
-        "asset_class": None,
-        "expense_ratio": None,
-        "aum": None,
-        "nav": None,
-        "beta": None,
-        "currency": None,
-    }
-
-    # 1) Primär: etf/profile
+def get_json(url, params, rl):
     rl.wait()
-    try:
-        j = get_json(f"{API}/etf/profile", params={"symbol": symbol, "token": token})
-    except Exception as e:
-        print("etf/profile fail", symbol, e)
-        j = {}
-    base["name"]         = val(j, "name", "etfName")
-    base["category"]     = val(j, "category")
-    base["asset_class"]  = val(j, "assetClass", "asset_class")
-    base["expense_ratio"]= val(j, "expenseRatio", "expense_ratio")
-    base["aum"]          = val(j, "totalAssets", "aum")
-    base["nav"]          = val(j, "nav")
-    base["currency"]     = val(j, "currency")
+    r = requests.get(url, params=params, timeout=25)
+    if r.status_code == 429:
+        time.sleep(2.0)
+        r = requests.get(url, params=params, timeout=25)
+    r.raise_for_status()
+    return r.json() or {}
 
-    # 2) Fallback: stock/profile2 (liefert u.a. name, currency, exchange)
-    if not base["name"] or not base["currency"]:
-        rl.wait()
-        try:
-            p2 = get_json(f"{API}/stock/profile2", params={"symbol": symbol, "token": token})
-            base["name"]     = base["name"] or val(p2, "name")
-            base["currency"] = base["currency"] or val(p2, "currency")
-        except Exception as e:
-            print("stock/profile2 fail", symbol, e)
-
-    # 3) Optional: Beta über stock/metric (kann bei ETFs leer sein, klappt aber oft)
-    if base["beta"] is None:
-        rl.wait()
-        try:
-            m = get_json(f"{API}/stock/metric", params={"symbol": symbol, "metric": "all", "token": token})
-            metrics = m.get("metric") or {}
-            base["beta"] = val(metrics, "beta", "Beta")
-        except Exception as e:
-            print("stock/metric fail", symbol, e)
-
-    return base
-
-def main(wl: str, outcsv: str) -> int:
+def main(wl, outcsv):
     if not TOKEN:
-        print("No FINNHUB token")
-        return 0
+        print("No FINNHUB token"); return 0
 
     syms = read_list(wl)
-    if not syms:
-        print(f"Watchlist '{wl}' ist leer oder nicht gefunden.")
-        return 0
-
     os.makedirs(os.path.dirname(outcsv), exist_ok=True)
+    fieldnames = ["symbol","name","category","asset_class","expense_ratio","aum","nav","beta","currency"]
 
-    fieldnames = ["symbol", "name", "category", "asset_class", "expense_ratio", "aum", "nav", "beta", "currency"]
-    rl = RateLimiter(50, 1300)  # per_minute, sleep_ms
-
+    rl = RateLimiter(50, 1300)
     rows = []
     for s in syms:
         try:
-            row = fetch_one_etf(s, TOKEN, rl)
-            rows.append(row)
+            # 1) Primär: /etf/profile
+            prof = get_json(f"{API}/etf/profile", {"symbol": s, "token": TOKEN}, rl)
+            # 2) Fallback Name/Currency: /stock/profile2
+            prof2 = {}
+            if not prof.get("name") or not prof.get("currency"):
+                prof2 = get_json(f"{API}/stock/profile2", {"symbol": s, "token": TOKEN}, rl)
+            # 3) Fallback Kennzahlen: /stock/metric?metric=all
+            metr = get_json(f"{API}/stock/metric", {"symbol": s, "metric": "all", "token": TOKEN}, rl)
+            m = metr.get("metric") or {}
+
+            rows.append({
+                "symbol": s,
+                "name": prof.get("name") or prof2.get("name"),
+                "category": prof.get("category"),
+                "asset_class": prof.get("assetClass"),
+                "expense_ratio": prof.get("expenseRatio"),
+                "aum": prof.get("totalAssets"),
+                "nav": prof.get("nav"),
+                "beta": m.get("beta") or prof.get("beta"),
+                "currency": prof.get("currency") or prof2.get("currency"),
+            })
         except Exception as e:
             print("etf fail", s, e)
-
-    # rausfiltern, wenn wirklich gar nichts kam (optional)
-    cleaned = [r for r in rows if any(r.get(k) not in (None, "", []) for k in fieldnames if k != "symbol")]
 
     with open(outcsv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
-        w.writerows(cleaned)
-
-    print("wrote", outcsv, len(cleaned), "rows (from", len(rows), "symbols)")
+        w.writerows(rows)
+    print("wrote", outcsv, len(rows))
     return 0
 
 if __name__ == "__main__":

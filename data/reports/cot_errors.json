@@ -1,12 +1,10 @@
 {
-  "ts": "2025-10-27T21:45:58.090036Z",
+  "ts": "2025-10-27T21:55:02.839964Z",
   "dataset": "gpe5-46if",
   "since": "2020-11-02",
   "rows": 14331,
   "latest": "2025-09-23",
-  "filtered_markets": [
-    "ALL"
-  ],
+  "filtered_markets": [],
   "mapped_cols": {
     "market": "market_and_exchange_names",
     "date": "report_date_as_yyyy_mm_dd",
@@ -15,12 +13,6 @@
     "ncs": null,
     "nnet": null
   },
-  "errors": [
-    {
-      "market": "ALL",
-      "stage": "filter",
-      "msg": "no_match"
-    }
-  ],
+  "errors": [],
   "token_len": 25
 }

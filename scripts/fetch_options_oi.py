@@ -4,15 +4,15 @@
 Fetch options OI + simple IV/HV summary via yfinance.
 
 Outputs
-- CSV:  data/processed/options_oi_summary.csv      (per Symbol & Verfall; Call/Put OI, IV_w, ATM-IV, Top-Strikes, HV)
-- CSV:  data/processed/options_oi_by_expiry.csv    (per Symbol & Verfall; OI gesamt, Anteil, Rang)
-- CSV:  data/processed/options_oi_totals.csv       (per Symbol; Totals & Verfall mit max. OI)
-- JSON: data/reports/options_oi_report.json        (Fehler/Meta)
+- data/processed/options_oi_summary.csv     (Zeile je Symbol x Verfall, inkl. Top-Strikes, IV, HV)
+- data/processed/options_oi_by_expiry.csv   (Aggregat je Symbol x Verfall, inkl. OI-Anteile & Ranking)
+- data/processed/options_oi_totals.csv      (Aggregat je Symbol: total OI & dominanter Verfall)
+- data/reports/options_oi_report.json       (Laufbericht)
 """
 
 import os, sys, json, math
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -44,13 +44,13 @@ def read_watchlist(path: str) -> List[str]:
                 out.append(s)
     return out
 
-def annualize_vol(returns: pd.Series) -> Optional[float]:
+def annualize_vol(returns: pd.Series) -> float | None:
     """Annualized stdev of daily log returns (252 trading days)."""
-    if returns is None or len(returns) == 0:
+    if returns is None or returns.empty:
         return None
     return float(returns.std(ddof=0) * math.sqrt(252))
 
-def compute_hv(hist: pd.DataFrame, win: int) -> Optional[float]:
+def compute_hv(hist: pd.DataFrame, win: int) -> float | None:
     if hist is None or hist.empty or "Close" not in hist.columns or len(hist) < max(5, win+1):
         return None
     lr = np.log(hist["Close"]).diff().dropna()
@@ -58,9 +58,11 @@ def compute_hv(hist: pd.DataFrame, win: int) -> Optional[float]:
         return None
     return annualize_vol(lr.tail(win))
 
-def wavg_iv(df: pd.DataFrame) -> Optional[float]:
+def wavg_iv(df: pd.DataFrame) -> float | None:
     """Weighted IV by openInterest; falls back to simple mean."""
-    if df is None or df.empty or "impliedVolatility" not in df.columns:
+    if df is None or df.empty:
+        return None
+    if "impliedVolatility" not in df.columns:
         return None
     d = df.dropna(subset=["impliedVolatility"]).copy()
     if d.empty:
@@ -70,34 +72,26 @@ def wavg_iv(df: pd.DataFrame) -> Optional[float]:
         return float((d["impliedVolatility"] * w).sum() / w.sum())
     return float(d["impliedVolatility"].mean())
 
-def atm_iv(df: pd.DataFrame, spot: Optional[float]) -> Optional[float]:
-    """IV am Strike, der dem Spot am nächsten liegt."""
-    if spot is None or df is None or df.empty:
-        return None
-    if "strike" not in df.columns or "impliedVolatility" not in df.columns:
-        return None
-    d = df.dropna(subset=["strike", "impliedVolatility"]).copy()
-    if d.empty:
-        return None
-    d["dist"] = (d["strike"] - float(spot)).abs()
-    row = d.sort_values("dist").head(1)
-    if row.empty:
-        return None
-    return float(row["impliedVolatility"].iloc[0])
-
 def top_strikes(df: pd.DataFrame, k: int) -> str:
     if df is None or df.empty or "openInterest" not in df.columns or "strike" not in df.columns:
         return ""
     d = df[["strike", "openInterest"]].copy()
+    d["openInterest"] = d["openInterest"].fillna(0)
     d = d.sort_values("openInterest", ascending=False).head(max(1, k))
     return ",".join(str(x) for x in d["strike"].tolist())
 
+def parse_max_exp(raw: str) -> int:
+    raw = (raw or "4").strip().lower()
+    if raw in ("all", "*"):
+        return 10**9
+    return int(raw)
+
 # ------------ main ------------
-def main():
+def main() -> int:
     ensure_dirs()
 
-    wl_path       = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
-    max_expiries  = int(os.getenv("OPTIONS_MAX_EXPIRIES", "4"))
+    wl_path = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
+    max_expiries = parse_max_exp(os.getenv("OPTIONS_MAX_EXPIRIES", "4"))
     topk          = int(os.getenv("OPTIONS_TOPK", "3"))
     hv_win_short  = int(os.getenv("HV_WIN_SHORT", "20"))
     hv_win_long   = int(os.getenv("HV_WIN_LONG", "60"))
@@ -107,7 +101,8 @@ def main():
         print(f"watchlist empty: {wl_path}")
         symbols = ["AAPL"]
 
-    summary_rows = []   # per symbol & expiry
+    rows = []
+    by_exp_rows = []   # Aggregat je Symbol x Verfall
     errors = []
 
     for sym in symbols:
@@ -115,11 +110,17 @@ def main():
             tk = yf.Ticker(sym)
 
             # underlying history for HV
-            hist = tk.history(period="400d", interval="1d", auto_adjust=False)
+            try:
+                hist = tk.history(period="400d", interval="1d", auto_adjust=False)
+            except Exception as e:
+                hist = pd.DataFrame()
+                errors.append({"symbol": sym, "stage": "history", "msg": str(e)})
+
             hv20 = compute_hv(hist, hv_win_short)
             hv60 = compute_hv(hist, hv_win_long)
             spot = float(hist["Close"].dropna().iloc[-1]) if ("Close" in hist and not hist["Close"].dropna().empty) else None
 
+            # expiries
             try:
                 expiries = list(tk.options or [])
             except Exception as e:
@@ -127,106 +128,100 @@ def main():
                 errors.append({"symbol": sym, "stage": "options_list", "msg": str(e)})
 
             if not expiries:
-                summary_rows.append({
+                # write a minimal row so Symbol erscheint
+                rows.append({
                     "symbol": sym, "expiry": "", "spot": spot,
-                    "call_oi": 0, "put_oi": 0, "oi_total": 0, "put_call_ratio": None,
+                    "call_oi": 0, "put_oi": 0, "put_call_ratio": None,
                     "call_iv_w": None, "put_iv_w": None,
-                    "call_iv_atm": None, "put_iv_atm": None,
                     "call_top_strikes": "", "put_top_strikes": "",
                     "hv20": hv20, "hv60": hv60,
                 })
                 continue
 
+            # chains per expiry
             for exp in expiries[:max_expiries]:
                 try:
                     ch = tk.option_chain(exp)
                     calls = ch.calls if hasattr(ch, "calls") else pd.DataFrame()
                     puts  = ch.puts  if hasattr(ch, "puts")  else pd.DataFrame()
 
-                    c_oi = int(calls["openInterest"].fillna(0).sum()) if "openInterest" in calls.columns else 0
-                    p_oi = int(puts["openInterest"].fillna(0).sum())  if "openInterest" in puts.columns  else 0
-                    tot  = c_oi + p_oi
+                    # ensure numeric OI
+                    for d in (calls, puts):
+                        if not d.empty and "openInterest" in d.columns:
+                            d["openInterest"] = pd.to_numeric(d["openInterest"], errors="coerce").fillna(0)
+
+                    c_oi = int(calls["openInterest"].sum()) if "openInterest" in calls.columns else 0
+                    p_oi = int(puts["openInterest"].sum())  if "openInterest" in puts.columns  else 0
                     pcr  = (float(p_oi) / float(c_oi)) if c_oi > 0 else (float("inf") if p_oi > 0 else None)
 
-                    c_iv_w   = wavg_iv(calls)
-                    p_iv_w   = wavg_iv(puts)
-                    c_iv_atm = atm_iv(calls, spot)
-                    p_iv_atm = atm_iv(puts,  spot)
+                    c_iv = wavg_iv(calls)
+                    p_iv = wavg_iv(puts)
 
                     c_top = top_strikes(calls, topk)
                     p_top = top_strikes(puts,  topk)
 
-                    summary_rows.append({
+                    rows.append({
                         "symbol": sym, "expiry": exp, "spot": spot,
-                        "call_oi": c_oi, "put_oi": p_oi, "oi_total": tot, "put_call_ratio": pcr,
-                        "call_iv_w": c_iv_w, "put_iv_w": p_iv_w,
-                        "call_iv_atm": c_iv_atm, "put_iv_atm": p_iv_atm,
+                        "call_oi": c_oi, "put_oi": p_oi, "put_call_ratio": pcr,
+                        "call_iv_w": c_iv, "put_iv_w": p_iv,
                         "call_top_strikes": c_top, "put_top_strikes": p_top,
                         "hv20": hv20, "hv60": hv60,
                     })
+
+                    by_exp_rows.append({
+                        "symbol": sym,
+                        "expiry": exp,
+                        "call_oi": c_oi,
+                        "put_oi": p_oi,
+                        "total_oi": int(c_oi + p_oi),
+                    })
+
                 except Exception as e:
                     errors.append({"symbol": sym, "stage": f"chain:{exp}", "msg": str(e)})
+
         except Exception as e:
             errors.append({"symbol": sym, "stage": "ticker", "msg": str(e)})
 
-    # -------- write summary (per symbol & expiry)
-    summary_df = pd.DataFrame(summary_rows)
+    # write outputs
     out_summary = "data/processed/options_oi_summary.csv"
-    summary_df.to_csv(out_summary, index=False)
-    print("wrote", out_summary, "rows=", len(summary_df))
+    pd.DataFrame(rows).to_csv(out_summary, index=False)
+    print("wrote", out_summary, "rows=", len(rows))
 
-    # -------- build per-expiry aggregation (rank/share)
-    by_expiry_df = pd.DataFrame()
-    totals_df    = pd.DataFrame()
-    if not summary_df.empty:
-        tmp = summary_df.copy()
-        # Sicherstellen, dass oi_total vorhanden ist (für Altlauf)
-        if "oi_total" not in tmp.columns:
-            tmp["oi_total"] = tmp[["call_oi","put_oi"]].sum(axis=1)
+    # aggregates je Verfall (incl. OI-Anteile & Ranking je Symbol)
+    if by_exp_rows:
+        ag = pd.DataFrame(by_exp_rows)
+        ag["total_oi"] = pd.to_numeric(ag["total_oi"], errors="coerce").fillna(0).astype(int)
+        # Anteil und Ranking je Symbol
+        ag["oi_share_pct"] = ag.groupby("symbol")["total_oi"].apply(lambda s: 100 * s / s.sum().replace(0, 1))
+        ag["rank_in_symbol"] = ag.groupby("symbol")["total_oi"].rank(ascending=False, method="min").astype(int)
+        out_by_exp = "data/processed/options_oi_by_expiry.csv"
+        ag.sort_values(["symbol", "rank_in_symbol", "expiry"]).to_csv(out_by_exp, index=False)
+        print("wrote", out_by_exp, "rows=", len(ag))
 
-        # Per Symbol Gesamt-OI je Verfall + Rang/Share
-        g = tmp.groupby(["symbol","expiry"], dropna=False, as_index=False).agg(
-            oi_total=("oi_total","sum"),
-            call_oi=("call_oi","sum"),
-            put_oi=("put_oi","sum"),
-            spot=("spot","last"),
-            hv20=("hv20","last"),
-            hv60=("hv60","last"),
+        # totals je Symbol
+        tot = (
+            ag.sort_values(["symbol", "total_oi"], ascending=[True, False])
+              .groupby("symbol", as_index=False)
+              .agg(total_oi=("total_oi", "sum"),
+                   max_oi_expiry=("expiry", "first"),
+                   max_oi_value=("total_oi", "max"))
         )
-        # Rang & Anteil pro Symbol
-        g["rank_in_symbol"] = g.sort_values(["symbol","oi_total"], ascending=[True, False]) \
-                                .groupby("symbol").cumcount()+1
-        g["oi_share_pct"] = 100 * g["oi_total"] / g.groupby("symbol")["oi_total"].transform("sum")
-        by_expiry_df = g.sort_values(["symbol","rank_in_symbol"])
-        out_byexp = "data/processed/options_oi_by_expiry.csv"
-        by_expiry_df.to_csv(out_byexp, index=False)
-        print("wrote", out_byexp, "rows=", len(by_expiry_df))
-
-        # Totals pro Symbol + max OI Expiry
-        idx = g.groupby("symbol")["oi_total"].idxmax()
-        max_rows = g.loc[idx, ["symbol","expiry","oi_total"]].rename(columns={
-            "expiry":"max_oi_expiry","oi_total":"max_oi_value"
-        })
-        totals = g.groupby("symbol", as_index=False).agg(
-            oi_total=("oi_total","sum"),
-            spot=("spot","last"),
-            hv20=("hv20","last"),
-            hv60=("hv60","last"),
-            expiries=("expiry","nunique"),
-        ).merge(max_rows, on="symbol", how="left")
-        totals_df = totals[["symbol","spot","hv20","hv60","expiries","oi_total","max_oi_expiry","max_oi_value"]]
         out_tot = "data/processed/options_oi_totals.csv"
-        totals_df.to_csv(out_tot, index=False)
-        print("wrote", out_tot, "rows=", len(totals_df))
+        tot.to_csv(out_tot, index=False)
+        print("wrote", out_tot, "rows=", len(tot))
+    else:
+        out_by_exp = "data/processed/options_oi_by_expiry.csv"
+        out_tot = "data/processed/options_oi_totals.csv"
+        pd.DataFrame(columns=["symbol","expiry","call_oi","put_oi","total_oi","oi_share_pct","rank_in_symbol"]).to_csv(out_by_exp, index=False)
+        pd.DataFrame(columns=["symbol","total_oi","max_oi_expiry","max_oi_value"]).to_csv(out_tot, index=False)
+        print("wrote empty", out_by_exp, "and", out_tot)
 
-    # -------- report
     report = {
         "ts": datetime.utcnow().isoformat() + "Z",
         "watchlist": wl_path,
         "symbols": len(symbols),
-        "rows_summary": int(len(summary_df)),
-        "rows_by_expiry": int(len(by_expiry_df)),
-        "rows_totals": int(len(totals_df)),
+        "rows_summary": len(rows),
+        "rows_by_expiry": len(by_exp_rows),
         "errors": errors,
     }
     with open("data/reports/options_oi_report.json", "w", encoding="utf-8") as f:

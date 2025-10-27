@@ -18,13 +18,15 @@ jobs:
       WINDOW_DAYS:      30
       CHEAP_MODE:       "true"
       FINNHUB_SLEEP_MS: "1300"
+
       # Options-Tuning
-      OPTIONS_MAX_EXPIRIES: "all"     # wie viele nächste Verfälle betrachten
-      OPTIONS_TOPK:        "5"      # Top strikes nach OI je Seite
-      RISK_FREE_RATE:      "0.045"  # 4.5% p.a.
-      HV_WIN_SHORT:        "20"     # HV(20)
-      HV_WIN_LONG:         "60"     # HV(60)
-      ENABLE_FUTURES: "false"   # "true" falls du sie behalten willst
+      OPTIONS_MAX_EXPIRIES: "all"  # oder Zahl (z.B. "6")
+      OPTIONS_TOPK:        "5"
+      RISK_FREE_RATE:      "0.045"
+      HV_WIN_SHORT:        "20"
+      HV_WIN_LONG:         "60"
+
+      ENABLE_FUTURES: "false"      # aktuell keine Futures-Steps aktiv
 
     steps:
       - name: Checkout
@@ -107,7 +109,6 @@ jobs:
           python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
-      # ETF-Basics
       - name: Pull ETF basics (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -130,21 +131,22 @@ jobs:
           python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/fundamentals
           head -n 20 data/processed/fundamentals_core.csv || true
 
-      # OPTIONS: OI + IV + HV (leichtgewichtig)
+      # OPTIONS: OI + IV + HV
       - name: Pull OPTIONS OI/IV/HV summary (yfinance)
         env:
-          WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
+          WATCHLIST_STOCKS:     ${{ env.WATCHLIST_STOCKS }}
           OPTIONS_MAX_EXPIRIES: ${{ env.OPTIONS_MAX_EXPIRIES }}
-          OPTIONS_TOPK:        ${{ env.OPTIONS_TOPK }}
-          RISK_FREE_RATE:      ${{ env.RISK_FREE_RATE }}
-          HV_WIN_SHORT:        ${{ env.HV_WIN_SHORT }}
-          HV_WIN_LONG:         ${{ env.HV_WIN_LONG }}
+          OPTIONS_TOPK:         ${{ env.OPTIONS_TOPK }}
+          RISK_FREE_RATE:       ${{ env.RISK_FREE_RATE }}
+          HV_WIN_SHORT:         ${{ env.HV_WIN_SHORT }}
+          HV_WIN_LONG:          ${{ env.HV_WIN_LONG }}
         run: |
           python scripts/fetch_options_oi.py
           head -n 30 data/processed/options_oi_summary.csv || true
+          head -n 30 data/processed/options_oi_by_expiry.csv || true
+          head -n 30 data/processed/options_oi_totals.csv || true
           test -f data/reports/options_oi_report.json && cat data/reports/options_oi_report.json || true
 
-      # FRED OAS (US & Euro)
       - name: Pull FRED OAS (US & Euro)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -152,11 +154,10 @@ jobs:
           python scripts/fetch_fred_oas.py
           tail -n 20 data/processed/fred_oas.csv || true
 
-      # COT (nur Summary + gz intern)
       - name: Pull COT (CFTC history)
         run: |
           python scripts/fetch_cot.py
-          head -n 5 data/processed/cot_summary.csv || true
+          head -n 5 data/processed/cot.csv || true
 
       - name: Pull macro (FRED)
         env:
@@ -166,7 +167,6 @@ jobs:
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
 
-      # ==== CDS Proxy (aus OAS) ====
       - name: Build CDS proxy per symbol
         env:
           WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
@@ -175,7 +175,6 @@ jobs:
           tail -n 5 data/processed/cds_proxy.csv || true
           test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
 
-      # Validator
       - name: Validate processed outputs
         run: |
           python - << 'PY'
@@ -186,13 +185,15 @@ jobs:
             with open(p, encoding="utf-8") as f:
               return max(0, sum(1 for _ in f) - 1)
           checks = {
-            "fundamentals_core.csv": count_rows("data/processed/fundamentals_core.csv"),
-            "earnings_results.csv":  count_rows("data/processed/earnings_results.csv"),
-            "etf_basics.csv":       count_rows("data/processed/etf_basics.csv"),
-            "fred_oas.csv":         count_rows("data/processed/fred_oas.csv"),
-            "cot_summary.csv":      count_rows("data/processed/cot_summary.csv"),
-            "options_oi_summary.csv": count_rows("data/processed/options_oi_summary.csv"),
-            "cds_proxy.csv":        count_rows("data/processed/cds_proxy.csv"),
+            "fundamentals_core.csv":    count_rows("data/processed/fundamentals_core.csv"),
+            "earnings_results.csv":     count_rows("data/processed/earnings_results.csv"),
+            "etf_basics.csv":           count_rows("data/processed/etf_basics.csv"),
+            "fred_oas.csv":             count_rows("data/processed/fred_oas.csv"),
+            "cot.csv":                  count_rows("data/processed/cot.csv"),
+            "options_oi_summary.csv":   count_rows("data/processed/options_oi_summary.csv"),
+            "options_oi_by_expiry.csv": count_rows("data/processed/options_oi_by_expiry.csv"),
+            "options_oi_totals.csv":    count_rows("data/processed/options_oi_totals.csv"),
+            "cds_proxy.csv":            count_rows("data/processed/cds_proxy.csv"),
           }
           lamp = lambda n: "🟢" if n>0 else "🔴"
           print("\\n=== QA Summary ===")

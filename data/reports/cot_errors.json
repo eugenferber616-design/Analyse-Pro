@@ -1,15 +1,11 @@
 {
-  "ts": "2025-10-27T21:30:30.336576Z",
+  "ts": "2025-10-27T21:45:58.090036Z",
   "dataset": "gpe5-46if",
   "since": "2020-11-02",
   "rows": 14331,
   "latest": "2025-09-23",
   "filtered_markets": [
-    "E-MINI S&P 500",
-    "EURO FX",
-    "WTI",
-    "10-YEAR NOTE",
-    "GOLD"
+    "ALL"
   ],
   "mapped_cols": {
     "market": "market_and_exchange_names",
@@ -21,17 +17,7 @@
   },
   "errors": [
     {
-      "market": "WTI",
-      "stage": "filter",
-      "msg": "no_match"
-    },
-    {
-      "market": "10-YEAR NOTE",
-      "stage": "filter",
-      "msg": "no_match"
-    },
-    {
-      "market": "GOLD",
+      "market": "ALL",
       "stage": "filter",
       "msg": "no_match"
     }

@@ -1,0 +1,14 @@
+{
+  "errors": [
+    {
+      "stage": "weekly",
+      "url": "https://www.cftc.gov/dea/newcot/FutWk.txt",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/FutWk.txt"
+    },
+    {
+      "stage": "weekly",
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg.txt",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg.txt"
+    }
+  ]
+}

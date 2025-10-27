@@ -126,6 +126,16 @@ jobs:
           python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/fundamentals
           head -n 20 data/processed/fundamentals_core.csv || true
 
+          - name: Pull FUTURES quotes (yfinance)
+          run: |
+          python scripts/fetch_futures_quotes.py \
+          --watchlist "watchlists/fut_sample.txt" \
+          --out data/processed/futures_quotes.csv \
+          --errors data/reports/fut_errors.json || true
+          head -n 30 data/processed/futures_quotes.csv || true
+          test -f data/reports/fut_errors.json && cat data/reports/fut_errors.json || true
+
+
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}

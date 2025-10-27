@@ -168,7 +168,7 @@ jobs:
           CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
           COT_DATASET_ID: gpe5-46if
           COT_WEEKS: "260"   # ~5 Jahre
-          COT_MARKETS: "ALL"
+          COT_MARKETS: ""
         run: |
           python scripts/fetch_cot_socrata.py
           head -n 5 data/processed/cot_summary.csv || true

@@ -1,5 +1,39 @@
 {
-  "ts": "2025-10-27T18:29:53.778518Z",
-  "watchlist": 9,
-  "missing": []
+  "ts": "2025-10-27T18:54:06.057393Z",
+  "asof": "2025-10-24",
+  "rows": 9,
+  "missing": 0,
+  "sample": [
+    {
+      "symbol": "AAPL",
+      "proxy": "US_IG",
+      "asof": "2025-10-24",
+      "proxy_spread": 0.77
+    },
+    {
+      "symbol": "MSFT",
+      "proxy": "US_IG",
+      "asof": "2025-10-24",
+      "proxy_spread": 0.77
+    },
+    {
+      "symbol": "AMZN",
+      "proxy": "US_IG",
+      "asof": "2025-10-24",
+      "proxy_spread": 0.77
+    },
+    {
+      "symbol": "SPY",
+      "proxy": "US_IG",
+      "asof": "2025-10-24",
+      "proxy_spread": 0.77
+    },
+    {
+      "symbol": "GLD",
+      "proxy": "US_IG",
+      "asof": "2025-10-24",
+      "proxy_spread": 0.77
+    }
+  ],
+  "errors": []
 }

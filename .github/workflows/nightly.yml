@@ -48,8 +48,8 @@ jobs:
           print("cache DB ready at", db_path)
           PY
 
-      # ---- Secrets & Watchlist prüfen
-      - name: Prepare env and watchlist
+      # ---- Secrets & Watchlists prüfen / anlegen
+      - name: Prepare env and watchlists
         id: prep
         shell: bash
         env:
@@ -64,19 +64,34 @@ jobs:
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
 
-          # Watchlist finden/anlegen
+          # Aktien-Watchlist
           WL=""
           if   [ -f watchlists/mylist.txt ]; then WL="watchlists/mylist.txt"
           elif [ -f watchlists/mylist.csv ]; then WL="watchlists/mylist.csv"
           else
-            echo "⚠️  Keine watchlists/mylist.txt|csv gefunden. Lege Fallback an."
+            echo "⚠️  Keine watchlists/mylist.* gefunden. Lege Fallback an."
             printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
             WL="watchlists/mylist.csv"
           fi
           echo "watchlist=$WL" >> "$GITHUB_OUTPUT"
-          echo "== Watchlist Kopf =="; head -n 5 "$WL" || true
+          echo "== Aktien Watchlist =="
+          head -n 5 "$WL" || true
 
-      # ---- (Optional) Earnings-Kalender, falls du earnings_next.json möchtest
+          # ETF-Sample
+          if [ ! -f watchlists/etf_sample.txt ]; then
+            printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
+          fi
+          echo "== ETF Sample =="
+          head -n 8 watchlists/etf_sample.txt || true
+
+          # FX-Sample (beliebige Formate, normalisieren wir im Script)
+          if [ ! -f watchlists/fx_sample.txt ]; then
+            printf "EURUSD\nUSD/JPY\nGBP_USD\nOANDA:AUD_USD\n" > watchlists/fx_sample.txt
+          fi
+          echo "== FX Sample =="
+          head -n 8 watchlists/fx_sample.txt || true
+
+      # ---- (Optional) Earnings-Kalender
       - name: Pull earnings CALENDAR (optional)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -85,9 +100,7 @@ jobs:
           mkdir -p data/earnings docs
           WL="${{ steps.prep.outputs.watchlist }}"
           echo "Nutze Watchlist (Kalender): $WL"
-          python scripts/fetch_earnings.py \
-            --watchlist "$WL" \
-            --window-days 365
+          python scripts/fetch_earnings.py --watchlist "$WL" --window-days 365
           ls -lah docs || true
           test -f docs/earnings_next.json && head -n 50 docs/earnings_next.json || true
 
@@ -101,35 +114,27 @@ jobs:
           WL="${{ steps.prep.outputs.watchlist }}"
           mkdir -p data/earnings/results
           echo "Earnings-Resultate für Watchlist: $WL"
-          python scripts/fetch_earnings_results.py \
-            --watchlist "$WL" \
-            --outdir data/earnings/results \
-            --limit 8
+          python scripts/fetch_earnings_results.py --watchlist "$WL" --outdir data/earnings/results --limit 8
           echo "== Summary (earnings_results.csv) =="
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
-                # === ETFs (Basics) ===
+      # === ETFs (Basics) ===
       - name: Pull ETF basics (Finnhub)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
-          python scripts/fetch_etf_basics.py \
-            --watchlist watchlists/etf_sample.txt \
-            --out data/processed/etf_basics.csv
+          python scripts/fetch_etf_basics.py --watchlist watchlists/etf_sample.txt --out data/processed/etf_basics.csv
           head -n 20 data/processed/etf_basics.csv || true
 
       # === FX Quotes ===
       - name: Pull FX quotes (Finnhub)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
-          python scripts/fetch_fx_quotes.py \
-            --watchlist watchlists/fx_sample.txt \
-            --out data/processed/fx_quotes.csv
+          python scripts/fetch_fx_quotes.py --watchlist watchlists/fx_sample.txt --out data/processed/fx_quotes.csv
           head -n 20 data/processed/fx_quotes.csv || true
-
 
       # ==== Fundamentals (profile2 + metrics) ====
       - name: Pull FUNDAMENTALS (profile2 + metrics)
@@ -141,10 +146,9 @@ jobs:
           WL="${{ steps.prep.outputs.watchlist }}"
           mkdir -p data/fundamentals
           echo "Fundamentals für Watchlist: $WL"
-          python scripts/fetch_fundamentals.py \
-            --watchlist "$WL" \
-            --outdir data/fundamentals
-          echo "== Summary (fundamentals_core.csv) =="; head -n 20 data/processed/fundamentals_core.csv || true
+          python scripts/fetch_fundamentals.py --watchlist "$WL" --outdir data/fundamentals
+          echo "== Summary (fundamentals_core.csv) =="
+          head -n 20 data/processed/fundamentals_core.csv || true
 
       # ---- Makro (FRED)
       - name: Pull macro (FRED)
@@ -154,7 +158,7 @@ jobs:
           mkdir -p data/macro/fred
           python scripts/fetch_fred.py --out data/macro/fred
 
-      # ---- Übersicht der erzeugten Dateien
+      # ---- Übersicht
       - name: List written files (sizes)
         run: |
           echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true

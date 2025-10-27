@@ -79,19 +79,19 @@ jobs:
           head -n 5 "$WL" || true
 
       # ---- Earnings (Finnhub)
-      - name: Pull earnings (Finnhub)
+      - name: Pull earnings RESULTS (EPS/Revenue)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          LLM_DISABLED: "1"
-          FINNHUB_SLEEP_MS: "1300"
-        run: |
-          mkdir -p data/earnings docs
-          WL="${{ steps.prep.outputs.watchlist }}"
-          echo "Nutze Watchlist: $WL"
-          python scripts/fetch_earnings.py \
+          run: |
+            WL="${{ steps.prep.outputs.watchlist }}"
+            mkdir -p data/earnings/results
+            python scripts/fetch_earnings_results.py \
             --watchlist "$WL" \
-            --window-days 365
+            --outdir data/earnings/results \
+            --limit 8
+            head -n 20 data/processed/earnings_results.csv || true
+
 
       - name: Show earnings outputs (if any)
         run: |

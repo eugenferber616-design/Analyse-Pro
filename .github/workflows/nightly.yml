@@ -108,6 +108,29 @@ jobs:
           echo "== Summary (earnings_results.csv) =="
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
+                # === ETFs (Basics) ===
+      - name: Pull ETF basics (Finnhub)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python scripts/fetch_etf_basics.py \
+            --watchlist watchlists/etf_sample.txt \
+            --out data/processed/etf_basics.csv
+          head -n 20 data/processed/etf_basics.csv || true
+
+      # === FX Quotes ===
+      - name: Pull FX quotes (Finnhub)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python scripts/fetch_fx_quotes.py \
+            --watchlist watchlists/fx_sample.txt \
+            --out data/processed/fx_quotes.csv
+          head -n 20 data/processed/fx_quotes.csv || true
+
+
       # ==== Fundamentals (profile2 + metrics) ====
       - name: Pull FUNDAMENTALS (profile2 + metrics)
         env:

@@ -1,11 +1,41 @@
+# =========================
+#   config/config.yaml
+# =========================
+
+# Universum / Grenzen
 universe:
   regions: [US, EU]
   exchanges_eu: [DE, FR, NL, IT, ES, GB, SE, CH]
   max_symbols: 12000
+
+# Ordner mit eigenen Watchlists (CSV/TXT je Zeile ein Symbol)
+watchlists_dir: watchlists
+
+# Rate Limits & Delays
+rate_limits:
+  # Finnhub: Calls pro Minute & Schlafzeit in Millisekunden zwischen Requests
+  finnhub_per_minute: 50
+  finnhub_sleep_ms: 1300
+  # FRED (typisch großzügig, lassen wir trotzdem konfigurierbar)
+  fred_per_minute: 60
+  fred_sleep_ms: 0
+
+# Finnhub-spezifische Optionen
+finnhub:
+  # Wie weit in die Zukunft der Earnings-Kalender abgefragt wird
+  calendar_lookahead_days: 365
+  # Fensterbreite pro API-Call (Tage) – wird intern als Schrittgröße genutzt
+  window_days: 14
+  # Cache-Gültigkeit (Tage) für Fensterantworten
+  cache_ttl_days: 7
+
+# Earnings – generische Schalter (falls andere Quellen dazukommen)
 earnings:
-  lookahead_days: 210
+  lookahead_days: 365      # für Scripte, die nicht finnhub.calendar_* lesen
   window_days: 14
   cache_ttl_days: 7
+
+# FRED: zu ladende Zeitreihen
 fred:
   series:
     - id: CPIAUCSL      # CPI All Urban Consumers, SA
@@ -20,28 +50,3 @@ fred:
       label: 10Y-3M spread
     - id: FEDFUNDS      # Fed Funds rate
       label: Fed Funds
-
-# config/config.yaml
-watchlists_dir: watchlists
-
-rate_limits:
-  # Wie viele Finnhub-Calls pro Minute sind erlaubt?
-  finnhub_per_minute: 50
-  # Pause zwischen Calls in Millisekunden (≈ 60_000 / per_minute)
-  finnhub_sleep_ms: 1300
-
-  # Für FRED, falls gebraucht
-  fred_per_minute: 60
-  fred_sleep_ms: 0
-
-finnhub:
-  calendar_lookahead_days: 365
-
-fred:
-  series:
-    - id: CPIAUCSL
-      label: CPI (SA)
-    - id: UNRATE
-      label: Unemployment rate
-    - id: DGS10
-      label: 10Y Treasury

@@ -78,7 +78,7 @@ jobs:
           echo "== Watchlist Kopf =="
           head -n 5 "$WL" || true
 
-      # ---- Earnings (Finnhub) ziehen
+      # ---- Earnings (Finnhub)
       - name: Pull earnings (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -86,12 +86,12 @@ jobs:
           LLM_DISABLED: "1"
         run: |
           mkdir -p data/earnings docs
-          echo "Nutze Watchlist: ${{ steps.prep.outputs.watchlist }}"
+          WL="${{ steps.prep.outputs.watchlist }}"
+          echo "Nutze Watchlist: $WL"
+          # fetch_earnings.py akzeptiert: --watchlist und --window-days
           python scripts/fetch_earnings.py \
-            --watchlist "${{ steps.prep.outputs.watchlist }}" \
-            --window-days 365 \
-            --out data/earnings
-          # Falls das Script zusätzlich docs/ schreibt (earnings_next.json), fein.
+            --watchlist "$WL" \
+            --window-days 365
 
       # ---- Makro (FRED)
       - name: Pull macro (FRED)

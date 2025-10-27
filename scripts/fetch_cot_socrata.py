@@ -30,9 +30,16 @@ def sget(path, params):
     if APP_TOKEN:
         headers["X-App-Token"] = APP_TOKEN
     url = f"{API_BASE}/{path}"
-    r = requests.get(url, params=params, headers=headers, timeout=60)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=60)
+        r.raise_for_status()
+        return r.json()
+    except requests.HTTPError as e:
+        msg = f"HTTP {r.status_code} for {url} ; body={r.text[:500]}"
+        raise RuntimeError(msg) from e
+    except Exception as e:
+        raise RuntimeError(f"REQ_FAIL {url}: {e}") from e
+
 
 def get_latest_date():
     # Robust: sort desc and limit 1 (avoids name typos in max(...))

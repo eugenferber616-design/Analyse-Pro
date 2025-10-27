@@ -154,8 +154,6 @@ jobs:
           python scripts/fetch_cot.py
           tail -n 5 data/processed/cot.csv || true
 
-
-
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -163,6 +161,30 @@ jobs:
           mkdir -p data/macro/fred
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
+
+          # ==== FRED OAS (US & Euro) – History ====
+      - name: Pull FRED OAS (US & Euro)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python scripts/fetch_fred_oas.py
+          tail -n 5 data/processed/fred_oas.csv || true
+
+      # ==== COT History (CFTC) ====
+      - name: Pull COT (CFTC history)
+        run: |
+          python scripts/fetch_cot.py
+          tail -n 5 data/processed/cot.csv || true
+
+        # ==== CDS Proxy (aus OAS, optional ICE-Anker) ====
+      - name: Build CDS proxy per symbol
+        env:
+            WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
+        run: |
+          python scripts/build_cds_proxy.py
+          tail -n 5 data/processed/cds_proxy.csv || true
+          test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
+
 
       # 🔎 Mini-Validator: Ampel im Log + JSON-Output
       - name: Validate processed outputs
@@ -181,6 +203,10 @@ jobs:
             "etf_basics.csv":       count_rows("data/processed/etf_basics.csv"),
             "futures_quotes.csv":   count_rows("data/processed/futures_quotes.csv"),
             "cds_eod.csv":          count_rows("data/processed/cds_eod.csv"),
+            "fred_oas.csv":       count_rows("data/processed/fred_oas.csv"),
+            "cot.csv":            count_rows("data/processed/cot.csv"),
+            "cds_proxy.csv":      count_rows("data/processed/cds_proxy.csv"),
+
           }
 
           lamp = lambda n: "🟢" if n>0 else "🔴"

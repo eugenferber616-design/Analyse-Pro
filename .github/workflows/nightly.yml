@@ -84,11 +84,11 @@ jobs:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           LLM_DISABLED: "1"
+          FINNHUB_SLEEP_MS: "1300"
         run: |
           mkdir -p data/earnings docs
           WL="${{ steps.prep.outputs.watchlist }}"
           echo "Nutze Watchlist: $WL"
-          # fetch_earnings.py akzeptiert: --watchlist und --window-days
           python scripts/fetch_earnings.py \
             --watchlist "$WL" \
             --window-days 365
@@ -100,7 +100,7 @@ jobs:
           test -f docs/earnings_next.json && echo "== docs/earnings_next.json ==" && head -n 50 docs/earnings_next.json || echo "no docs/earnings_next.json"
           test -f data/processed/earnings_next.json && echo "== data/processed/earnings_next.json ==" && head -n 50 data/processed/earnings_next.json || echo "no processed file"
 
-           # ---- Makro (FRED)
+      # ---- Makro (FRED)
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -113,8 +113,9 @@ jobs:
       # ==== NEU: Earnings-RESULTATE (EPS/Revenue + Surprise) ====
       - name: Pull earnings RESULTS (EPS/Revenue)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_SLEEP_MS: "1300"
         run: |
           WL="${{ steps.prep.outputs.watchlist }}"
           mkdir -p data/earnings/results
@@ -128,8 +129,9 @@ jobs:
       # ==== NEU: Fundamentals (profile2 + metrics) ====
       - name: Pull FUNDAMENTALS (profile2 + metrics)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_SLEEP_MS: "1300"
         run: |
           WL="${{ steps.prep.outputs.watchlist }}"
           mkdir -p data/fundamentals
@@ -139,7 +141,6 @@ jobs:
             --outdir data/fundamentals
           echo "== Summary (fundamentals_core.csv) =="
           test -f data/processed/fundamentals_core.csv && head -n 20 data/processed/fundamentals_core.csv || true
-
 
       # ---- Übersicht der erzeugten Dateien
       - name: List written files (sizes)

@@ -1,0 +1,153 @@
+# scripts/fetch_options_oi.py
+import os, math, json, datetime as dt
+import pandas as pd
+import yfinance as yf
+
+WL = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
+OUT = "data/processed/options_oi_summary.csv"
+REPORT = "data/reports/options_oi_report.json"
+
+MAX_EXPIRIES = int(os.getenv("OPTIONS_MAX_EXPIRIES", "4"))
+TOP_K = int(os.getenv("OPTIONS_TOPK", "3"))
+RISK_FREE = float(os.getenv("RISK_FREE_RATE", "0.045"))  # 4.5% pa als Default
+
+def read_watchlist(path):
+    if not os.path.exists(path): return []
+    syms = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            s = line.strip()
+            if not s or s.lower().startswith("symbol"): continue
+            syms.append(s)
+    return syms
+
+# Black-Scholes Greeks (annualized rf, iv). Returns (delta, gamma) for CALL; for put delta_call-1, gamma same.
+def bs_delta_gamma(S, K, T, r, sigma, opt_type="call"):
+    try:
+        if S<=0 or K<=0 or T<=0 or sigma<=0: return (None, None)
+        d1 = (math.log(S/K) + (r + 0.5*sigma*sigma)*T) / (sigma*math.sqrt(T))
+        d2 = d1 - sigma*math.sqrt(T)
+        # standard normal pdf/cdf
+        from math import exp, sqrt, pi
+        def cdf(x):
+            import math
+            return 0.5*(1+math.erf(x/math.sqrt(2)))
+        pdf = (1/math.sqrt(2*math.pi))*math.exp(-0.5*d1*d1)
+        delta_call = cdf(d1)
+        gamma = pdf/(S*sigma*math.sqrt(T))
+        if opt_type=="call":
+            return (delta_call, gamma)
+        else:
+            return (delta_call-1, gamma)
+    except Exception:
+        return (None, None)
+
+def main():
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    os.makedirs(os.path.dirname(REPORT), exist_ok=True)
+
+    symbols = read_watchlist(WL)
+    rows = []
+    rep = {"symbols": len(symbols), "ok": 0, "failed": 0, "notes": []}
+    today = dt.date.today()
+
+    for sym in symbols:
+        try:
+            t = yf.Ticker(sym)
+            expiries = t.options or []
+            expiries = [e for e in expiries if e]  # strings YYYY-MM-DD
+            expiries.sort()
+            expiries = expiries[:MAX_EXPIRIES]
+            if not expiries:
+                rep["notes"].append({"symbol": sym, "reason": "no_expiries"})
+                continue
+
+            spot = None
+            try:
+                spot = float(t.fast_info.last_price)
+            except Exception:
+                try:
+                    spot = float(t.history(period="1d")["Close"][-1])
+                except Exception:
+                    spot = None
+
+            for ex in expiries:
+                # chain returns two DataFrames: calls, puts
+                calls = t.option_chain(ex).calls
+                puts  = t.option_chain(ex).puts
+
+                # Summaries
+                def clean(df):
+                    if df is None or df.empty: 
+                        return df
+                    for c in ("openInterest","impliedVolatility","strike","lastPrice","bid","ask"):
+                        if c in df.columns:
+                            df[c] = pd.to_numeric(df[c], errors="coerce")
+                    return df
+
+                calls, puts = clean(calls), clean(puts)
+
+                call_oi = int(calls["openInterest"].sum()) if calls is not None and "openInterest" in calls else 0
+                put_oi  = int(puts["openInterest"].sum())  if puts  is not None and "openInterest" in puts  else 0
+                pc_ratio = (put_oi / call_oi) if call_oi>0 else None
+
+                # Top strikes by OI
+                def top_by_oi(df):
+                    if df is None or df.empty or "openInterest" not in df: 
+                        return []
+                    tmp = df.sort_values("openInterest", ascending=False).head(TOP_K)
+                    out=[]
+                    for _,r in tmp.iterrows():
+                        k = float(r.get("strike"))
+                        oi = int(r.get("openInterest") or 0)
+                        iv = float(r.get("impliedVolatility") or 0) or None
+                        delta = gamma = None
+                        if spot and iv and iv>0:
+                            # Approximate T in years
+                            T = (pd.to_datetime(ex).date() - today).days/365.25
+                            if T>0:
+                                d,g = bs_delta_gamma(spot, k, T, RISK_FREE, iv, "call" if "contractSymbol" in r and "C" in str(r["contractSymbol"])[-9:] else "call")
+                                delta, gamma = (d,g)
+                        out.append({"strike": k, "oi": oi, "iv": iv, "delta": delta, "gamma": gamma})
+                    return out
+
+                top_calls = top_by_oi(calls)
+                top_puts  = top_by_oi(puts)
+
+                def pack_top(prefix, lst):
+                    res={}
+                    for i,el in enumerate(lst, start=1):
+                        res[f"{prefix}{i}_strike"]=el["strike"]
+                        res[f"{prefix}{i}_oi"]=el["oi"]
+                        res[f"{prefix}{i}_iv"]=el["iv"]
+                        res[f"{prefix}{i}_delta"]=el["delta"]
+                        res[f"{prefix}{i}_gamma"]=el["gamma"]
+                    return res
+
+                base = {
+                    "symbol": sym,
+                    "expiry": ex,
+                    "spot": spot,
+                    "call_oi_total": call_oi,
+                    "put_oi_total":  put_oi,
+                    "put_call_oi_ratio": pc_ratio
+                }
+                base.update(pack_top("call_top", top_calls))
+                base.update(pack_top("put_top",  top_puts))
+                rows.append(base)
+
+            rep["ok"] += 1
+        except Exception as e:
+            rep["failed"] += 1
+            rep["notes"].append({"symbol": sym, "error": str(e)})
+
+    if rows:
+        df = pd.DataFrame(rows)
+        df.to_csv(OUT, index=False)
+    with open(REPORT,"w",encoding="utf-8") as f:
+        json.dump(rep, f, indent=2)
+    print("wrote", OUT, len(rows), "rows")
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())

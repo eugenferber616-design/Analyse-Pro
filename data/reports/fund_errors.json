@@ -1,0 +1,15 @@
+{
+  "total": 9,
+  "ok": 7,
+  "failed": 2,
+  "errors": [
+    {
+      "symbol": "SPY",
+      "reason": "no_profile"
+    },
+    {
+      "symbol": "GLD",
+      "reason": "no_profile"
+    }
+  ]
+}

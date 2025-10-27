@@ -1,1 +1,1 @@
-symbol,period,date,eps_act,eps_est,surprise_pct,rev_act,rev_est
+symbol,period,eps_actual,eps_estimate,surprise,surprise_pct,revenue,revenue_estimate

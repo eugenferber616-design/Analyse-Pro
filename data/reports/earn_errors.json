@@ -1,0 +1,43 @@
+{
+  "total_symbols": 9,
+  "symbols_ok": 0,
+  "rows_written": 0,
+  "errors": [
+    {
+      "symbol": "AAPL",
+      "reason": "empty"
+    },
+    {
+      "symbol": "MSFT",
+      "reason": "empty"
+    },
+    {
+      "symbol": "AMZN",
+      "reason": "empty"
+    },
+    {
+      "symbol": "SPY",
+      "reason": "empty"
+    },
+    {
+      "symbol": "GLD",
+      "reason": "empty"
+    },
+    {
+      "symbol": "AVGO",
+      "reason": "empty"
+    },
+    {
+      "symbol": "META",
+      "reason": "empty"
+    },
+    {
+      "symbol": "NVDA",
+      "reason": "empty"
+    },
+    {
+      "symbol": "GOOGL",
+      "reason": "empty"
+    }
+  ]
+}

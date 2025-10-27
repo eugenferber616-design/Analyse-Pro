@@ -154,6 +154,16 @@ jobs:
           python scripts/fetch_fred_oas.py
           tail -n 20 data/processed/fred_oas.csv || true
 
+      - name: Check CFTC token wiring (masked)
+        env:
+          CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
+        run: |
+          if [ -z "${CFTC_APP_TOKEN}" ]; then
+          echo "❌ CFTC_APP_TOKEN ist leer"; exit 1
+          fi
+          echo "CFTC token length: ${#CFTC_APP_TOKEN}"
+
+
         # ==== COT via CFTC Socrata ====
       - name: Pull COT (CFTC Socrata)
         env:

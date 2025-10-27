@@ -3,7 +3,7 @@
   "earnings_results.csv": 28,
   "etf_basics.csv": 8,
   "fred_oas.csv": 14007,
-  "cot.csv": 0,
+  "cot_summary.csv": 2,
   "options_oi_summary.csv": 195,
   "options_oi_by_expiry.csv": 195,
   "options_oi_totals.csv": 9,

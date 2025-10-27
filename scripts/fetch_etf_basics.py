@@ -1,3 +1,4 @@
+# scripts/fetch_etf_basics.py
 import os, sys, csv, time, json, requests
 from util import load_env
 from cache import RateLimiter
@@ -11,7 +12,6 @@ FIELDS = ["symbol","name","category","asset_class","expense_ratio","aum","nav","
 def read_list(path: str):
     with open(path, "r", encoding="utf-8") as f:
         rows = [l.strip() for l in f if l.strip() and not l.lower().startswith("symbol")]
-    # dedupe & sort, nur reine Tickers (SPY, QQQ, GLD, …)
     return sorted(set(rows))
 
 def clean_num(x):
@@ -21,42 +21,71 @@ def clean_num(x):
     except Exception:
         return None
 
+def safe_json(resp: requests.Response):
+    """Versucht JSON zu parsen; gibt (dict|list|None, info_dict) zurück."""
+    info = {
+        "status": resp.status_code,
+        "ctype": resp.headers.get("Content-Type",""),
+        "len": len(resp.content or b""),
+    }
+    if not resp.content:
+        return None, info
+    # manche Gate-Seiten liefern text/html
+    if "application/json" not in info["ctype"].lower():
+        return None, info
+    try:
+        return resp.json(), info
+    except Exception:
+        return None, info
+
 def get_finnhub_etf_profile(session, symbol: str):
-    """Primärquelle: Finnhub ETF profile2."""
+    """Primär: Finnhub /etf/profile2. Gibt (dict|None, meta) zurück."""
     if not TOKEN:
-        return {}
+        return None, {"status": None, "reason": "no_token"}
     url = f"{API}/etf/profile2"
-    r = session.get(url, params={"symbol": symbol, "token": TOKEN}, timeout=20)
+    params = {"symbol": symbol, "token": TOKEN}
+    r = session.get(url, params=params, timeout=20)
     if r.status_code == 429:
         time.sleep(2.5)
-        r = session.get(url, params={"symbol": symbol, "token": TOKEN}, timeout=20)
-    r.raise_for_status()
-    j = r.json() or {}
-    # typische Keys: name, category, assetClass, expenseRatio, nav, aum, beta, currency
-    out = {}
-    out["name"]         = j.get("name")
-    out["category"]     = j.get("category")
-    out["asset_class"]  = j.get("assetClass")
-    out["expense_ratio"]= clean_num(j.get("expenseRatio"))
-    out["aum"]          = clean_num(j.get("aum"))
-    out["nav"]          = clean_num(j.get("nav"))
-    out["beta"]         = clean_num(j.get("beta"))
-    out["currency"]     = j.get("currency")
-    # wenn absolut nichts Sinnvolles drin ist, leere dict zurück
+        r = session.get(url, params=params, timeout=20)
+
+    # JSON sicher parsen, ohne Exception
+    payload, meta = safe_json(r)
+    meta["url"] = "/etf/profile2"
+    meta["symbol"] = symbol
+
+    if r.status_code >= 400:
+        meta["reason"] = f"http_{r.status_code}"
+        return None, meta
+    if not payload or not isinstance(payload, dict):
+        meta["reason"] = "empty_or_non_json"
+        return None, meta
+
+    out = {
+        "name"         : payload.get("name"),
+        "category"     : payload.get("category"),
+        "asset_class"  : payload.get("assetClass"),
+        "expense_ratio": clean_num(payload.get("expenseRatio")),
+        "aum"          : clean_num(payload.get("aum")),
+        "nav"          : clean_num(payload.get("nav")),
+        "beta"         : clean_num(payload.get("beta")),
+        "currency"     : payload.get("currency"),
+    }
     if all(v in (None, "", 0) for v in out.values()):
-        return {}
-    return out
+        meta["reason"] = "no_fields"
+        return None, meta
+    meta["reason"] = "ok"
+    return out, meta
 
 def get_yf_basics(symbol: str):
-    """Fallback über yfinance (Name, TER, AUM, NAV, Beta, Währung)."""
+    """Fallback via yfinance. Gibt dict (evtl. leer) zurück."""
     try:
         import yfinance as yf
     except Exception:
-        return {}  # yfinance nicht installiert
+        return {}
     try:
         t = yf.Ticker(symbol)
         info = getattr(t, "info", {}) or {}
-        # modern: .get_info() fällt bei manchen Versionen weg – info bleibt kompatibel genug
         out = {
             "name"         : info.get("longName") or info.get("shortName"),
             "category"     : info.get("category"),
@@ -67,25 +96,29 @@ def get_yf_basics(symbol: str):
             "beta"         : clean_num(info.get("beta")),
             "currency"     : info.get("currency"),
         }
-        # wenn auch info leer: kleines Try über fast_info
+        # minimaler Zusatz über fast_info (nur Currency, falls leer)
         fi = getattr(t, "fast_info", None)
-        if fi:
-            out["currency"] = out.get("currency") or getattr(fi, "currency", None)
-        # am Ende nur Felder behalten, die es wirklich gibt
+        if fi and not out.get("currency"):
+            out["currency"] = getattr(fi, "currency", None)
         return {k:v for k,v in out.items() if v not in (None, "", 0)}
     except Exception:
         return {}
 
-def merge_basics(sym: str, a: dict, b: dict):
-    """a = Finnhub, b = yfinance → a hat Priorität; ergänze fehlende Felder aus b."""
+def merge_basics(sym: str, fin: dict | None, yfi: dict | None):
+    """Finnhub hat Priorität; fehlende Felder aus yfinance ergänzen."""
     out = {"symbol": sym}
+    fin = fin or {}; yfi = yfi or {}
     for k in FIELDS:
         if k == "symbol": 
             continue
-        va = a.get(k) if a else None
-        vb = b.get(k) if b else None
+        va = fin.get(k)
+        vb = yfi.get(k)
         out[k] = va if va not in (None, "", 0) else vb
     return out
+
+def has_any_core(rec: dict):
+    """Mindestens ein sinnvolles Feld vorhanden?"""
+    return any(rec.get(k) not in (None, "", 0) for k in ["name","expense_ratio","aum","nav","beta","currency"])
 
 def main(watchlist: str, outcsv: str, errors_path: str = "data/reports/etf_errors.json"):
     os.makedirs(os.path.dirname(outcsv), exist_ok=True)
@@ -100,32 +133,39 @@ def main(watchlist: str, outcsv: str, errors_path: str = "data/reports/etf_error
 
     for sym in symbols:
         rl.wait()
+        fin, meta = None, {"symbol": sym, "reason": "skipped"}
         try:
-            fin = {}
-            if TOKEN:
-                fin = get_finnhub_etf_profile(session, sym)
-            yf  = get_yf_basics(sym)
-            rec = merge_basics(sym, fin, yf)
-
-            # mindestens Name oder NAV/AUM/TER erwartet; sonst als Fehler markieren
-            has_any = any(rec.get(k) not in (None, "", 0) for k in ["name","expense_ratio","aum","nav","beta"])
-            if has_any:
-                rows.append(rec)
-                errs["ok"] += 1
-            else:
-                errs["failed"] += 1
-                errs["errors"].append({"symbol": sym, "reason": "no_profile"})
+            fin, meta = get_finnhub_etf_profile(session, sym)
         except Exception as e:
+            meta = {"symbol": sym, "reason": "exception_finnhub", "msg": str(e)}
+
+        yfi = {}
+        try:
+            # yfinance immer versuchen – ergänzt auch bei finnhub "ok" fehlende Felder
+            yfi = get_yf_basics(sym)
+        except Exception as e:
+            errs["errors"].append({"symbol": sym, "reason": "exception_yfinance", "msg": str(e)})
+
+        rec = merge_basics(sym, fin, yfi)
+
+        if has_any_core(rec):
+            rows.append({k: rec.get(k) for k in FIELDS})
+            errs["ok"] += 1
+        else:
             errs["failed"] += 1
-            errs["errors"].append({"symbol": sym, "reason": "exception", "msg": str(e)})
+            # kompaktes Log: Finnhub-Meta + Hinweise, ob yfinance etwas hatte
+            errs["errors"].append({
+                "symbol": sym,
+                "finnhub": meta,
+                "yfinance_has": bool(yfi),
+                "reason": meta.get("reason","no_data")
+            })
 
     # schreiben
     with open(outcsv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=FIELDS)
         w.writeheader()
-        for r in rows:
-            # nur gewünschte Felder (und Reihenfolge)
-            w.writerow({k: r.get(k) for k in FIELDS})
+        w.writerows(rows)
 
     with open(errors_path, "w", encoding="utf-8") as f:
         json.dump(errs, f, ensure_ascii=False, indent=2)

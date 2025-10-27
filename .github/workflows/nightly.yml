@@ -169,6 +169,7 @@ jobs:
           COT_DATASET_ID: gpe5-46if     # Futures+Options Combined
           COT_WEEKS: "260"              # ~5 Jahre (kannst du erhöhen, z.B. 520)
           COT_MARKETS_FILE: watchlists/cot_markets.txt
+          COT_MARKETS_MODE: "ALL"   # zieht kompletten letzten Report (keine Filter)
         run: |
           python scripts/fetch_cot_socrata.py
           head -n 5 data/processed/cot.csv || true

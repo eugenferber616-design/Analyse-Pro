@@ -69,7 +69,6 @@ jobs:
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
 
-          # Stocks – Fallback falls fehlt
           if [ ! -f "$WATCHLIST_STOCKS" ]; then
             echo "⚠️  $WATCHLIST_STOCKS fehlt – lege Fallback an."
             printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
@@ -77,7 +76,6 @@ jobs:
           fi
           echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
 
-          # ETFs – Fallback falls fehlt
           if [ ! -f "$WATCHLIST_ETF" ]; then
             printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
           fi
@@ -135,14 +133,14 @@ jobs:
           head -n 30 data/processed/futures_quotes.csv || true
           test -f data/reports/fut_errors.json && cat data/reports/fut_errors.json || true
 
-          - name: Pull ICE CDS EoD (public tables)
-          run: |
+      # 🔹 ICE CDS (öffentliche Tabellen, täglicher Snapshot)
+      - name: Pull ICE CDS EoD (public tables)
+        run: |
           python scripts/fetch_ice_cds_snapshot.py \
-          --out data/processed/cds_eod.csv \
-          --rawdir data/cds || true
+            --out data/processed/cds_eod.csv \
+            --rawdir data/cds || true
           tail -n 20 data/processed/cds_eod.csv || true
           test -f data/reports/ice_cds_errors.json && cat data/reports/ice_cds_errors.json || true
-
 
       - name: Pull macro (FRED)
         env:
@@ -152,12 +150,11 @@ jobs:
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
 
-      # 🔎 Mini-Validator: zeigt rot/gelb/grün je Datei
+      # 🔎 Mini-Validator: Ampel im Log + JSON-Output
       - name: Validate processed outputs
         run: |
           python - << 'PY'
           import os, json
-
           def count_rows(p):
             if not os.path.exists(p) or os.path.getsize(p)==0:
               return 0
@@ -165,21 +162,21 @@ jobs:
               return max(0, sum(1 for _ in f) - 1)
 
           checks = {
-            "fundamentals_core.csv": os.path.exists("data/processed/fundamentals_core.csv") and count_rows("data/processed/fundamentals_core.csv") or 0,
-            "earnings_results.csv":  os.path.exists("data/processed/earnings_results.csv")  and count_rows("data/processed/earnings_results.csv")  or 0,
-            "etf_basics.csv":       os.path.exists("data/processed/etf_basics.csv")       and count_rows("data/processed/etf_basics.csv")       or 0,
-            "futures_quotes.csv":   os.path.exists("data/processed/futures_quotes.csv")   and count_rows("data/processed/futures_quotes.csv")   or 0,
+            "fundamentals_core.csv": count_rows("data/processed/fundamentals_core.csv"),
+            "earnings_results.csv":  count_rows("data/processed/earnings_results.csv"),
+            "etf_basics.csv":       count_rows("data/processed/etf_basics.csv"),
+            "futures_quotes.csv":   count_rows("data/processed/futures_quotes.csv"),
+            "cds_eod.csv":          count_rows("data/processed/cds_eod.csv"),
           }
 
-          def lamp(n): return "🟢" if n>0 else "🔴"
-          print("\n=== QA Summary ===")
+          lamp = lambda n: "🟢" if n>0 else "🔴"
+          print("\\n=== QA Summary ===")
           for k,v in checks.items():
             print(f"{lamp(v)} {k}: {v} rows")
 
           os.makedirs("data/reports", exist_ok=True)
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
-
           cat data/reports/qa_summary.json || true
 
       - name: List written files (sizes)

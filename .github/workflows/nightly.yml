@@ -12,14 +12,13 @@ jobs:
   run-pipeline:
     runs-on: ubuntu-latest
 
-    # 🔹 Zentrale ENV – Pfade & Optionen an EINER Stelle
+    # 🔹 Zentrale ENV – Pfade & Optionen
     env:
       WATCHLIST_STOCKS: watchlists/mylist.txt
       WATCHLIST_ETF:    watchlists/etf_sample.txt
-      WATCHLIST_FX:     watchlists/fx_sample.txt
-      WINDOW_DAYS:      30           # für Tests etwas breiter als 7
+      WINDOW_DAYS:      30
       CHEAP_MODE:       "true"
-      FINNHUB_SLEEP_MS: "1300"       # sanfter gegen 429
+      FINNHUB_SLEEP_MS: "1300"
 
     steps:
       - name: Checkout
@@ -55,7 +54,7 @@ jobs:
           print("cache DB ready at", db_path)
           PY
 
-      # 🔹 Secrets prüfen + Watchlists sicherstellen & säubern
+      # 🔹 Secrets prüfen + Watchlists sicherstellen
       - name: Prepare env and watchlists
         id: prep
         shell: bash
@@ -71,7 +70,7 @@ jobs:
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
 
-          # Stocks – existiert irgendwas? sonst Fallback CSV
+          # Stocks – Fallback falls fehlt
           if [ ! -f "$WATCHLIST_STOCKS" ]; then
             echo "⚠️  $WATCHLIST_STOCKS fehlt – lege Fallback an."
             printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
@@ -79,19 +78,11 @@ jobs:
           fi
           echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
 
-          # ETFs – falls fehlt: Fallback
+          # ETFs – Fallback falls fehlt
           if [ ! -f "$WATCHLIST_ETF" ]; then
             printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
           fi
           echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
-
-          # FX – falls fehlt: Fallback; zudem säubern (Spaces/Commas raus)
-          if [ ! -f "$WATCHLIST_FX" ]; then
-            printf "EURUSD\nUSD/JPY\nGBP_USD\nOANDA:AUD_USD\n" > watchlists/fx_sample.txt
-          fi
-          # kleine Hygiene: Leerzeichen/Kommas killen (Script normalisiert dann)
-          sed -i 's/,//g; s/[[:space:]]\+//g' "${WATCHLIST_FX}" || true
-          echo "== FX Sample =="; nl -ba "${WATCHLIST_FX}" | head -n 20 || true
 
       - name: Pull earnings CALENDAR (optional)
         env:
@@ -112,29 +103,22 @@ jobs:
           python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
-      # 🔹 ETF-Basics – ruft deinen ETF-Endpoint/Fallback auf
+      # 🔹 ETF-Basics – Finnhub /etf/profile2 + yfinance Fallback
       - name: Pull ETF basics (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
-          python scripts/fetch_etf_basics.py --watchlist "${WATCHLIST_ETF}" --out data/processed/etf_basics.csv --errors data/reports/etf_errors.json || true
+          python scripts/fetch_etf_basics.py \
+            --watchlist "${WATCHLIST_ETF}" \
+            --out data/processed/etf_basics.csv \
+            --errors data/reports/etf_errors.json || true
           head -n 30 data/processed/etf_basics.csv || true
           test -f data/reports/etf_errors.json && cat data/reports/etf_errors.json || true
 
-      # 🔹 FX – nutzt dein neues Normalisierungs-Script + Errors-Report
-      - name: Pull FX quotes (Finnhub)
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-        run: |
-          python scripts/fetch_fx_quotes.py --watchlist "${WATCHLIST_FX}" --out data/processed/fx_quotes.csv
-          head -n 30 data/processed/fx_quotes.csv || true
-          test -f data/reports/fx_errors.json && cat data/reports/fx_errors.json || true
-
       - name: Pull FUNDAMENTALS (profile2 + metrics)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHYB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
@@ -147,15 +131,35 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
           mkdir -p data/macro/fred
-          # falls eine Serie 400 liefert (z.B. GOLDAM...), Script sollte sie skippen/loggen
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
+
+      # 🔎 Mini-Validator: zeigt rot/gelb/grün je Datei
+      - name: Validate processed outputs
+        run: |
+          python - << 'PY'
+          import os, csv, json
+          def count_rows(p):
+            if not os.path.exists(p) or os.path.getsize(p)==0: return 0
+            with open(p, encoding="utf-8") as f:
+              return sum(1 for _ in f) - 1
+          checks = {
+            "fundamentals_core.csv": count_rows("data/processed/fundamentals_core.csv"),
+            "earnings_results.csv":  count_rows("data/processed/earnings_results.csv"),
+            "etf_basics.csv":       count_rows("data/processed/etf_basics.csv"),
+          }
+          colors = lambda n: "🟢" if n>0 else "🔴"
+          print("\n=== QA Summary ===")
+          for k,v in checks.items():
+            print(f"{colors(v)} {k}: {v} rows")
+          json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
+          PY
+          cat data/reports/qa_summary.json || true
 
       - name: List written files (sizes)
         run: |
           echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
           echo "== docs tree =="; find docs -type f -printf "%p\t%k KB\n" | sort || true
-          # kleine Last-Run-Zusammenfassung
           python - << 'PY'
           import json, time, os
           info = {
@@ -164,7 +168,6 @@ jobs:
             "watchlists": {
               "stocks": os.getenv("WATCHLIST_STOCKS"),
               "etf": os.getenv("WATCHLIST_ETF"),
-              "fx": os.getenv("WATCHLIST_FX")
             },
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
           }

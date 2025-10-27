@@ -1,10 +1,19 @@
 {
-  "ts": "2025-10-27T19:16:25.901183Z",
+  "ts": "2025-10-27T20:16:35.578423Z",
+  "dataset": "gpe5-46if",
+  "since": "2022-10-31",
   "rows": 0,
+  "latest": null,
+  "filtered_markets": [
+    "E-MINI S&P 500",
+    "EURO FX",
+    "WTI",
+    "10-YEAR NOTE"
+  ],
   "errors": [
     {
-      "stage": "cot_reports",
-      "msg": "cannot import name 'COT' from 'cot_reports' (/opt/hostedtoolcache/Python/3.11.13/x64/lib/python3.11/site-packages/cot_reports/__init__.py)"
+      "stage": "fetch",
+      "msg": "http 403: {\n  \"code\" : \"permission_denied\",\n  \"error\" : true,\n  \"message\" : \"Invalid app_token specified\"\n}\n"
     }
   ]
 }

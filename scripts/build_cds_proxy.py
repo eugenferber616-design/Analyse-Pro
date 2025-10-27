@@ -1,114 +1,119 @@
-# scripts/build_cds_proxy.py
-import os, re, json, pandas as pd
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Build simple CDS proxy per symbol using FRED OAS indices.
+
+Inputs
+- data/processed/fred_oas.csv
+- watchlist (env WATCHLIST_STOCKS)
+- optional: config/oas_proxy_map.csv   (symbol,proxy) with proxy in {US_IG,US_HY,EU_IG,EU_HY}
+
+Output
+- data/processed/cds_proxy.csv  (symbol, proxy, asof, proxy_spread)
+- data/reports/cds_proxy_report.json
+"""
+
+import os, json, sys, pandas as pd
 from datetime import datetime
 
-WL             = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
-OAS_PATH       = "data/processed/fred_oas.csv"
-ICE_PATH       = "data/processed/cds_eod.csv"          # optional
-MAP_PATH       = "config/cds_bucket_map.csv"           # optional
-OUT_WIDE       = "data/processed/cds_proxy.csv"
-REPORT_PATH    = "data/reports/cds_proxy_report.json"
+PROXY_SERIES = {
+    "US_IG": "BAMLC0A0CM",
+    "US_HY": "BAMLH0A0HYM2",
+    "EU_IG": "BEMLEIG",
+    "EU_HY": "BEMLEHY",
+}
 
-BUCKETS = {"US_IG_OAS","US_HY_OAS","EU_IG_OAS","EU_HY_OAS"}
-
-EU_SUFFIX = (".DE",".PA",".AS",".MI",".BR",".VX",".MC",".BR"," .L",".IR",".PL",".NL",".BE",".F",".HM",".DU",".SG")  # heuristic
-
-def read_watchlist(path):
+def read_watchlist(path: str):
     if not os.path.exists(path): return []
+    if path.lower().endswith(".csv"):
+        try:
+            df = pd.read_csv(path)
+            if "symbol" in df.columns:
+                return [str(s).strip() for s in df["symbol"].dropna().tolist()]
+        except Exception:
+            pass
     syms = []
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            s = line.strip()
-            if not s or s.lower().startswith("symbol"): continue
-            syms.append(s)
+        for ln in f:
+            s = ln.strip()
+            if s and s.lower() != "symbol":
+                syms.append(s)
     return syms
 
-def auto_bucket(sym):
-    up = sym.upper()
-    if up.endswith(EU_SUFFIX):   # grobe EU-Heuristik
-        return "EU_IG_OAS"
-    return "US_IG_OAS"
+def auto_proxy(sym: str) -> str:
+    s = sym.upper()
+    if s in ("HYG","JNK"): return "US_HY"
+    if s.endswith(".DE") or s.endswith(".EU") or s.endswith(".MI") or s.endswith(".PA"):
+        return "EU_IG"
+    return "US_IG"
 
-def load_map():
-    if os.path.exists(MAP_PATH):
-        df = pd.read_csv(MAP_PATH)
-        m = {str(r["symbol"]).strip(): str(r["bucket"]).strip() for _,r in df.iterrows()}
-        return {k:v for k,v in m.items() if v in BUCKETS}
+def load_proxy_map():
+    p = "config/oas_proxy_map.csv"
+    if not os.path.exists(p):
+        return {}
+    try:
+        df = pd.read_csv(p)
+        if set(df.columns) >= {"symbol","proxy"}:
+            m = {str(r.symbol).strip().upper(): str(r.proxy).strip().upper() for r in df.itertuples()}
+            return m
+    except Exception:
+        pass
     return {}
 
-def latest_ice_anchor(sym, ice_df):
-    """Greife den jüngsten 5Y-Single-Name-Wert, ticker==sym (falls vorhanden)."""
-    if ice_df is None or ice_df.empty: return None, None
-    sub = ice_df[(ice_df["type"]=="single_name") & (ice_df["ticker"].astype(str).str.upper()==sym.upper())]
-    if sub.empty: return None, None
-    sub = sub.dropna(subset=["spread_bps"])
-    if sub.empty: return None, None
-    sub = sub.sort_values("date")
-    d = sub["date"].iloc[-1]
-    v = float(sub["spread_bps"].iloc[-1])
-    return d, v
+def latest_oas(df_oas: pd.DataFrame, series_id: str) -> float:
+    d = df_oas[df_oas["series_id"]==series_id]
+    if d.empty: return None
+    return float(d.sort_values("date").iloc[-1]["value"])
 
 def main():
-    os.makedirs(os.path.dirname(OUT_WIDE), exist_ok=True)
-    os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
+    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs("data/reports", exist_ok=True)
 
-    if not os.path.exists(OAS_PATH):
-        print("missing", OAS_PATH); return 0
-    oas = pd.read_csv(OAS_PATH)
-    oas["date"] = pd.to_datetime(oas["date"]).dt.date
+    oas_path = "data/processed/fred_oas.csv"
+    if not os.path.exists(oas_path):
+        print("missing", oas_path)
+        pd.DataFrame(columns=["symbol","proxy","asof","proxy_spread"]).to_csv(
+            "data/processed/cds_proxy.csv", index=False
+        )
+        json.dump({"error":"missing_fred_oas"}, open("data/reports/cds_proxy_report.json","w"), indent=2)
+        return 0
 
-    wl  = read_watchlist(WL)
-    bucket_override = load_map()
-    ice = None
-    if os.path.exists(ICE_PATH):
-        ice = pd.read_csv(ICE_PATH)
-        if not ice.empty:
-            ice["date"] = pd.to_datetime(ice["date"]).dt.date
+    oas = pd.read_csv(oas_path, parse_dates=["date"])
+    wl  = read_watchlist(os.getenv("WATCHLIST_STOCKS","watchlists/mylist.txt"))
+    pmap = load_proxy_map()
 
-    # bauen: pro Symbol eine Serie (einfach der gewählte Bucket)
-    cols = [c for c in oas.columns if c!="date"]
-    if not cols:
-        print("no OAS columns"); return 0
+    # letzte Werte je Serie
+    latest = {sid: latest_oas(oas, sid) for sid in set(oas["series_id"].unique())}
 
-    wide = pd.DataFrame({"date": oas["date"]})
-    report = {"symbols": len(wl), "mapped": 0, "anchored": 0, "unmapped": []}
+    rows, miss = [], []
+    asof = str(oas["date"].max().date()) if not oas.empty else ""
 
     for sym in wl:
-        bucket = bucket_override.get(sym) or auto_bucket(sym)
-        if bucket not in oas.columns:
-            report["unmapped"].append({"symbol": sym, "bucket": bucket})
-            continue
+        chosen = pmap.get(sym.upper(), auto_proxy(sym))
+        sid = PROXY_SERIES.get(chosen)
+        val = latest.get(sid)
+        if val is None:
+            miss.append({"symbol": sym, "proxy": chosen, "series": sid})
+        rows.append({
+            "symbol": sym,
+            "proxy": chosen,
+            "asof": asof,
+            "proxy_spread": val
+        })
 
-        series = oas[["date", bucket]].rename(columns={bucket: sym}).copy()
+    out = "data/processed/cds_proxy.csv"
+    pd.DataFrame(rows).to_csv(out, index=False)
+    print("wrote", out, "rows=", len(rows))
 
-        # optional: ICE-Anker – skaliere Level an letzterem Tag
-        if ice is not None and not ice.empty:
-            d, v = latest_ice_anchor(sym, ice)
-            if v is not None:
-                ref = series.loc[series["date"]==d, sym]
-                if not ref.empty and ref.iloc[0] and pd.notna(ref.iloc[0]):
-                    scale = v / float(ref.iloc[0])
-                    series[sym] = series[sym] * scale
-                    report["anchored"] += 1
+    rep = {
+        "ts": datetime.utcnow().isoformat()+"Z",
+        "watchlist": len(wl),
+        "missing": miss[:50]
+    }
+    with open("data/reports/cds_proxy_report.json","w") as f:
+        json.dump(rep, f, indent=2)
 
-        if wide.shape[0] != series.shape[0]:
-            # sichere Merge auf Datum
-            wide = wide.merge(series, on="date", how="outer")
-        else:
-            wide = pd.merge(wide, series, on="date", how="left")
-
-        report["mapped"] += 1
-
-    # Aufräumen
-    wide.sort_values("date", inplace=True)
-    wide.to_csv(OUT_WIDE, index=False)
-
-    report["output_rows"] = int(wide.shape[0])
-    report["output_cols"] = int(wide.shape[1]-1)
-    with open(REPORT_PATH,"w",encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
-    print(f"wrote {OUT_WIDE} rows={wide.shape[0]} cols={wide.shape[1]-1}")
     return 0
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

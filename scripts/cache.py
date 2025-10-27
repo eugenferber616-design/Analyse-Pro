@@ -1,30 +1,75 @@
-import os, sqlite3, json, time, threading
-DB_PATH='data/cache/cache.db'
-os.makedirs('data/cache', exist_ok=True)
-lock=threading.Lock()
+name: Nightly Data Pull & Cache (No LLM)
 
-def set_json(k,v,ttl_days=7):
-  with lock:
-    con=sqlite3.connect(DB_PATH)
-    con.execute('CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT, ts REAL)')
-    con.execute('INSERT OR REPLACE INTO kv VALUES(?,?,?)',(k,json.dumps({'value':v,'ttl_days':ttl_days,'saved_at':time.time()}),time.time()))
-    con.commit(); con.close()
+on:
+  schedule:
+    - cron: "30 0 * * *"
+  workflow_dispatch:
 
-def get_json(k):
-  with lock:
-    con=sqlite3.connect(DB_PATH)
-    cur=con.execute('SELECT v FROM kv WHERE k=?',(k,))
-    row=cur.fetchone(); con.close()
-  if not row: return None
-  d=json.loads(row[0]); ttl=d.get('ttl_days',7); saved=d.get('saved_at',time.time())
-  if time.time()-saved>ttl*86400: return None
-  return d.get('value')
+permissions:
+  contents: write
 
-class RateLimiter:
-  def __init__(self, per_minute=30, sleep_ms=2500):
-    self.per_minute=per_minute; self.sleep_ms=sleep_ms; self.calls=[]
-  def wait(self):
-    import time
-    now=time.time(); self.calls=[t for t in self.calls if now-t<60]
-    if len(self.calls)>=self.per_minute: time.sleep(self.sleep_ms/1000.0)
-    self.calls.append(time.time())
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Pull earnings (Finnhub)
+        env:
+          # beide Bezeichner setzen – Skripte lesen FINNHUB_TOKEN
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          LLM_DISABLED: "1"
+        run: |
+          mkdir -p data/earnings
+          python scripts/fetch_earnings.py \
+            --watchlist watchlists/mylist.csv \
+            --window-days 365 \
+            --out data/earnings
+
+      - name: Pull macro (FRED)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          LLM_DISABLED: "1"
+        run: |
+          mkdir -p data/macro/fred
+          python scripts/fetch_fred.py \
+            --out data/macro/fred
+
+      - name: List written files (sizes)
+        run: |
+          echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
+          echo "== reports tree =="; find data/reports -type f -printf "%p\t%k KB\n" | sort || true
+          test -f data/reports/last_run.json && echo "== last_run.json ==" && cat data/reports/last_run.json || true
+
+      - name: Fail if outputs empty
+        run: |
+          cnt=$(find data -type f -size +0c | wc -l || true)
+          if [ "$cnt" -eq 0 ]; then echo "No non-empty files produced."; exit 1; fi
+
+      - name: Commit updated cache & reports
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/ || true
+          git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
+          git push
+
+      - name: Upload data artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-bundle
+          path: |
+            data/**

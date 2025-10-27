@@ -18,6 +18,12 @@ jobs:
       WINDOW_DAYS:      30
       CHEAP_MODE:       "true"
       FINNHUB_SLEEP_MS: "1300"
+      # Options-Tuning
+      OPTIONS_MAX_EXPIRIES: "4"     # wie viele nächste Verfälle betrachten
+      OPTIONS_TOPK:        "3"      # Top strikes nach OI je Seite
+      RISK_FREE_RATE:      "0.045"  # 4.5% p.a.
+      HV_WIN_SHORT:        "20"     # HV(20)
+      HV_WIN_LONG:         "60"     # HV(60)
 
     steps:
       - name: Checkout
@@ -53,7 +59,7 @@ jobs:
           print("cache DB ready at", db_path)
           PY
 
-      # 🔹 Secrets prüfen + Watchlists sicherstellen
+      # Secrets prüfen + Watchlists sicherstellen
       - name: Prepare env and watchlists
         id: prep
         shell: bash
@@ -100,7 +106,7 @@ jobs:
           python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
-      # 🔹 ETF-Basics – Finnhub /etf/profile2 + yfinance Fallback
+      # ETF-Basics
       - name: Pull ETF basics (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -123,25 +129,21 @@ jobs:
           python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/fundamentals
           head -n 20 data/processed/fundamentals_core.csv || true
 
-      # 🔹 Futures (yfinance)
-      - name: Pull FUTURES quotes (yfinance)
+      # OPTIONS: OI + IV + HV (leichtgewichtig)
+      - name: Pull OPTIONS OI/IV/HV summary (yfinance)
+        env:
+          WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
+          OPTIONS_MAX_EXPIRIES: ${{ env.OPTIONS_MAX_EXPIRIES }}
+          OPTIONS_TOPK:        ${{ env.OPTIONS_TOPK }}
+          RISK_FREE_RATE:      ${{ env.RISK_FREE_RATE }}
+          HV_WIN_SHORT:        ${{ env.HV_WIN_SHORT }}
+          HV_WIN_LONG:         ${{ env.HV_WIN_LONG }}
         run: |
-          python scripts/fetch_futures_quotes.py \
-            --watchlist "watchlists/fut_sample.txt" \
-            --out data/processed/futures_quotes.csv \
-            --errors data/reports/fut_errors.json || true
-          head -n 30 data/processed/futures_quotes.csv || true
-          test -f data/reports/fut_errors.json && cat data/reports/fut_errors.json || true
+          python scripts/fetch_options_oi.py
+          head -n 30 data/processed/options_oi_summary.csv || true
+          test -f data/reports/options_oi_report.json && cat data/reports/options_oi_report.json || true
 
-      # 🔹 ICE CDS (öffentliche Tabellen, täglicher Snapshot)
-      - name: Pull ICE CDS EoD (public tables)
-        run: |
-          python scripts/fetch_ice_cds_snapshot.py \
-            --out data/processed/cds_eod.csv \
-            --rawdir data/cds || true
-          tail -n 20 data/processed/cds_eod.csv || true
-          test -f data/reports/ice_cds_errors.json && cat data/reports/ice_cds_errors.json || true
-
+      # FRED OAS (US & Euro)
       - name: Pull FRED OAS (US & Euro)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -149,10 +151,11 @@ jobs:
           python scripts/fetch_fred_oas.py
           tail -n 20 data/processed/fred_oas.csv || true
 
+      # COT (nur Summary + gz intern)
       - name: Pull COT (CFTC history)
         run: |
           python scripts/fetch_cot.py
-          tail -n 5 data/processed/cot.csv || true
+          head -n 5 data/processed/cot_summary.csv || true
 
       - name: Pull macro (FRED)
         env:
@@ -162,31 +165,16 @@ jobs:
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
 
-          # ==== FRED OAS (US & Euro) – History ====
-      - name: Pull FRED OAS (US & Euro)
-        env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: |
-          python scripts/fetch_fred_oas.py
-          tail -n 5 data/processed/fred_oas.csv || true
-
-      # ==== COT History (CFTC) ====
-      - name: Pull COT (CFTC history)
-        run: |
-          python scripts/fetch_cot.py
-          tail -n 5 data/processed/cot.csv || true
-
-        # ==== CDS Proxy (aus OAS, optional ICE-Anker) ====
+      # ==== CDS Proxy (aus OAS) ====
       - name: Build CDS proxy per symbol
         env:
-            WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
+          WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
         run: |
           python scripts/build_cds_proxy.py
           tail -n 5 data/processed/cds_proxy.csv || true
           test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
 
-
-      # 🔎 Mini-Validator: Ampel im Log + JSON-Output
+      # Validator
       - name: Validate processed outputs
         run: |
           python - << 'PY'
@@ -196,24 +184,19 @@ jobs:
               return 0
             with open(p, encoding="utf-8") as f:
               return max(0, sum(1 for _ in f) - 1)
-
           checks = {
             "fundamentals_core.csv": count_rows("data/processed/fundamentals_core.csv"),
             "earnings_results.csv":  count_rows("data/processed/earnings_results.csv"),
             "etf_basics.csv":       count_rows("data/processed/etf_basics.csv"),
-            "futures_quotes.csv":   count_rows("data/processed/futures_quotes.csv"),
-            "cds_eod.csv":          count_rows("data/processed/cds_eod.csv"),
-            "fred_oas.csv":       count_rows("data/processed/fred_oas.csv"),
-            "cot.csv":            count_rows("data/processed/cot.csv"),
-            "cds_proxy.csv":      count_rows("data/processed/cds_proxy.csv"),
-
+            "fred_oas.csv":         count_rows("data/processed/fred_oas.csv"),
+            "cot_summary.csv":      count_rows("data/processed/cot_summary.csv"),
+            "options_oi_summary.csv": count_rows("data/processed/options_oi_summary.csv"),
+            "cds_proxy.csv":        count_rows("data/processed/cds_proxy.csv"),
           }
-
           lamp = lambda n: "🟢" if n>0 else "🔴"
           print("\\n=== QA Summary ===")
           for k,v in checks.items():
             print(f"{lamp(v)} {k}: {v} rows")
-
           os.makedirs("data/reports", exist_ok=True)
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
@@ -254,7 +237,8 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/ docs/ || true
+          # große Dateien ausschließen
+          git add data/ docs/ ':!data/processed/*.gz' ':!data/processed/*.zip' || true
           git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
           git push
 

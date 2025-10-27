@@ -144,27 +144,39 @@ jobs:
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
 
-      # 🔎 Mini-Validator: zeigt rot/gelb/grün je Datei
+           # 🔎 Mini-Validator: zeigt rot/gelb/grün je Datei
       - name: Validate processed outputs
         run: |
           python - << 'PY'
-          import os, csv, json
+          import os, json
+
           def count_rows(p):
-            if not os.path.exists(p) or os.path.getsize(p)==0: return 0
+            if not os.path.exists(p) or os.path.getsize(p)==0:
+              return 0
             with open(p, encoding="utf-8") as f:
-              return sum(1 for _ in f) - 1
+              # -1: Header
+              return max(0, sum(1 for _ in f) - 1)
+
           checks = {
             "fundamentals_core.csv": count_rows("data/processed/fundamentals_core.csv"),
             "earnings_results.csv":  count_rows("data/processed/earnings_results.csv"),
             "etf_basics.csv":       count_rows("data/processed/etf_basics.csv"),
+            # falls du den Futures-Step eingebaut hast, diese Zeile aktiv lassen:
+            "futures_quotes.csv":   count_rows("data/processed/futures_quotes.csv"),
           }
-          colors = lambda n: "🟢" if n>0 else "🔴"
+
+          def lamp(n): return "🟢" if n>0 else "🔴"
           print("\n=== QA Summary ===")
           for k,v in checks.items():
-            print(f"{colors(v)} {k}: {v} rows")
+            print(f"{lamp(v)} {k}: {v} rows")
+
+          os.makedirs("data/reports", exist_ok=True)
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
+
+          # JSON nochmal ausgeben
           cat data/reports/qa_summary.json || true
+
 
       - name: List written files (sizes)
         run: |

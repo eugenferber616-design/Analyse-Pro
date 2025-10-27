@@ -22,7 +22,7 @@ REP_DIR = "data/reports"
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(REP_DIR, exist_ok=True)
 
-API_BASE = "https://api.cftc.gov/resource"   # <- Socrata base
+API_BASE = os.getenv("CFTC_API_BASE", "https://publicreporting.cftc.gov/resource")# <- Socrata base
 LIMIT = 50000                                 # page size
 
 def sget(path, params):

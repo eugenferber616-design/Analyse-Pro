@@ -1,38 +1,10 @@
 {
-  "ts": "2025-10-27T18:53:55.797002Z",
-  "links": [
-    "https://www.cftc.gov/files/dea/history/deahistfo2004.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2005.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2006.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2007.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2008.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2009.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2010.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2011.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2012.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2013.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2014.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2015.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2016.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2017.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2018.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2019.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2020.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2021.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2022.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2023.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2024.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo2025.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_1995.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_1996.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_1997.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_1998.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_1999.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_2000.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_2001.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_2002.zip",
-    "https://www.cftc.gov/files/dea/history/deahistfo_2003.zip"
-  ],
-  "errors": [],
-  "rows": 0
+  "ts": "2025-10-27T19:16:25.901183Z",
+  "rows": 0,
+  "errors": [
+    {
+      "stage": "cot_reports",
+      "msg": "cannot import name 'COT' from 'cot_reports' (/opt/hostedtoolcache/Python/3.11.13/x64/lib/python3.11/site-packages/cot_reports/__init__.py)"
+    }
+  ]
 }

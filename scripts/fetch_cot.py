@@ -1,225 +1,250 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Robustes COT-Fetch:
-1) Bevorzugt die aktuellen Weekly-Feeds (newcot/*.txt)
-2) Fallback: versucht mehrere History-ZIP-Muster pro Jahr
-3) Aggregiert zu einer kleinen Summary (neueste Woche je Markt)
+Robuster COT-Fetch:
+- Parst die offiziellen CFTC-"Historical Compressed" Seiten (wie im AgenaTrader Addon).
+- Lädt alle relevanten ZIPs (Disaggregated: Futures-Only & Futures+Options),
+  extrahiert TXT/CSV, vereinheitlicht Spalten und schreibt eine schlanke Summary:
+    data/processed/cot_summary.csv
+- Optional: legt die großen, zusammengefügten Rohdaten NUR als .gz unter data/cache/ ab (nicht committen).
 
-Outputs
-- data/processed/cot_summary.csv
-- data/reports/cot_errors.json
+Speicher-schonend: Im Repo bleibt nur cot_summary.csv.
 """
 
-import os, io, sys, json, zipfile, time, re
+import os, io, re, gzip, csv, json, time, zipfile, shutil
 from datetime import datetime
+from typing import List, Dict, Iterator, Optional
+
 import requests
 import pandas as pd
+from bs4 import BeautifulSoup
+
+# ------------- Konfig -------------
+OUT_DIR_PROC = "data/processed"
+OUT_DIR_CACHE = "data/cache"
+REPORTS_DIR = "data/reports"
+
+# CFTC Einstiegsseiten (beide Varianten abscannen)
+CFTC_INDEX_PAGES = [
+    # Offizielles Portal – Historical Compressed
+    "https://www.cftc.gov/MarketReports/CommitmentsofTraders/HistoricalCompressed/index.htm",
+    # Fallback: älteres Listing im /dea/history/ Verzeichnis
+    "https://www.cftc.gov/dea/history/index.htm",
+]
+
+# Wir suchen bevorzugt diese Muster (Disaggregated Reports)
+ZIP_PATTERNS = [
+    # Disaggregated Futures & Options Combined
+    re.compile(r"deahistfo[_\-]?\d{4}\.zip$", re.IGNORECASE),
+    # Disaggregated Futures Only
+    re.compile(r"deacotdisagg[_\-]?txt[_\-]?\d{4}\.zip$", re.IGNORECASE),
+    # gelegentliche alternative Benennungen
+    re.compile(r"deahistfo\.zip$", re.IGNORECASE),            # „alle Jahre in einer Datei“
+    re.compile(r"deacotdisagg[_\-]?txt\.zip$", re.IGNORECASE),
+]
 
 SESSION = requests.Session()
-SESSION.headers.update({
-    "User-Agent": "Mozilla/5.0 (COT lightweight fetch; github actions)"
-})
-BASE = "https://www.cftc.gov"
+SESSION.headers.update({"User-Agent": "COT-Fetch (OSS, educational)"})
+TIMEOUT = 30
 
-# Weekly feeds (relativ stabil, CSV-kompatibel)
-WEEKLY_ENDPOINTS = [
-    "/dea/newcot/FinFutWk.txt",     # Financial Futures (CSV-like)
-    "/dea/newcot/FutWk.txt",        # Legacy Futures (CSV-like)
-    "/dea/newcot/deacotdisagg.txt", # Disaggregated Futures (CSV-like)
-]
-
-# Yearly ZIP candidates – wir testen mehrere Muster je Jahr
-ZIP_PATTERNS = [
-    "/dea/history/deacotdisagg_txt_{YYYY}.zip",
-    "/dea/history/deahistfo_{YYYY}.zip",
-    "/dea/history/deahist_{YYYY}.zip",
-    "/dea/history/deacot_{YYYY}.zip",
-    "/dea/newcot/deacotdisagg_txt_{YYYY}.zip",  # manche Jahre liegen (noch) unter newcot
-]
-
-OUT_SUMMARY = "data/processed/cot_summary.csv"
-OUT_ERRORS  = "data/reports/cot_errors.json"
 
 def ensure_dirs():
-    os.makedirs("data/processed", exist_ok=True)
-    os.makedirs("data/reports", exist_ok=True)
+    os.makedirs(OUT_DIR_PROC, exist_ok=True)
+    os.makedirs(OUT_DIR_CACHE, exist_ok=True)
+    os.makedirs(REPORTS_DIR, exist_ok=True)
 
-def fetch_text(url):
-    r = SESSION.get(url, timeout=60)
-    if r.status_code != 200:
-        raise RuntimeError(f"{r.status_code} for {url}")
-    return r.text
 
-def fetch_bytes(url):
-    r = SESSION.get(url, timeout=120)
-    if r.status_code != 200:
-        raise RuntimeError(f"{r.status_code} for {url}")
-    return r.content
+def absolute_url(base: str, href: str) -> str:
+    if href.startswith("http"):
+        return href
+    if href.startswith("/"):
+        # gleiche Domain
+        from urllib.parse import urlparse
+        p = urlparse(base)
+        return f"{p.scheme}://{p.netloc}{href}"
+    # relativ
+    from urllib.parse import urljoin
+    return urljoin(base, href)
 
-def try_weekly_frames(errors):
-    """Versucht die drei Weekly-Feeds. Rückgabe: Liste DataFrames (kann leer sein)."""
-    frames = []
-    for rel in WEEKLY_ENDPOINTS:
-        url = BASE + rel
+
+def find_zip_links() -> List[str]:
+    """Parse beide Einstiegsseiten, sammle ZIP-Links, filtere auf Disagg-Dateien."""
+    links = []
+    for page in CFTC_INDEX_PAGES:
         try:
-            txt = fetch_text(url)
-            # Weekly-Dateien sind i.d.R. CSV-kompatibel (quoted)
-            df = pd.read_csv(io.StringIO(txt))
-            if not df.empty:
-                df["__source"] = rel.split("/")[-1]
-                frames.append(df)
+            r = SESSION.get(page, timeout=TIMEOUT)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "lxml")
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if not href.lower().endswith(".zip"):
+                    continue
+                url = absolute_url(page, href)
+                name = url.split("/")[-1]
+                if any(p.search(name) for p in ZIP_PATTERNS):
+                    links.append(url)
         except Exception as e:
-            errors.append({"stage": "weekly", "url": url, "msg": str(e)})
-        time.sleep(0.3)
-    return frames
+            print(f"warn: could not parse {page}: {e}")
+    # Dedupe & sort
+    links = sorted(set(links))
+    return links
 
-def try_zip_year(year, errors):
-    """Versucht mehrere ZIP-Namen pro Jahr, liefert Liste DataFrames aus gefundenen CSV/TXT Dateien."""
-    for pat in ZIP_PATTERNS:
-        url = BASE + pat.format(YYYY=year)
-        try:
-            content = fetch_bytes(url)
-            with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                dfs = []
-                for name in zf.namelist():
-                    if not name.lower().endswith((".csv", ".txt")):
-                        continue
-                    raw = zf.read(name)
-                    # Viele CFTC-Textdateien sind CSV-ähnlich
-                    try:
-                        df = pd.read_csv(io.BytesIO(raw))
-                    except Exception:
-                        # Fallback: Semikolon / Tab / Pipe testen
-                        for sep in [";", "\t", "|"]:
-                            try:
-                                df = pd.read_csv(io.BytesIO(raw), sep=sep)
-                                break
-                            except Exception:
-                                df = None
-                    if df is not None and not df.empty:
-                        df["__source"] = f"{os.path.basename(url)}:{name}"
-                        dfs.append(df)
-                if dfs:
-                    return dfs  # beim ersten erfolgreichen ZIP aufhören
-        except Exception as e:
-            errors.append({"stage": "zip", "year": year, "url": url, "msg": str(e)})
-        time.sleep(0.3)
-    return []
 
-def normalize_columns(df):
+def stream_zip(url: str) -> Optional[bytes]:
+    try:
+        with SESSION.get(url, timeout=TIMEOUT, stream=True) as r:
+            r.raise_for_status()
+            return r.content
+    except Exception as e:
+        print(f"zip fail {url}: {e}")
+        return None
+
+
+def read_zip_members(zbytes: bytes) -> Iterator[tuple[str, bytes]]:
+    with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
+        for n in z.namelist():
+            if not n.lower().endswith((".txt", ".csv")):
+                continue
+            yield n, z.read(n)
+
+
+def normalize_cot_frame(raw: bytes) -> pd.DataFrame:
     """
-    Vereinheitlicht die wichtigsten Spaltennamen, soweit möglich.
-    CFTC liefert je Datei leicht unterschiedliche Labels.
-    Wir mappen häufige Varianten auf ein gemeinsames Set.
+    Viele CFTC-TXT sind CSV-ähnlich (Komma-separiert). Wir lesen großzügig.
+    Vereinheitlichen die wichtigsten Felder für eine Summary.
     """
-    colmap = {c.lower(): c for c in df.columns}
-    def has(name):
-        return name in colmap
+    # Erst als Text
+    txt = raw.decode("latin1", errors="ignore")
+    # Manchmal ; als Separator → erst mal ersetzen
+    # (wir lassen pandas das meiste erkennen)
+    df = pd.read_csv(io.StringIO(txt))
+    # Canonicalize Spaltennamen (lower, underscores)
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-    # häufige Namensvarianten
-    rename = {}
-    for c in df.columns:
-        lc = c.lower()
-        if lc in ("market_and_exchange_names", "market_and_exchange_name"):
-            rename[c] = "market"
-        elif lc in ("as_of_date_in_form_mm/dd/yyyy","report_date_as_yyyy-mm-dd","report_date_as_yyyy_mm_dd",
-                    "report_date_as_yyyymmdd","report_date"):
-            rename[c] = "report_date"
-        elif lc in ("open_interest_all","open_interest"):
-            rename[c] = "oi"
-        elif "noncomm" in lc and "long" in lc:
-            rename[c] = "noncomm_long"
-        elif "noncomm" in lc and "short" in lc:
-            rename[c] = "noncomm_short"
-        elif ("noncommercial" in lc and "long" in lc):
-            rename[c] = "noncomm_long"
-        elif ("noncommercial" in lc and "short" in lc):
-            rename[c] = "noncomm_short"
-        elif ("commercial" in lc and "long" in lc):
-            rename[c] = "comm_long"
-        elif ("commercial" in lc and "short" in lc):
-            rename[c] = "comm_short"
-        elif ("nonreportable" in lc and "long" in lc) or ("nonrep" in lc and "long" in lc):
-            rename[c] = "nonrep_long"
-        elif ("nonreportable" in lc and "short" in lc) or ("nonrep" in lc and "short" in lc):
-            rename[c] = "nonrep_short"
-        elif ("spread" in lc) and ("noncomm" in lc or "noncommercial" in lc):
-            rename[c] = "noncomm_spread"
+    # Wichtige Standardfelder (nicht jede Datei hat alle):
+    # "market_and_exchange_names", "market_code", "report_date_as_yyyy-mm-dd"
+    # "open_interest_all", "noncomm_positions_long_all", "noncomm_positions_short_all", ...
+    # Für die Summary bleiben wir schlank:
+    want_cols = [
+        "market_and_exchange_names",
+        "market_code",
+        "report_date_as_yyyy-mm-dd",
+        "open_interest_all",
+        "noncomm_positions_long_all",
+        "noncomm_positions_short_all",
+        "comm_positions_long_all",
+        "comm_positions_short_all",
+        "nonrept_positions_long_all",
+        "nonrept_positions_short_all",
+    ]
+    for c in want_cols:
+        if c not in df.columns:
+            df[c] = pd.NA
 
-    df = df.rename(columns=rename)
-
-    # report_date in ein Datumsformat bringen
-    if "report_date" in df.columns:
+    # Typkonvertierung – robust
+    def to_num(s):
         try:
-            df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
+            return pd.to_numeric(s, errors="coerce")
         except Exception:
-            pass
+            return pd.Series([pd.NA]*len(s))
+
+    numeric_cols = [c for c in want_cols if c not in ("market_and_exchange_names",
+                                                      "market_code",
+                                                      "report_date_as_yyyy-mm-dd")]
+    for c in numeric_cols:
+        df[c] = to_num(df[c])
+
+    # Datum vereinheitlichen
+    date_col = "report_date_as_yyyy-mm-dd"
+    if df[date_col].notna().any():
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.date
     else:
-        # manche Dateien haben "As of" etc. – ignorieren wir dann
-        df["report_date"] = pd.NaT
+        # manche alten Dateien haben "report_date_as_yyyy_mm_dd"
+        alt = "report_date_as_yyyy_mm_dd"
+        if alt in df.columns:
+            df[date_col] = pd.to_datetime(df[alt], errors="coerce").dt.date
 
-    # Marktname
-    if "market" not in df.columns:
-        # manche Dateien splitten Name/Exchange getrennt:
-        cand = [c for c in df.columns if "market" in c.lower()]
-        if cand:
-            df["market"] = df[cand[0]]
-        else:
-            df["market"] = None
+    # Reduzieren auf want_cols
+    df = df[want_cols]
+    return df
 
-    pick = ["market","report_date","oi","noncomm_long","noncomm_short","noncomm_spread",
-            "comm_long","comm_short","nonrep_long","nonrep_short","__source"]
-    present = [c for c in pick if c in df.columns]
-    return df[present].copy()
 
-def aggregate_latest(frames):
-    """Wählt pro Markt die neueste Woche und gibt eine kompakte Tabelle zurück."""
-    if not frames:
-        return pd.DataFrame(columns=[
-            "market","report_date","oi","noncomm_long","noncomm_short","noncomm_spread",
-            "comm_long","comm_short","nonrep_long","nonrep_short","source"
-        ])
-    df = pd.concat(frames, ignore_index=True)
-    df = normalize_columns(df)
-    # neueste Woche je Markt
-    df = df.sort_values(["market","report_date"])
-    last = df.groupby("market").tail(1).reset_index(drop=True)
-    last = last.rename(columns={"__source":"source"})
-    return last
+def build_summary(big: pd.DataFrame) -> pd.DataFrame:
+    """
+    Kleine, nützliche Summary pro (market_code, report_date):
+      - open_interest_all
+      - noncomm_long/short
+      - simple noncomm net
+    """
+    df = big.copy()
+    df = df.rename(columns={
+        "report_date_as_yyyy-mm-dd": "report_date",
+        "market_and_exchange_names": "market",
+        "open_interest_all": "oi",
+        "noncomm_positions_long_all": "ncl",
+        "noncomm_positions_short_all": "ncs",
+    })
+    df["noncomm_net"] = (df["ncl"].fillna(0) - df["ncs"].fillna(0))
+    keep = ["market_code", "market", "report_date", "oi", "ncl", "ncs", "noncomm_net"]
+    df = df[keep].dropna(subset=["market_code", "report_date"])
+    df = df.sort_values(["market_code", "report_date"])
+    return df
+
 
 def main():
     ensure_dirs()
-    errors = []
-    frames = []
 
-    # 1) Weekly first
-    weekly = try_weekly_frames(errors)
-    frames.extend(weekly)
+    links = find_zip_links()
+    report = {"ts": datetime.utcnow().isoformat()+"Z", "links": links, "errors": [], "rows": 0}
+    if not links:
+        print("COT: no links found on CFTC pages.")
+        json.dump(report, open(os.path.join(REPORTS_DIR, "cot_errors.json"), "w"), indent=2)
+        # Leere Summary schreiben, damit der Validator grün/rot korrekt zeigt
+        pd.DataFrame(columns=["market_code","market","report_date","oi","ncl","ncs","noncomm_net"])\
+          .to_csv(os.path.join(OUT_DIR_PROC, "cot_summary.csv"), index=False)
+        return 0
 
-    # 2) If nothing, try some years (neueste -> zurück)
+    frames: List[pd.DataFrame] = []
+    for url in links:
+        z = stream_zip(url)
+        if not z:
+            report["errors"].append({"url": url, "msg": "download_failed"})
+            continue
+        try:
+            for name, raw in read_zip_members(z):
+                try:
+                    df = normalize_cot_frame(raw)
+                    if not df.empty:
+                        frames.append(df)
+                except Exception as e:
+                    report["errors"].append({"url": url, "member": name, "msg": str(e)})
+        except Exception as e:
+            report["errors"].append({"url": url, "msg": f"zip_read_failed: {e}"})
+
     if not frames:
-        current_year = datetime.utcnow().year
-        for y in range(current_year, current_year-5, -1):
-            dfs = try_zip_year(y, errors)
-            if dfs:
-                frames.extend(dfs)
-                break
+        print("COT: parsed 0 frames.")
+        json.dump(report, open(os.path.join(REPORTS_DIR, "cot_errors.json"), "w"), indent=2)
+        pd.DataFrame(columns=["market_code","market","report_date","oi","ncl","ncs","noncomm_net"])\
+          .to_csv(os.path.join(OUT_DIR_PROC, "cot_summary.csv"), index=False)
+        return 0
 
-    # 3) Aggregate
-    summary = aggregate_latest(frames)
+    big = pd.concat(frames, ignore_index=True, sort=False)
+    summary = build_summary(big)
 
-    # 4) Write outputs
-    summary.to_csv(OUT_SUMMARY, index=False)
-    print(f"wrote {OUT_SUMMARY} rows={len(summary)}")
+    out_csv = os.path.join(OUT_DIR_PROC, "cot_summary.csv")
+    summary.to_csv(out_csv, index=False)
+    report["rows"] = int(len(summary))
+    print(f"wrote {out_csv} rows={len(summary)}")
 
-    with open(OUT_ERRORS, "w", encoding="utf-8") as f:
-        json.dump({"errors": errors[-100:]}, f, indent=2)
+    # Optional: große Rohdaten als gz (nicht commiten)
+    raw_path = os.path.join(OUT_DIR_CACHE, "cot_full.csv.gz")
+    with gzip.open(raw_path, "wb") as gz:
+        big.to_csv(io.TextIOWrapper(gz, encoding="utf-8"), index=False)
+    print(f"cached raw (gz) → {raw_path}")
 
-    if not len(summary):
-        print("COT note: no rows (see cot_errors.json)")
-
+    json.dump(report, open(os.path.join(REPORTS_DIR, "cot_errors.json"), "w"), indent=2)
     return 0
 
+
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

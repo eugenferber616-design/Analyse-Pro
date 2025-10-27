@@ -21,3 +21,27 @@ fred:
     - id: FEDFUNDS      # Fed Funds rate
       label: Fed Funds
 
+# config/config.yaml
+watchlists_dir: watchlists
+
+rate_limits:
+  # Wie viele Finnhub-Calls pro Minute sind erlaubt?
+  finnhub_per_minute: 50
+  # Pause zwischen Calls in Millisekunden (≈ 60_000 / per_minute)
+  finnhub_sleep_ms: 1300
+
+  # Für FRED, falls gebraucht
+  fred_per_minute: 60
+  fred_sleep_ms: 0
+
+finnhub:
+  calendar_lookahead_days: 365
+
+fred:
+  series:
+    - id: CPIAUCSL
+      label: CPI (SA)
+    - id: UNRATE
+      label: Unemployment rate
+    - id: DGS10
+      label: 10Y Treasury

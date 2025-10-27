@@ -19,11 +19,12 @@ jobs:
       CHEAP_MODE:       "true"
       FINNHUB_SLEEP_MS: "1300"
       # Options-Tuning
-      OPTIONS_MAX_EXPIRIES: "4"     # wie viele nächste Verfälle betrachten
-      OPTIONS_TOPK:        "3"      # Top strikes nach OI je Seite
+      OPTIONS_MAX_EXPIRIES: "all"     # wie viele nächste Verfälle betrachten
+      OPTIONS_TOPK:        "5"      # Top strikes nach OI je Seite
       RISK_FREE_RATE:      "0.045"  # 4.5% p.a.
       HV_WIN_SHORT:        "20"     # HV(20)
       HV_WIN_LONG:         "60"     # HV(60)
+      ENABLE_FUTURES: "false"   # "true" falls du sie behalten willst
 
     steps:
       - name: Checkout

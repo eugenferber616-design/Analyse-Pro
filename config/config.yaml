@@ -38,15 +38,25 @@ earnings:
 # FRED: zu ladende Zeitreihen
 fred:
   series:
-    - id: CPIAUCSL      # CPI All Urban Consumers, SA
+    - id: CPIAUCSL      # CPI (bereits vorhanden)
       label: CPI (SA, index)
-    - id: UNRATE        # Unemployment rate
+    - id: UNRATE
       label: Unemployment rate
-    - id: DGS10         # 10Y Treasury
-      label: 10Y Treasury yield
-    - id: DGS2          # 2Y Treasury
-      label: 2Y Treasury yield
-    - id: T10Y3M        # 10Y minus 3M spread
+    - id: DGS10
+      label: 10Y Treasury
+    - id: DGS2
+      label: 2Y Treasury
+    - id: T10Y3M
       label: 10Y-3M spread
-    - id: FEDFUNDS      # Fed Funds rate
+    - id: FEDFUNDS
       label: Fed Funds
+
+    # === Commodities / Rohstoffe ===
+    - id: DCOILWTICO
+      label: WTI crude spot
+    - id: DCOILBRENTEU
+      label: Brent crude spot
+    - id: GOLDAMGBD228NLBM
+      label: Gold (London fix, USD)
+    - id: PPIACO
+      label: PPI All Commodities (Breitindex)

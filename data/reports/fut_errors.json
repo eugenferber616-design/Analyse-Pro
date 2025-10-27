@@ -1,0 +1,12 @@
+{
+  "total": 15,
+  "ok": 14,
+  "failed": 1,
+  "errors": [
+    {
+      "symbol": "VX=F",
+      "reason": "exception",
+      "msg": "'currentTradingPeriod'"
+    }
+  ]
+}

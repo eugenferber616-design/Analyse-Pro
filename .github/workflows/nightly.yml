@@ -42,20 +42,13 @@ jobs:
 
       - name: Run nightly pipeline
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          FRED_API_KEY:   ${{ secrets.FRED_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          MAX_OPENAI_EUR_PER_MONTH: ${{ secrets.MAX_OPENAI_EUR_PER_MONTH }}
+            OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+            FRED_API_KEY:   ${{ secrets.FRED_API_KEY }}
+            FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+            MAX_OPENAI_EUR_PER_MONTH: ${{ secrets.MAX_OPENAI_EUR_PER_MONTH }}
         run: |
-          set -e
-          CMD="python scripts/nightly.py --batch 12000 --window-days 7 --cheap-mode"
-          if [ -n "${{ github.event.inputs.extra_args }}" ]; then
-            CMD="$CMD ${{ github.event.inputs.extra_args }}"
-          fi
-          echo "Running: $CMD"
-          eval "$CMD"
-          # Beispiel für Watchlist (Kommentar):
-          # python scripts/nightly.py --watchlist watchlists/russell1000.txt --window-days 7 --cheap-mode
+          python scripts/nightly.py --watchlist watchlists/mylist.txt --window-days 7 --cheap-mode
+
 
       - name: Commit updated cache & reports
         run: |

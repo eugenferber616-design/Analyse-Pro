@@ -2,7 +2,7 @@ name: Nightly Data Pull & Cache (No LLM)
 
 on:
   schedule:
-    - cron: "30 0 * * *"
+    - cron: "30 0 * * *"   # täglich 00:30 UTC
   workflow_dispatch:
 
 permissions:
@@ -11,6 +11,7 @@ permissions:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,6 +25,28 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      # ---- NEU: Cache-DB initialisieren (legt data/cache/cache.db und Tabelle kv an)
+      - name: Init cache DB
+        run: |
+          mkdir -p data/cache data/earnings data/macro/fred data/processed docs
+          python - << 'PY'
+          import os, sqlite3
+          db_path = os.path.join('data','cache','cache.db')
+          os.makedirs(os.path.dirname(db_path), exist_ok=True)
+          con = sqlite3.connect(db_path)
+          cur = con.cursor()
+          cur.execute("""
+          CREATE TABLE IF NOT EXISTS kv (
+          k  TEXT PRIMARY KEY,
+          v  TEXT NOT NULL,
+          ts INTEGER DEFAULT (strftime('%s','now'))
+          )
+          """)
+          cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
+          con.commit(); con.close()
+          print("cache DB ready at", db_path)
+          PY
 
       - name: Pull earnings (Finnhub)
         env:
@@ -50,7 +73,6 @@ jobs:
       - name: List written files (sizes)
         run: |
           echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
-          echo "== reports tree =="; find data/reports -type f -printf "%p\t%k KB\n" | sort || true
           test -f data/reports/last_run.json && echo "== last_run.json ==" && cat data/reports/last_run.json || true
 
       - name: Fail if outputs empty

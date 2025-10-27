@@ -2,9 +2,8 @@
   "fundamentals_core.csv": 7,
   "earnings_results.csv": 28,
   "etf_basics.csv": 8,
-  "futures_quotes.csv": 14,
-  "cds_eod.csv": 0,
   "fred_oas.csv": 0,
-  "cot.csv": 0,
+  "cot_summary.csv": 0,
+  "options_oi_summary.csv": 36,
   "cds_proxy.csv": 0
 }

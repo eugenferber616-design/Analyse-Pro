@@ -2,7 +2,7 @@ name: Nightly Data Pull & Cache (No LLM)
 
 on:
   schedule:
-    - cron: "30 0 * * *"
+    - cron: "30 0 * * *"  # täglich 00:30 UTC
   workflow_dispatch:
 
 permissions:
@@ -163,33 +163,59 @@ jobs:
           fi
           echo "CFTC token length: ${#CFTC_APP_TOKEN}"
 
+      # ========= COT (CFTC Socrata) – ALLE Märkte, robuster Block =========
       - name: Pull COT (CFTC Socrata)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID:  gpe5-46if
+          COT_DATASET_ID:  gpe5-46if                 # Futures+Options Combined
           COT_WEEKS:       "260"
-          COT_MARKETS_MODE: "ALL"
+          COT_MARKETS_MODE: "ALL"                    # ALLE Märkte (keine Filter)
           COT_MARKETS_FILE: watchlists/cot_markets.txt
-          CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"   # <— NEU
+          CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
         run: |
           set -e
-          echo "== Socrata Smoke-Test =="
-          curl -sS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
-          --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
-          --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
-          --data-urlencode '$limit=1' \
-          -H "X-App-Token: ${CFTC_APP_TOKEN}" | tee /tmp/cftc_smoke.json
-          echo
-          echo "== Fetcher starten =="
+
+          if [ -z "${CFTC_APP_TOKEN}" ]; then
+            echo "❌ CFTC_APP_TOKEN fehlt. Bitte Secrets setzen."
+            exit 1
+          fi
+
+          echo "== Socrata Smoke-Test (mit kleinem Retry) =="
+          ok=0
+          for i in 1 2 3; do
+            if curl -fsS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
+                 --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
+                 --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
+                 --data-urlencode '$limit=1' \
+                 -H "X-App-Token: ${CFTC_APP_TOKEN}" \
+              | tee /tmp/cftc_smoke.json ; then
+              ok=1; break
+            fi
+            echo "…Retry $i/3 nach Netzwerk/DNS-Fehler…"; sleep 2
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "❌ Konnte Socrata nicht erreichen (DNS/Netz?). Abbruch."
+            exit 1
+          fi
+
+          # Prüfe explizit auf permission_denied
+          if grep -q '"permission_denied"' /tmp/cftc_smoke.json; then
+            echo "❌ CFTC_APP_TOKEN ungültig (permission_denied). Bitte Token im Secret aktualisieren."
+            cat /tmp/cftc_smoke.json
+            exit 1
+          fi
+
+          echo "== Fetcher starten (alle Märkte, letzter Report) =="
           python scripts/fetch_cot_socrata.py || {
-          echo "Fetcher fehlgeschlagen. Report:";
-          test -f data/reports/cot_errors.json && cat data/reports/cot_errors.json || true
-          exit 1
+            echo "Fetcher fehlgeschlagen. Dump Fehlerreport (falls vorhanden):"
+            test -f data/reports/cot_errors.json && cat data/reports/cot_errors.json || true
+            exit 1
           }
-          echo "== Vorschau =="; head -n 5 data/processed/cot.csv || true
+
+          echo "== Vorschau (cot.csv / cot_summary.csv) =="
+          head -n 5 data/processed/cot.csv || true
           head -n 5 data/processed/cot_summary.csv || true
-
-
+      # ========================== Ende COT-Block ===========================
 
       - name: Pull macro (FRED)
         env:
@@ -221,14 +247,14 @@ jobs:
             "earnings_results.csv":       count_rows("data/processed/earnings_results.csv"),
             "etf_basics.csv":             count_rows("data/processed/etf_basics.csv"),
             "fred_oas.csv":               count_rows("data/processed/fred_oas.csv"),
-            "cot_summary.csv":            count_rows("data/processed/cot_summary.csv"),  # <- neuer Pfad
+            "cot_summary.csv":            count_rows("data/processed/cot_summary.csv"),
             "options_oi_summary.csv":     count_rows("data/processed/options_oi_summary.csv"),
             "options_oi_by_expiry.csv":   count_rows("data/processed/options_oi_by_expiry.csv"),
             "options_oi_totals.csv":      count_rows("data/processed/options_oi_totals.csv"),
             "cds_proxy.csv":              count_rows("data/processed/cds_proxy.csv"),
           }
           lamp = lambda n: "🟢" if n>0 else "🔴"
-          print("\\n=== QA Summary ===")
+          print("\n=== QA Summary ===")
           for k,v in checks.items():
             print(f"{lamp(v)} {k}: {v} rows")
           os.makedirs("data/reports", exist_ok=True)

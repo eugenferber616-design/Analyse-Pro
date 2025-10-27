@@ -55,7 +55,8 @@ def main():
     end   = start + timedelta(days=LOOKAHEAD_DAYS)
     step  = max(1, int(WINDOW_DAYS))
 
-    lim = RateLimiter(per_minute=PER_MIN, sleep_ms=SLEEP_MS)
+    lim = RateLimiter(PER_MIN, SLEEP_MS)
+
 
     all_rows = []
     for a, b in daterange(start, end, step):

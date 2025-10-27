@@ -1,0 +1,15 @@
+ES=F     # S&P 500
+NQ=F     # Nasdaq 100
+YM=F     # Dow
+RTY=F    # Russell 2000
+CL=F     # WTI Crude
+NG=F     # NatGas
+GC=F     # Gold
+SI=F     # Silver
+HG=F     # Copper
+ZB=F     # 30Y Bond
+ZN=F     # 10Y Note
+ZF=F     # 5Y Note
+VX=F     # VIX
+6E=F     # Euro FX
+6J=F     # JPY FX

@@ -1,8 +1,8 @@
-name: Nightly Data Pull & Cache (No LLM, explicit collectors)
+name: Nightly Data Pull & Cache (No LLM, Debug)
 
 on:
   schedule:
-    - cron: "30 0 * * *"       # täglich 00:30 UTC
+    - cron: "30 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -25,55 +25,36 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # --- Smoke-Check: Watchlist anzeigen ---
-      - name: Show watchlist
-        run: |
-          echo "== watchlists/mylist.txt =="
-          sed -n '1,50p' watchlists/mylist.txt || true
-          echo "----- (first 50 lines shown) -----"
-
-      # --- Finnhub: Earnings-Kalender / Company Profile / Basic Quotes ---
-      - name: Finnhub collectors
+      - name: Pull earnings (Finnhub)
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          LLM_DISABLED: "1"
         run: |
-          mkdir -p data/earnings data/fundamentals data/quotes
-          # Earnings der nächsten 30 Tage für deine Watchlist
-          python scripts/fetch_earnings.py --watchlist watchlists/mylist.txt --window-days 30 --out data/earnings/earnings.jsonl --verbose
-          # (Beispiel) Firmenstammdaten/Key-Metrics je Ticker -> fundamentals.jsonl
-          python scripts/fetch_symbols.py --watchlist watchlists/mylist.txt --out data/fundamentals/fundamentals.jsonl --verbose
-          # (Beispiel) Realtime/Delayed-Quotes -> quotes.jsonl (kleine Last, nur einige Ticker)
-          head -n 25 watchlists/mylist.txt > /tmp/mini_watch.txt
-          python scripts/fetch_symbols.py --watchlist /tmp/mini_watch.txt --mode quotes --out data/quotes/quotes.jsonl --verbose
+          mkdir -p data/earnings
+          python scripts/fetch_earnings.py \
+            --watchlist watchlists/mylist.csv \
+            --window-days 365 \
+            --out data/earnings
 
-      # --- FRED: Makro-Serien (konfiguriert in config/config.yaml) ---
-      - name: FRED collectors
+      - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
           mkdir -p data/macro/fred
-          python scripts/fetch_fred.py --config config/config.yaml --out data/macro/fred/fred_series.jsonl --verbose
+          # holt die in config/config.yaml definierten Reihen (oder passe hier eine Liste an)
+          python scripts/fetch_fred.py \
+            --out data/macro/fred
 
-      # --- Optional: Scanner-Basisdatei ---
-      - name: Build scanner basics
-        run: |
-          mkdir -p reports
-          python scripts/build_scanner_basics.py --watchlist watchlists/mylist.txt --out reports/scanner_basics.csv --verbose || true
-
-      # --- Alles auflisten, damit man es sofort sieht ---
       - name: List written files (sizes)
         run: |
           echo "== data tree =="
           find data -type f -printf "%p\t%k KB\n" | sort || true
-          echo "== reports tree =="
-          find reports -type f -printf "%p\t%k KB\n" | sort || true
 
-      # --- Fail early, wenn wirklich gar nichts rauskam ---
       - name: Fail if outputs empty
         run: |
-          cnt=$(find data -type f -size +0c 2>/dev/null | wc -l || true)
+          cnt=$(find data -type f -size +0c | wc -l || true)
           if [ "$cnt" -eq 0 ]; then
-            echo "No non-empty files produced (check watchlist, API keys, rate limits)."
+            echo "No non-empty files produced."
             exit 1
           fi
 
@@ -81,8 +62,8 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/ reports/ || true
-          git commit -m "Nightly cache update (explicit collectors)" || echo "Nothing to commit"
+          git add data/ || true
+          git commit -m "Nightly cache update (earnings+FRED only)" || echo "Nothing to commit"
           git push
 
       - name: Upload data artifact
@@ -92,4 +73,3 @@ jobs:
           name: data-bundle
           path: |
             data/**
-            reports/**

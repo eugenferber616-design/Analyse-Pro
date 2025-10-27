@@ -1,46 +1,88 @@
 # scripts/fetch_fred_oas.py
-import os, time, json, requests, pandas as pd
+import os, time, requests, pandas as pd
 
-FRED = "https://api.stlouisfed.org/fred/series/observations"
-API  = os.getenv("FRED_API_KEY") or ""
-OUT  = "data/processed/fred_oas.csv"
+API = os.getenv("FRED_API_KEY") or ""
+OBS = "https://api.stlouisfed.org/fred/series/observations"
+SRCH = "https://api.stlouisfed.org/fred/series/search"
 
-# Beliebig erweiterbar – das sind solide Defaults (US & Euro)
-SERIES = {
-  "BAMLC0A0CM":   "US_IG_OAS",   # ICE BofA US Corporate OAS
-  "BAMLH0A0HYM2": "US_HY_OAS",   # ICE BofA US High Yield OAS
-  # Euro (falls ein Code leer zurückkommt, passt er die Tage nicht—einfach ergänzen/ändern)
-  "BEMLEIG":      "EU_IG_OAS",   # ICE BofA Euro Corporate OAS
-  "BEMLEHY":      "EU_HY_OAS",   # ICE BofA Euro High Yield OAS
+OUT = "data/processed/fred_oas.csv"
+
+# Zielbegriffe (wir suchen dynamisch die korrekte Serien-ID)
+QUERIES = {
+    "US_IG_OAS": "ICE BofA US Corporate Option-Adjusted Spread",
+    "US_HY_OAS": "ICE BofA US High Yield Option-Adjusted Spread",
+    "EU_IG_OAS": "ICE BofA Euro Corporate Option-Adjusted Spread",
+    "EU_HY_OAS": "ICE BofA Euro High Yield Option-Adjusted Spread",
 }
 
-def pull(series_id):
-    p = {"series_id": series_id, "api_key": API, "file_type": "json", "observation_start": "1999-01-01"}
-    r = requests.get(FRED, params=p, timeout=30)
+def search_series(query):
+    p = {
+        "search_text": query,
+        "api_key": API,
+        "file_type": "json",
+        # bessere Treffer: sortiere nach Popularität und letzer Beobachtung
+        "order_by": "popularity",
+        "sort_order": "desc",
+        "limit": 10,
+    }
+    r = requests.get(SRCH, params=p, timeout=30)
     r.raise_for_status()
-    j = r.json()
+    items = r.json().get("seriess", [])
+    # nimm die erste Serie, deren Titel OAS enthält (robust)
+    for s in items:
+        if "OAS" in s.get("title","").upper():
+            return s["id"]
+    return items[0]["id"] if items else None
+
+def pull_observations(series_id):
+    p = {
+        "series_id": series_id,
+        "api_key": API,
+        "file_type": "json",
+        "observation_start": "1999-01-01",
+    }
+    r = requests.get(OBS, params=p, timeout=30)
+    r.raise_for_status()
+    obs = r.json().get("observations", [])
     rows = []
-    for obs in j.get("observations", []):
-        v = obs.get("value")
-        try:  rows.append({"date": obs["date"], "series": series_id, "value": float(v)})
-        except: rows.append({"date": obs["date"], "series": series_id, "value": None})
+    for o in obs:
+        try:
+            v = float(o["value"])
+        except Exception:
+            v = None
+        rows.append({"date": o["date"], "value": v})
     return pd.DataFrame(rows)
 
 def main():
+    if not API:
+        print("No FRED_API_KEY"); return 0
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    frames = []
-    for sid in SERIES:
+
+    cols = []
+    df = None
+    for col, q in QUERIES.items():
         try:
-            frames.append(pull(sid))
+            sid = search_series(q)
+            if not sid:
+                print("no sid for", col, q); continue
+            time.sleep(0.2)
+            d = pull_observations(sid)
+            if d.empty: 
+                print("empty", col, sid); 
+                continue
+            d.rename(columns={"value": col}, inplace=True)
+            cols.append(col)
+            df = d if df is None else df.merge(d, on="date", how="outer")
             time.sleep(0.2)
         except Exception as e:
-            print("FRED OAS fail", sid, e)
-    if not frames:
+            print("FRED fail", col, e)
+
+    if df is None or not cols:
         print("no OAS data"); return 0
-    df = pd.concat(frames, ignore_index=True)
-    wide = df.pivot(index="date", columns="series", values="value").reset_index().rename(columns=SERIES)
-    wide.to_csv(OUT, index=False)
-    print("wrote", OUT, len(wide))
+
+    df.sort_values("date", inplace=True)
+    df.to_csv(OUT, index=False)
+    print("wrote", OUT, len(df), "rows,", len(cols), "cols")
     return 0
 
 if __name__ == "__main__":

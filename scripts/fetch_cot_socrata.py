@@ -22,8 +22,8 @@ REP_DIR = "data/reports"
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(REP_DIR, exist_ok=True)
 
-API_BASE = os.getenv("CFTC_API_BASE", "https://publicreporting.cftc.gov/resource")# <- Socrata base
-LIMIT = 50000                                 # page size
+API_BASE = os.getenv("CFTC_API_BASE", "https://publicreporting.cftc.gov/resource")  # Socrata base
+LIMIT = 50000  # page size
 
 def sget(path, params):
     headers = {"Accept": "application/json"}
@@ -39,7 +39,6 @@ def sget(path, params):
         raise RuntimeError(msg) from e
     except Exception as e:
         raise RuntimeError(f"REQ_FAIL {url}: {e}") from e
-
 
 def get_latest_date():
     # Robust: sort desc and limit 1 (avoids name typos in max(...))

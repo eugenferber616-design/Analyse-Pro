@@ -100,7 +100,7 @@ jobs:
           test -f docs/earnings_next.json && echo "== docs/earnings_next.json ==" && head -n 50 docs/earnings_next.json || echo "no docs/earnings_next.json"
           test -f data/processed/earnings_next.json && echo "== data/processed/earnings_next.json ==" && head -n 50 data/processed/earnings_next.json || echo "no processed file"
 
-      # ---- Makro (FRED)
+           # ---- Makro (FRED)
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -109,6 +109,37 @@ jobs:
           mkdir -p data/macro/fred
           python scripts/fetch_fred.py \
             --out data/macro/fred
+
+      # ==== NEU: Earnings-RESULTATE (EPS/Revenue + Surprise) ====
+      - name: Pull earnings RESULTS (EPS/Revenue)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          WL="${{ steps.prep.outputs.watchlist }}"
+          mkdir -p data/earnings/results
+          echo "Earnings-Resultate für Watchlist: $WL"
+          python scripts/fetch_earnings_results.py \
+            --watchlist "$WL" \
+            --outdir data/earnings/results
+          echo "== Summary (earnings_results.csv) =="
+          test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
+
+      # ==== NEU: Fundamentals (profile2 + metrics) ====
+      - name: Pull FUNDAMENTALS (profile2 + metrics)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          WL="${{ steps.prep.outputs.watchlist }}"
+          mkdir -p data/fundamentals
+          echo "Fundamentals für Watchlist: $WL"
+          python scripts/fetch_fundamentals.py \
+            --watchlist "$WL" \
+            --outdir data/fundamentals
+          echo "== Summary (fundamentals_core.csv) =="
+          test -f data/processed/fundamentals_core.csv && head -n 20 data/processed/fundamentals_core.csv || true
+
 
       # ---- Übersicht der erzeugten Dateien
       - name: List written files (sizes)

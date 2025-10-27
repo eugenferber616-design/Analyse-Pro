@@ -57,7 +57,6 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
           set -e
-          # Token normalisieren
           TOKEN="${FINNHUB_TOKEN:-$FINNHUB_API_KEY}"
           if [ -z "$TOKEN" ]; then
             echo "❌ Kein FINNHUB_TOKEN/FINNHUB_API_KEY gesetzt (Repository Secrets)."
@@ -75,42 +74,24 @@ jobs:
             WL="watchlists/mylist.csv"
           fi
           echo "watchlist=$WL" >> "$GITHUB_OUTPUT"
-          echo "== Watchlist Kopf =="
-          head -n 5 "$WL" || true
+          echo "== Watchlist Kopf =="; head -n 5 "$WL" || true
 
-      # ---- Earnings (Finnhub)
-      - name: Pull earnings RESULTS (EPS/Revenue)
+      # ---- (Optional) Earnings-Kalender, falls du earnings_next.json möchtest
+      - name: Pull earnings CALENDAR (optional)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          run: |
-            WL="${{ steps.prep.outputs.watchlist }}"
-            mkdir -p data/earnings/results
-            python scripts/fetch_earnings_results.py \
+        run: |
+          mkdir -p data/earnings docs
+          WL="${{ steps.prep.outputs.watchlist }}"
+          echo "Nutze Watchlist (Kalender): $WL"
+          python scripts/fetch_earnings.py \
             --watchlist "$WL" \
-            --outdir data/earnings/results \
-            --limit 8
-            head -n 20 data/processed/earnings_results.csv || true
-
-
-      - name: Show earnings outputs (if any)
-        run: |
+            --window-days 365
           ls -lah docs || true
-          ls -lah data/processed || true
-          test -f docs/earnings_next.json && echo "== docs/earnings_next.json ==" && head -n 50 docs/earnings_next.json || echo "no docs/earnings_next.json"
-          test -f data/processed/earnings_next.json && echo "== data/processed/earnings_next.json ==" && head -n 50 data/processed/earnings_next.json || echo "no processed file"
+          test -f docs/earnings_next.json && head -n 50 docs/earnings_next.json || true
 
-      # ---- Makro (FRED)
-      - name: Pull macro (FRED)
-        env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-          LLM_DISABLED: "1"
-        run: |
-          mkdir -p data/macro/fred
-          python scripts/fetch_fred.py \
-            --out data/macro/fred
-
-      # ==== NEU: Earnings-RESULTATE (EPS/Revenue + Surprise) ====
+      # ==== Earnings-RESULTATE (EPS/Revenue + Surprise) ====
       - name: Pull earnings RESULTS (EPS/Revenue)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -122,11 +103,12 @@ jobs:
           echo "Earnings-Resultate für Watchlist: $WL"
           python scripts/fetch_earnings_results.py \
             --watchlist "$WL" \
-            --outdir data/earnings/results
+            --outdir data/earnings/results \
+            --limit 8
           echo "== Summary (earnings_results.csv) =="
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
-      # ==== NEU: Fundamentals (profile2 + metrics) ====
+      # ==== Fundamentals (profile2 + metrics) ====
       - name: Pull FUNDAMENTALS (profile2 + metrics)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -139,19 +121,24 @@ jobs:
           python scripts/fetch_fundamentals.py \
             --watchlist "$WL" \
             --outdir data/fundamentals
-          echo "== Summary (fundamentals_core.csv) =="
-          test -f data/processed/fundamentals_core.csv && head -n 20 data/processed/fundamentals_core.csv || true
+          echo "== Summary (fundamentals_core.csv) =="; head -n 20 data/processed/fundamentals_core.csv || true
+
+      # ---- Makro (FRED)
+      - name: Pull macro (FRED)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          mkdir -p data/macro/fred
+          python scripts/fetch_fred.py --out data/macro/fred
 
       # ---- Übersicht der erzeugten Dateien
       - name: List written files (sizes)
         run: |
-          echo "== data tree =="
-          find data -type f -printf "%p\t%k KB\n" | sort || true
-          echo "== docs tree =="
-          find docs -type f -printf "%p\t%k KB\n" | sort || true
+          echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
+          echo "== docs tree =="; find docs -type f -printf "%p\t%k KB\n" | sort || true
           test -f data/reports/last_run.json && echo "== last_run.json ==" && cat data/reports/last_run.json || true
 
-      # ---- Fail, wenn wirklich nichts geschrieben wurde (0-Byte-Dateien ignorieren)
+      # ---- Fail, wenn nichts produziert wurde
       - name: Fail if outputs empty
         run: |
           cnt=$(find data -type f -size +0c | wc -l || true)
@@ -162,7 +149,7 @@ jobs:
             exit 1
           fi
 
-      # ---- Committen (data + docs)
+      # ---- Committen
       - name: Commit updated cache & reports
         run: |
           git config user.name  "github-actions[bot]"
@@ -171,7 +158,7 @@ jobs:
           git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
           git push
 
-      # ---- Artefakte hochladen
+      # ---- Artefakt
       - name: Upload data artifact
         if: always()
         uses: actions/upload-artifact@v4

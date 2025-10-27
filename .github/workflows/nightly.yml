@@ -12,7 +12,6 @@ jobs:
   run-pipeline:
     runs-on: ubuntu-latest
 
-    # 🔹 Zentrale ENV – Pfade & Optionen
     env:
       WATCHLIST_STOCKS: watchlists/mylist.txt
       WATCHLIST_ETF:    watchlists/etf_sample.txt
@@ -118,7 +117,7 @@ jobs:
 
       - name: Pull FUNDAMENTALS (profile2 + metrics)
         env:
-          FINNHYB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
@@ -126,15 +125,15 @@ jobs:
           python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/fundamentals
           head -n 20 data/processed/fundamentals_core.csv || true
 
-          - name: Pull FUTURES quotes (yfinance)
-          run: |
+      # 🔹 Futures (yfinance)
+      - name: Pull FUTURES quotes (yfinance)
+        run: |
           python scripts/fetch_futures_quotes.py \
-          --watchlist "watchlists/fut_sample.txt" \
-          --out data/processed/futures_quotes.csv \
-          --errors data/reports/fut_errors.json || true
+            --watchlist "watchlists/fut_sample.txt" \
+            --out data/processed/futures_quotes.csv \
+            --errors data/reports/fut_errors.json || true
           head -n 30 data/processed/futures_quotes.csv || true
           test -f data/reports/fut_errors.json && cat data/reports/fut_errors.json || true
-
 
       - name: Pull macro (FRED)
         env:
@@ -144,7 +143,7 @@ jobs:
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
 
-           # 🔎 Mini-Validator: zeigt rot/gelb/grün je Datei
+      # 🔎 Mini-Validator: zeigt rot/gelb/grün je Datei
       - name: Validate processed outputs
         run: |
           python - << 'PY'
@@ -154,15 +153,13 @@ jobs:
             if not os.path.exists(p) or os.path.getsize(p)==0:
               return 0
             with open(p, encoding="utf-8") as f:
-              # -1: Header
               return max(0, sum(1 for _ in f) - 1)
 
           checks = {
-            "fundamentals_core.csv": count_rows("data/processed/fundamentals_core.csv"),
-            "earnings_results.csv":  count_rows("data/processed/earnings_results.csv"),
-            "etf_basics.csv":       count_rows("data/processed/etf_basics.csv"),
-            # falls du den Futures-Step eingebaut hast, diese Zeile aktiv lassen:
-            "futures_quotes.csv":   count_rows("data/processed/futures_quotes.csv"),
+            "fundamentals_core.csv": os.path.exists("data/processed/fundamentals_core.csv") and count_rows("data/processed/fundamentals_core.csv") or 0,
+            "earnings_results.csv":  os.path.exists("data/processed/earnings_results.csv")  and count_rows("data/processed/earnings_results.csv")  or 0,
+            "etf_basics.csv":       os.path.exists("data/processed/etf_basics.csv")       and count_rows("data/processed/etf_basics.csv")       or 0,
+            "futures_quotes.csv":   os.path.exists("data/processed/futures_quotes.csv")   and count_rows("data/processed/futures_quotes.csv")   or 0,
           }
 
           def lamp(n): return "🟢" if n>0 else "🔴"
@@ -174,9 +171,7 @@ jobs:
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
 
-          # JSON nochmal ausgeben
           cat data/reports/qa_summary.json || true
-
 
       - name: List written files (sizes)
         run: |

@@ -142,6 +142,14 @@ jobs:
           tail -n 20 data/processed/cds_eod.csv || true
           test -f data/reports/ice_cds_errors.json && cat data/reports/ice_cds_errors.json || true
 
+      - name: Pull FRED OAS (US & Euro)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python scripts/fetch_fred_oas.py
+          tail -n 20 data/processed/fred_oas.csv || true
+
+
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}

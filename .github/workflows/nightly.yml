@@ -149,6 +149,12 @@ jobs:
           python scripts/fetch_fred_oas.py
           tail -n 20 data/processed/fred_oas.csv || true
 
+      - name: Pull COT (CFTC history)
+        run: |
+          python scripts/fetch_cot.py
+          tail -n 5 data/processed/cot.csv || true
+
+
 
       - name: Pull macro (FRED)
         env:

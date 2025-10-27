@@ -44,3 +44,12 @@ jobs:
           git add data/cache/ reports/ || true
           git commit -m "Nightly cache update" || echo "Nothing to commit"
           git push
+
+      - name: Upload data artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-bundle
+          path: |
+            data/**
+

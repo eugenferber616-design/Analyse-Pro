@@ -8,14 +8,14 @@ Inputs
 - config/mappings/proxy_map.csv  (columns: symbol,proxy)  [optional]
 - watchlists/mylist.txt or .csv  (env WATCHLIST_STOCKS)
 
-Output
+Outputs
 - data/processed/cds_proxy.csv   (columns: symbol,proxy,asof,proxy_spread)
 - data/reports/cds_proxy_report.json
 """
 
 import os, json
-import pandas as pd
 from datetime import datetime
+import pandas as pd
 
 FRED_BUCKETS = {
     "US_IG": ["BAMLC0A0CM"],       # ICE BofA US Corp Master OAS
@@ -44,54 +44,59 @@ def load_proxy_map(path="config/mappings/proxy_map.csv") -> dict:
     return {str(r.symbol).strip(): str(r.proxy).strip().upper() for _,r in df.iterrows()}
 
 def latest_oas_by_series(df_fred: pd.DataFrame) -> pd.Series:
-    # df_fred: date, series_id, value
     df_fred["date"] = pd.to_datetime(df_fred["date"])
-    idx = df_fred.sort_values(["series_id","date"]).groupby("series_id").tail(1)
-    return idx.set_index("series_id")["value"]
+    tail = df_fred.sort_values(["series_id","date"]).groupby("series_id").tail(1)
+    return tail.set_index("series_id")["value"]
 
-def bucket_value(latest_series: pd.Series, bucket: str) -> float|None:
+def bucket_value(latest_series: pd.Series, bucket: str):
     ids = FRED_BUCKETS.get(bucket, [])
     vals = []
     for sid in ids:
         if sid in latest_series.index:
-            v = latest_series.loc[sid]
             try:
-                v = float(v)
-                if pd.notna(v): vals.append(v)
+                v = float(latest_series.loc[sid])
+                if pd.notna(v):
+                    vals.append(v)
             except Exception:
                 pass
     if not vals:
         return None
-    return float(sum(vals)/len(vals))
+    return float(sum(vals) / len(vals))
+
+def jsonable(x):
+    """Make objects JSON-safe."""
+    if isinstance(x, (pd.Timestamp, )):
+        return x.isoformat()
+    if isinstance(x, (pd.Series, pd.DataFrame)):
+        return x.to_dict()
+    return x
 
 def main():
     ensure_dirs()
 
     wl_path = os.getenv("WATCHLIST_STOCKS","watchlists/mylist.txt")
-    symbols = read_watchlist(wl_path)
-    if not symbols:
-        symbols = ["AAPL"]
+    symbols = read_watchlist(wl_path) or ["AAPL"]
 
     fred_p = "data/processed/fred_oas.csv"
     if not os.path.exists(fred_p):
-        print("missing", fred_p)
         rep = {"ts": datetime.utcnow().isoformat()+"Z", "rows":0, "errors":["missing fred_oas.csv"]}
         json.dump(rep, open("data/reports/cds_proxy_report.json","w"), indent=2)
+        print("missing", fred_p)
         return 0
 
     fred = pd.read_csv(fred_p)
     if not {"date","series_id","value"}.issubset(fred.columns):
-        print("fred_oas.csv has wrong columns")
         rep = {"ts": datetime.utcnow().isoformat()+"Z", "rows":0, "errors":["bad fred_oas columns"]}
         json.dump(rep, open("data/reports/cds_proxy_report.json","w"), indent=2)
+        print("fred_oas.csv has wrong columns")
         return 0
 
     latest = latest_oas_by_series(fred)
-    asof = fred["date"].max()
+    asof_ts = pd.to_datetime(fred["date"].max())
+    asof = asof_ts.date().isoformat()
 
     pmap = load_proxy_map()
-    rows = []
-    errs = []
+    rows, errs = [], []
 
     for sym in symbols:
         bucket = pmap.get(sym, "US_IG")
@@ -99,7 +104,12 @@ def main():
         if val is None:
             errs.append({"symbol": sym, "proxy": bucket, "msg": "no OAS for proxy bucket"})
             continue
-        rows.append({"symbol": sym, "proxy": bucket, "asof": asof, "proxy_spread": round(val, 2)})
+        rows.append({
+            "symbol": sym,
+            "proxy": bucket,
+            "asof": asof,
+            "proxy_spread": round(float(val), 2)
+        })
 
     out = pd.DataFrame(rows)
     out_p = "data/processed/cds_proxy.csv"
@@ -114,7 +124,8 @@ def main():
         "sample": rows[:5],
         "errors": errs
     }
-    json.dump(report, open("data/reports/cds_proxy_report.json","w"), indent=2)
+    # JSON-safe write
+    json.dump(jsonable(report), open("data/reports/cds_proxy_report.json","w"), indent=2)
     return 0
 
 if __name__ == "__main__":

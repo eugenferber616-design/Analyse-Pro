@@ -1,0 +1,506 @@
+{
+  "ts": "2025-10-27T18:21:39.254673Z",
+  "rows": 0,
+  "errors": [
+    {
+      "year": 2006,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2006.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2006.zip"
+    },
+    {
+      "year": 2006,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2006.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2006.zip"
+    },
+    {
+      "year": 2006,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2006.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2006.zip"
+    },
+    {
+      "year": 2006,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2006.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2006.zip"
+    },
+    {
+      "year": 2006,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2006.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2006.zip"
+    },
+    {
+      "year": 2007,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2007.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2007.zip"
+    },
+    {
+      "year": 2007,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2007.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2007.zip"
+    },
+    {
+      "year": 2007,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2007.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2007.zip"
+    },
+    {
+      "year": 2007,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2007.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2007.zip"
+    },
+    {
+      "year": 2007,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2007.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2007.zip"
+    },
+    {
+      "year": 2008,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2008.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2008.zip"
+    },
+    {
+      "year": 2008,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2008.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2008.zip"
+    },
+    {
+      "year": 2008,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2008.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2008.zip"
+    },
+    {
+      "year": 2008,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2008.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2008.zip"
+    },
+    {
+      "year": 2008,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2008.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2008.zip"
+    },
+    {
+      "year": 2009,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2009.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2009.zip"
+    },
+    {
+      "year": 2009,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2009.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2009.zip"
+    },
+    {
+      "year": 2009,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2009.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2009.zip"
+    },
+    {
+      "year": 2009,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2009.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2009.zip"
+    },
+    {
+      "year": 2009,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2009.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2009.zip"
+    },
+    {
+      "year": 2010,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2010.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2010.zip"
+    },
+    {
+      "year": 2010,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2010.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2010.zip"
+    },
+    {
+      "year": 2010,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2010.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2010.zip"
+    },
+    {
+      "year": 2010,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2010.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2010.zip"
+    },
+    {
+      "year": 2010,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2010.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2010.zip"
+    },
+    {
+      "year": 2011,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2011.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2011.zip"
+    },
+    {
+      "year": 2011,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2011.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2011.zip"
+    },
+    {
+      "year": 2011,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2011.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2011.zip"
+    },
+    {
+      "year": 2011,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2011.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2011.zip"
+    },
+    {
+      "year": 2011,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2011.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2011.zip"
+    },
+    {
+      "year": 2012,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2012.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2012.zip"
+    },
+    {
+      "year": 2012,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2012.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2012.zip"
+    },
+    {
+      "year": 2012,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2012.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2012.zip"
+    },
+    {
+      "year": 2012,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2012.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2012.zip"
+    },
+    {
+      "year": 2012,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2012.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2012.zip"
+    },
+    {
+      "year": 2013,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2013.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2013.zip"
+    },
+    {
+      "year": 2013,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2013.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2013.zip"
+    },
+    {
+      "year": 2013,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2013.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2013.zip"
+    },
+    {
+      "year": 2013,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2013.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2013.zip"
+    },
+    {
+      "year": 2013,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2013.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2013.zip"
+    },
+    {
+      "year": 2014,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2014.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2014.zip"
+    },
+    {
+      "year": 2014,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2014.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2014.zip"
+    },
+    {
+      "year": 2014,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2014.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2014.zip"
+    },
+    {
+      "year": 2014,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2014.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2014.zip"
+    },
+    {
+      "year": 2014,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2014.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2014.zip"
+    },
+    {
+      "year": 2015,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2015.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2015.zip"
+    },
+    {
+      "year": 2015,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2015.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2015.zip"
+    },
+    {
+      "year": 2015,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2015.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2015.zip"
+    },
+    {
+      "year": 2015,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2015.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2015.zip"
+    },
+    {
+      "year": 2015,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2015.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2015.zip"
+    },
+    {
+      "year": 2016,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2016.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2016.zip"
+    },
+    {
+      "year": 2016,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2016.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2016.zip"
+    },
+    {
+      "year": 2016,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2016.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2016.zip"
+    },
+    {
+      "year": 2016,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2016.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2016.zip"
+    },
+    {
+      "year": 2016,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2016.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2016.zip"
+    },
+    {
+      "year": 2017,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2017.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2017.zip"
+    },
+    {
+      "year": 2017,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2017.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2017.zip"
+    },
+    {
+      "year": 2017,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2017.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2017.zip"
+    },
+    {
+      "year": 2017,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2017.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2017.zip"
+    },
+    {
+      "year": 2017,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2017.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2017.zip"
+    },
+    {
+      "year": 2018,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2018.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2018.zip"
+    },
+    {
+      "year": 2018,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2018.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2018.zip"
+    },
+    {
+      "year": 2018,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2018.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2018.zip"
+    },
+    {
+      "year": 2018,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2018.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2018.zip"
+    },
+    {
+      "year": 2018,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2018.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2018.zip"
+    },
+    {
+      "year": 2019,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2019.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2019.zip"
+    },
+    {
+      "year": 2019,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2019.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2019.zip"
+    },
+    {
+      "year": 2019,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2019.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2019.zip"
+    },
+    {
+      "year": 2019,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2019.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2019.zip"
+    },
+    {
+      "year": 2019,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2019.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2019.zip"
+    },
+    {
+      "year": 2020,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2020.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2020.zip"
+    },
+    {
+      "year": 2020,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2020.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2020.zip"
+    },
+    {
+      "year": 2020,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2020.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2020.zip"
+    },
+    {
+      "year": 2020,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2020.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2020.zip"
+    },
+    {
+      "year": 2020,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2020.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2020.zip"
+    },
+    {
+      "year": 2021,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2021.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2021.zip"
+    },
+    {
+      "year": 2021,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2021.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2021.zip"
+    },
+    {
+      "year": 2021,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2021.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2021.zip"
+    },
+    {
+      "year": 2021,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2021.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2021.zip"
+    },
+    {
+      "year": 2021,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2021.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2021.zip"
+    },
+    {
+      "year": 2022,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2022.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2022.zip"
+    },
+    {
+      "year": 2022,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2022.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2022.zip"
+    },
+    {
+      "year": 2022,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2022.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2022.zip"
+    },
+    {
+      "year": 2022,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2022.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2022.zip"
+    },
+    {
+      "year": 2022,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2022.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2022.zip"
+    },
+    {
+      "year": 2023,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2023.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2023.zip"
+    },
+    {
+      "year": 2023,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2023.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2023.zip"
+    },
+    {
+      "year": 2023,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2023.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2023.zip"
+    },
+    {
+      "year": 2023,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2023.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2023.zip"
+    },
+    {
+      "year": 2023,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2023.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2023.zip"
+    },
+    {
+      "year": 2024,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2024.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2024.zip"
+    },
+    {
+      "year": 2024,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2024.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2024.zip"
+    },
+    {
+      "year": 2024,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2024.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2024.zip"
+    },
+    {
+      "year": 2024,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2024.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2024.zip"
+    },
+    {
+      "year": 2024,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2024.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2024.zip"
+    },
+    {
+      "year": 2025,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2025.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_txt_2025.zip"
+    },
+    {
+      "year": 2025,
+      "url": "https://www.cftc.gov/files/dea/history/deacotdisagg_2025.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deacotdisagg_2025.zip"
+    },
+    {
+      "year": 2025,
+      "url": "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2025.zip",
+      "msg": "404 for https://www.cftc.gov/dea/newcot/deacotdisagg_txt_2025.zip"
+    },
+    {
+      "year": 2025,
+      "url": "https://www.cftc.gov/files/dea/history/deahistfo_2025.zip",
+      "msg": "404 for https://www.cftc.gov/files/dea/history/deahistfo_2025.zip"
+    },
+    {
+      "year": 2025,
+      "url": "https://www.cftc.gov/dea/history/deahistfo_2025.zip",
+      "msg": "404 for https://www.cftc.gov/dea/history/deahistfo_2025.zip"
+    }
+  ]
+}

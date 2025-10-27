@@ -2,10 +2,10 @@
   "fundamentals_core.csv": 7,
   "earnings_results.csv": 28,
   "etf_basics.csv": 8,
-  "fred_oas.csv": 0,
+  "fred_oas.csv": 14007,
   "cot.csv": 0,
   "options_oi_summary.csv": 195,
   "options_oi_by_expiry.csv": 195,
   "options_oi_totals.csv": 9,
-  "cds_proxy.csv": 0
+  "cds_proxy.csv": 9
 }

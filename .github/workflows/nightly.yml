@@ -26,10 +26,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ---- NEU: Cache-DB initialisieren (legt data/cache/cache.db und Tabelle kv an)
+      # ---- Cache-DB initialisieren
       - name: Init cache DB
         run: |
-          mkdir -p data/cache data/earnings data/macro/fred data/processed docs
+          mkdir -p data/cache data/earnings data/macro/fred data/processed data/reports docs watchlists
           python - << 'PY'
           import os, sqlite3
           db_path = os.path.join('data','cache','cache.db')
@@ -38,9 +38,9 @@ jobs:
           cur = con.cursor()
           cur.execute("""
           CREATE TABLE IF NOT EXISTS kv (
-          k  TEXT PRIMARY KEY,
-          v  TEXT NOT NULL,
-          ts INTEGER DEFAULT (strftime('%s','now'))
+            k  TEXT PRIMARY KEY,
+            v  TEXT NOT NULL,
+            ts INTEGER DEFAULT (strftime('%s','now'))
           )
           """)
           cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
@@ -48,19 +48,52 @@ jobs:
           print("cache DB ready at", db_path)
           PY
 
+      # ---- Secrets & Watchlist prüfen
+      - name: Prepare env and watchlist
+        id: prep
+        shell: bash
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          set -e
+          # Token normalisieren
+          TOKEN="${FINNHUB_TOKEN:-$FINNHUB_API_KEY}"
+          if [ -z "$TOKEN" ]; then
+            echo "❌ Kein FINNHUB_TOKEN/FINNHUB_API_KEY gesetzt (Repository Secrets)."
+            exit 1
+          fi
+          echo "token_present=true" >> "$GITHUB_OUTPUT"
+
+          # Watchlist finden/anlegen
+          WL=""
+          if   [ -f watchlists/mylist.txt ]; then WL="watchlists/mylist.txt"
+          elif [ -f watchlists/mylist.csv ]; then WL="watchlists/mylist.csv"
+          else
+            echo "⚠️  Keine watchlists/mylist.txt|csv gefunden. Lege Fallback an."
+            printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
+            WL="watchlists/mylist.csv"
+          fi
+          echo "watchlist=$WL" >> "$GITHUB_OUTPUT"
+          echo "== Watchlist Kopf =="
+          head -n 5 "$WL" || true
+
+      # ---- Earnings (Finnhub) ziehen
       - name: Pull earnings (Finnhub)
         env:
-          # beide Bezeichner setzen – Skripte lesen FINNHUB_TOKEN
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           LLM_DISABLED: "1"
         run: |
-          mkdir -p data/earnings
+          mkdir -p data/earnings docs
+          echo "Nutze Watchlist: ${{ steps.prep.outputs.watchlist }}"
           python scripts/fetch_earnings.py \
-            --watchlist watchlists/mylist.txt \
+            --watchlist "${{ steps.prep.outputs.watchlist }}" \
             --window-days 365 \
             --out data/earnings
+          # Falls das Script zusätzlich docs/ schreibt (earnings_next.json), fein.
 
+      # ---- Makro (FRED)
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -70,16 +103,27 @@ jobs:
           python scripts/fetch_fred.py \
             --out data/macro/fred
 
+      # ---- Übersicht der erzeugten Dateien
       - name: List written files (sizes)
         run: |
-          echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
+          echo "== data tree =="
+          find data -type f -printf "%p\t%k KB\n" | sort || true
+          echo "== docs tree =="
+          find docs -type f -printf "%p\t%k KB\n" | sort || true
           test -f data/reports/last_run.json && echo "== last_run.json ==" && cat data/reports/last_run.json || true
 
+      # ---- Fail, wenn wirklich nichts geschrieben wurde (0-Byte-Dateien ignorieren)
       - name: Fail if outputs empty
         run: |
           cnt=$(find data -type f -size +0c | wc -l || true)
-          if [ "$cnt" -eq 0 ]; then echo "No non-empty files produced."; exit 1; fi
+          dcnt=$(find docs -type f -size +0c | wc -l || true)
+          echo "Non-empty files in data: $cnt ; in docs: $dcnt"
+          if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then
+            echo "No non-empty files produced."
+            exit 1
+          fi
 
+      # ---- Committen (data + docs)
       - name: Commit updated cache & reports
         run: |
           git config user.name  "github-actions[bot]"
@@ -88,7 +132,7 @@ jobs:
           git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
           git push
 
-
+      # ---- Artefakte hochladen
       - name: Upload data artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -96,3 +140,4 @@ jobs:
           name: data-bundle
           path: |
             data/**
+            docs/**

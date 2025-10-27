@@ -154,12 +154,16 @@ jobs:
           python scripts/fetch_fred_oas.py
           tail -n 20 data/processed/fred_oas.csv || true
 
-        # ==== COT History (CFTC) ====
-      - name: Pull COT (CFTC history)
+        # ==== COT via CFTC Socrata ====
+      - name: Pull COT (CFTC Socrata)
+        env:
+          CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
+          COT_WEEKS: "156"          # ~3 Jahre; bei Bedarf kleiner/größer
+          COT_DATASET_ID: "gpe5-46if"  # TFF Futures Only
         run: |
-          python scripts/fetch_cot.py
-          head -n 5 data/processed/cot_summary.csv || true
-          test -f data/reports/cot_report.json && cat data/reports/cot_report.json || true
+          python scripts/fetch_cot_socrata.py
+          head -n 20 data/processed/cot_summary.csv || true
+          test -f data/reports/cot_errors.json && cat data/reports/cot_errors.json || true
 
 
       - name: Pull macro (FRED)

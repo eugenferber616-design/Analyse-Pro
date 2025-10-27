@@ -2,5 +2,6 @@
   "fundamentals_core.csv": 7,
   "earnings_results.csv": 28,
   "etf_basics.csv": 8,
-  "futures_quotes.csv": 14
+  "futures_quotes.csv": 14,
+  "cds_eod.csv": 0
 }

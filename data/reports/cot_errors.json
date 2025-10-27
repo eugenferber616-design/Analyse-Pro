@@ -1,19 +1,39 @@
 {
-  "ts": "2025-10-27T20:29:35.622811Z",
+  "ts": "2025-10-27T20:41:43.707073Z",
   "dataset": "gpe5-46if",
-  "since": "2022-10-31",
-  "rows": 0,
-  "latest": null,
+  "since": "2020-11-02",
+  "rows": 14331,
+  "latest": "2025-09-23",
   "filtered_markets": [
     "E-MINI S&P 500",
     "EURO FX",
     "WTI",
-    "10-YEAR NOTE"
+    "10-YEAR NOTE",
+    "GOLD"
   ],
+  "mapped_cols": {
+    "market": "market_and_exchange_names",
+    "date": "report_date_as_yyyy_mm_dd",
+    "oi": "open_interest_all",
+    "ncl": null,
+    "ncs": null,
+    "nnet": null
+  },
   "errors": [
     {
-      "stage": "fetch",
-      "msg": "HTTP 400: {\"message\":\"Query coordinator error: query.soql.no-such-column; No such column: noncomm_positions_long_all; position: Map(row -> 1, column -> 2776, line -> \\\"SELECT `id`, `market_and_exchange_names`, `report_date_as_yyyy_mm_dd`, `yyyy_report_week_ww`, `contract_market_name`, `cftc_contract_market_co"
+      "market": "WTI",
+      "stage": "filter",
+      "msg": "no_match"
+    },
+    {
+      "market": "10-YEAR NOTE",
+      "stage": "filter",
+      "msg": "no_match"
+    },
+    {
+      "market": "GOLD",
+      "stage": "filter",
+      "msg": "no_match"
     }
   ],
   "token_len": 25

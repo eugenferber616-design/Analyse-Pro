@@ -164,18 +164,36 @@ jobs:
           echo "CFTC token length: ${#CFTC_APP_TOKEN}"
 
       - name: Pull COT (CFTC Socrata)
-        # in .github/workflows/…yml
         env:
-          CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID: gpe5-46if     # Futures+Options Combined
-          COT_WEEKS: "260"              # egal – wir holen nur den neuesten Report
-          COT_MARKETS_MODE: "ALL"       # ← WICHTIG: KEIN Filter nach Watchlist
-          COT_MARKETS_FILE: watchlists/cot_markets.txt   # wird bei ALL ignoriert
-          
+            CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
+            COT_DATASET_ID: gpe5-46if
+            COT_WEEKS: "260"
+            COT_MARKETS_MODE: "ALL"
+            COT_MARKETS_FILE: watchlists/cot_markets.txt
         run: |
-          python scripts/fetch_cot_socrata.py
-          head -n 5 data/processed/cot.csv || true
-          head -n 5 data/processed/cot_summary.csv || true
+            set -e
+            echo "== Socrata smoke test =="
+            curl -sS -G "https://api.cftc.gov/resource/${COT_DATASET_ID}.json" \
+            --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
+            --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
+            --data-urlencode '$limit=1' \
+            -H "X-App-Token: ${CFTC_APP_TOKEN}" | tee /tmp/cftc_smoke.json
+            echo
+            echo "== Run fetcher =="
+            python scripts/fetch_cot_socrata.py || { 
+            echo "Fetcher failed. Dumping report:"; 
+            test -f data/reports/cot_errors.json && cat data/reports/cot_errors.json || true; 
+            exit 1; 
+            }
+            echo "== Previews =="
+            head -n 5 data/processed/cot.csv || true
+            head -n 5 data/processed/cot_summary.csv || true
+
+          
+            run: |
+            python scripts/fetch_cot_socrata.py
+            head -n 5 data/processed/cot.csv || true
+            head -n 5 data/processed/cot_summary.csv || true
 
 
       - name: Pull macro (FRED)

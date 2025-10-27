@@ -1,75 +1,92 @@
-name: Nightly Data Pull & Cache (No LLM)
+# scripts/cache.py
+import os
+import json
+import time
+import sqlite3
+import threading
 
-on:
-  schedule:
-    - cron: "30 0 * * *"
-  workflow_dispatch:
+# --- SQLite Key/Value Cache -----------------------------------------------
 
-permissions:
-  contents: write
+DB_PATH = os.path.join("data", "cache", "cache.db")
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+_con = sqlite3.connect(DB_PATH, check_same_thread=False)
+_cur = _con.cursor()
+_cur.execute("""
+CREATE TABLE IF NOT EXISTS kv (
+  k  TEXT PRIMARY KEY,
+  v  TEXT NOT NULL,
+  ts INTEGER DEFAULT (strftime('%s','now'))
+)""")
+_cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
+_con.commit()
 
-jobs:
-  run-pipeline:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+def get_json(key: str):
+    """Liest JSON aus dem Cache, gibt Python-Objekt oder None zurück."""
+    row = _cur.execute("SELECT v FROM kv WHERE k=?", (key,)).fetchone()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except Exception:
+        return None
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+def set_json(key: str, value):
+    """Schreibt Python-Objekt als JSON in den Cache (upsert)."""
+    payload = json.dumps(value, separators=(",", ":"))
+    _cur.execute(
+        "INSERT OR REPLACE INTO kv(k,v,ts) VALUES (?, ?, strftime('%s','now'))",
+        (key, payload),
+    )
+    _con.commit()
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+# --- Einfache Rate-Limiter (z.B. für Finnhub) ------------------------------
 
-      - name: Pull earnings (Finnhub)
-        env:
-          # beide Bezeichner setzen – Skripte lesen FINNHUB_TOKEN
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          LLM_DISABLED: "1"
-        run: |
-          mkdir -p data/earnings
-          python scripts/fetch_earnings.py \
-            --watchlist watchlists/mylist.csv \
-            --window-days 365 \
-            --out data/earnings
+class RateLimiter:
+    """
+    Token-Bucket über Sekunden- und Minutenfenster.
+    Standardwerte sind konservativ, passe sie ggf. an deinen Plan an.
+    """
+    def __init__(self, per_second: int = 4, per_minute: int = 50):
+        self.per_second = per_second
+        self.per_minute = per_minute
+        self._sec_tokens = per_second
+        self._min_tokens = per_minute
+        self._last_sec = time.time()
+        self._last_min = self._last_sec
+        self._lock = threading.Lock()
 
-      - name: Pull macro (FRED)
-        env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-          LLM_DISABLED: "1"
-        run: |
-          mkdir -p data/macro/fred
-          python scripts/fetch_fred.py \
-            --out data/macro/fred
+    def wait(self):
+        with self._lock:
+            now = time.time()
 
-      - name: List written files (sizes)
-        run: |
-          echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
-          echo "== reports tree =="; find data/reports -type f -printf "%p\t%k KB\n" | sort || true
-          test -f data/reports/last_run.json && echo "== last_run.json ==" && cat data/reports/last_run.json || true
+            # Sekundentopf regenerieren
+            if now - self._last_sec >= 1:
+                self._sec_tokens = self.per_second
+                self._last_sec = now
 
-      - name: Fail if outputs empty
-        run: |
-          cnt=$(find data -type f -size +0c | wc -l || true)
-          if [ "$cnt" -eq 0 ]; then echo "No non-empty files produced."; exit 1; fi
+            # Minutentopf regenerieren
+            if now - self._last_min >= 60:
+                self._min_tokens = self.per_minute
+                self._last_min = now
 
-      - name: Commit updated cache & reports
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/ || true
-          git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
-          git push
+            # Falls keine Tokens da sind -> schlafen bis mindestens ein Topf wieder gefüllt ist
+            while self._sec_tokens <= 0 or self._min_tokens <= 0:
+                now = time.time()
+                sleep_sec  = max(0.0, 1.0  - (now - self._last_sec))
+                sleep_min  = max(0.0, 60.0 - (now - self._last_min))
+                to_sleep = max(0.05, min(sleep_sec if self._sec_tokens <= 0 else 0.0,
+                                         sleep_min if self._min_tokens <= 0 else 0.0) or 0.05)
+                time.sleep(to_sleep)
 
-      - name: Upload data artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: data-bundle
-          path: |
-            data/**
+                # nach dem Schlafen nochmal regenerieren
+                now = time.time()
+                if now - self._last_sec >= 1:
+                    self._sec_tokens = self.per_second
+                    self._last_sec = now
+                if now - self._last_min >= 60:
+                    self._min_tokens = self.per_minute
+                    self._last_min = now
+
+            # Token verbrauchen
+            self._sec_tokens -= 1
+            self._min_tokens -= 1

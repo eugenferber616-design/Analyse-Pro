@@ -1,0 +1,7 @@
+{
+  "batch": 100,
+  "window_days": 7,
+  "cheap_mode": true,
+  "watchlist": "watchlists/mylist.txt",
+  "timestamp": "2025-10-27 01:18:19"
+}

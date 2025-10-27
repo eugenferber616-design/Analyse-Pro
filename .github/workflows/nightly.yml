@@ -57,7 +57,7 @@ jobs:
         run: |
           mkdir -p data/earnings
           python scripts/fetch_earnings.py \
-            --watchlist watchlists/mylist.csv \
+            --watchlist watchlists/mylist.txt \
             --window-days 365 \
             --out data/earnings
 

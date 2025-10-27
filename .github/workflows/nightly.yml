@@ -84,9 +84,10 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/ || true
+          git add data/ docs/ || true
           git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
           git push
+
 
       - name: Upload data artifact
         if: always()

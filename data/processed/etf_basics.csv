@@ -1,1 +1,9 @@
 symbol,name,category,asset_class,expense_ratio,aum,nav,beta,currency
+GLD,SPDR Gold Shares,Commodities Focused,ETF,,124532858880.0,395.18112,,USD
+HYG,iShares iBoxx $ High Yield Corporate Bond ETF,High Yield Bond,ETF,,18542909440.0,80.6633,,USD
+IWM,iShares Russell 2000 ETF,Small Blend,ETF,,70946291712.0,248.2024,,USD
+QQQ,Invesco QQQ Trust,Large Growth,ETF,,385755185152.0,611.7,,USD
+SPY,SPDR S&P 500 ETF,Large Blend,ETF,,672726646784.0,671.2819,,USD
+XLE,The Energy Select Sector SPDR Fund,Equity Energy,ETF,,26926057472.0,86.86665,,USD
+XLF,The Financial Select Sector SPDR Fund,Financial,ETF,,54020546560.0,52.78663,,USD
+XLK,The Technology Select Sector SPDR Fund,Technology,ETF,,90249887744.0,288.2354,,USD

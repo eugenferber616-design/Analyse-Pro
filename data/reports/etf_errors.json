@@ -1,47 +1,6 @@
 {
   "total": 8,
-  "ok": 0,
-  "failed": 8,
-  "errors": [
-    {
-      "symbol": "GLD",
-      "reason": "exception",
-      "msg": "Expecting value: line 1 column 1 (char 0)"
-    },
-    {
-      "symbol": "HYG",
-      "reason": "exception",
-      "msg": "Expecting value: line 1 column 1 (char 0)"
-    },
-    {
-      "symbol": "IWM",
-      "reason": "exception",
-      "msg": "Expecting value: line 1 column 1 (char 0)"
-    },
-    {
-      "symbol": "QQQ",
-      "reason": "exception",
-      "msg": "Expecting value: line 1 column 1 (char 0)"
-    },
-    {
-      "symbol": "SPY",
-      "reason": "exception",
-      "msg": "Expecting value: line 1 column 1 (char 0)"
-    },
-    {
-      "symbol": "XLE",
-      "reason": "exception",
-      "msg": "Expecting value: line 1 column 1 (char 0)"
-    },
-    {
-      "symbol": "XLF",
-      "reason": "exception",
-      "msg": "Expecting value: line 1 column 1 (char 0)"
-    },
-    {
-      "symbol": "XLK",
-      "reason": "exception",
-      "msg": "Expecting value: line 1 column 1 (char 0)"
-    }
-  ]
+  "ok": 8,
+  "failed": 0,
+  "errors": []
 }

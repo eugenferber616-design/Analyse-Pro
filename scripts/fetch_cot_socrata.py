@@ -1,306 +1,240 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Pull COT (Commitments of Traders) via CFTC Socrata open data.
+Fetch COT (CFTC) via Socrata with schema sniffing.
 
-Outputs
--------
-- data/processed/cot_summary.csv     (latest week per selected market)
-- data/processed/cot_latest_raw.csv  (raw rows of latest week per selected market)
-- data/reports/cot_errors.json       (diagnostics)
+Outputs:
+  - data/processed/cot_summary.csv     (1 Zeile je gesuchtem Markt, letzte Woche)
+  - data/processed/cot_latest_raw.csv  (alle Rohzeilen der letzten Woche für diese Märkte)
+  - data/reports/cot_errors.json       (Diagnose)
+
+ENV:
+  COT_DATASET_ID  (default 'gpe5-46if')
+  CFTC_APP_TOKEN  (Socrata App Token)
+  COT_SINCE_DATE  (YYYY-MM-DD)  ODER
+  COT_WEEKS       (Default 156)
+  COT_MARKETS     (Komma-sep. Suchbegriffe, default: 'E-MINI S&P 500, EURO FX, WTI, 10-YEAR NOTE')
 """
 
-import os
-import io
-import json
-import time
-import math
-import datetime as dt
-from typing import List, Dict
+import os, json, time, datetime as dt
+from typing import Dict, List, Optional
 
 import requests
 import pandas as pd
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Config (via ENV)
-# ──────────────────────────────────────────────────────────────────────────────
 BASE = "https://publicreporting.cftc.gov/resource"
 
-DATASET_ID = os.getenv("COT_DATASET_ID", "gpe5-46if").strip()  # TFF / disaggregated futures+opts (Socrata)
-APP_TOKEN   = os.getenv("CFTC_APP_TOKEN", "")
+DATASET_ID = os.getenv("COT_DATASET_ID", "gpe5-46if").strip()
+APP_TOKEN   = (os.getenv("CFTC_APP_TOKEN") or "").strip()
 
-# Zeitraum: entweder SINCE_DATE=YYYY-MM-DD oder WEEKS rückwärts (Default 156 ≈ 3 Jahre)
-SINCE_DATE  = os.getenv("COT_SINCE_DATE", "").strip()
+SINCE_DATE  = (os.getenv("COT_SINCE_DATE") or "").strip()
 WEEKS_BACK  = int(os.getenv("COT_WEEKS", "156"))
 
-# Märkte: Komma-separierte Schlüsselworte (case-insensitive, enthält-Filter)
 MARKETS_ENV = os.getenv("COT_MARKETS", "E-MINI S&P 500, EURO FX, WTI, 10-YEAR NOTE")
 MARKET_PATTERNS: List[str] = [m.strip() for m in MARKETS_ENV.split(",") if m.strip()]
 
-# Output-Pfade
-OUT_DIR      = "data/processed"
-REPORTS_DIR  = "data/reports"
-OUT_SUMMARY  = os.path.join(OUT_DIR, "cot_summary.csv")
-OUT_LATEST   = os.path.join(OUT_DIR, "cot_latest_raw.csv")
-OUT_REPORT   = os.path.join(REPORTS_DIR, "cot_errors.json")
+OUT_DIR     = "data/processed"
+REP_DIR     = "data/reports"
+OUT_SUMMARY = f"{OUT_DIR}/cot_summary.csv"
+OUT_LATEST  = f"{OUT_DIR}/cot_latest_raw.csv"
+OUT_REPORT  = f"{REP_DIR}/cot_errors.json"
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────────────
 def ensure_dirs():
     os.makedirs(OUT_DIR, exist_ok=True)
-    os.makedirs(REPORTS_DIR, exist_ok=True)
+    os.makedirs(REP_DIR, exist_ok=True)
 
-
-def clean_token(s: str) -> str:
-    return (s or "").strip().replace("\r", "").replace("\n", "")
-
-
-def _today_utc_date() -> dt.date:
-    return dt.datetime.utcnow().date()
-
-
-def _since_date() -> str:
+def since_date() -> str:
     if SINCE_DATE:
         return SINCE_DATE
-    # weeks back
-    days = 7 * max(1, WEEKS_BACK)
-    return (_today_utc_date() - dt.timedelta(days=days)).isoformat()
+    return (dt.datetime.utcnow().date() - dt.timedelta(days=7*max(1, WEEKS_BACK))).isoformat()
 
+def req(url: str, params: Dict) -> requests.Response:
+    headers = {}
+    if APP_TOKEN:
+        headers["X-App-Token"] = APP_TOKEN
+        params.setdefault("$$app_token", APP_TOKEN)
+    r = requests.get(url, params=params, headers=headers, timeout=60)
+    if r.status_code in (401,403) and "$$app_token" in params:
+        # Fallback ohne Token – niedrigere Rate, aber manchmal akzeptiert
+        params = {k:v for k,v in params.items() if k != "$$app_token"}
+        r = requests.get(url, params=params, timeout=60)
+    r.raise_for_status()
+    return r
 
-def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """Lower-case columns and provide aliases for common CFTC fields."""
-    if df is None or df.empty:
-        return df
-    df = df.copy()
-    df.columns = [c.lower() for c in df.columns]
+def socrata_probe_fields(dataset: str) -> List[str]:
+    """Hole 1 Zeile ohne $select, um Feldnamen zuverlässig zu bekommen."""
+    url = f"{BASE}/{dataset}.json"
+    r = req(url, {"$limit": 1})
+    js = r.json()
+    if not js:
+        return []
+    return list(js[0].keys())
 
-    # Provide soft aliases (many datasets share these names)
-    aliases = {
-        "market_and_exchange_names": ["market_and_exchange_names", "market_and_exchange_name", "mkt_and_exch"],
-        "report_date":               ["report_date_as_yyyy_mm_dd", "report_date", "report_date_as_yyyy_mm_dd_"],
-        "open_interest_all":         ["open_interest_all", "open_interest_all_", "open_interest_all__"],
-        "noncomm_positions_long_all":  ["noncomm_positions_long_all", "noncomm_long_all", "noncomm_long_all_"],
-        "noncomm_positions_short_all": ["noncomm_positions_short_all", "noncomm_short_all", "noncomm_short_all_"],
-        "noncomm_positions_net_all":   ["noncomm_positions_net_all", "noncomm_net_all", "noncomm_net_all_"],
-    }
-
-    # find first existing column for each canonical name
-    for canon, candidates in aliases.items():
-        for cand in candidates:
-            if cand in df.columns:
-                if canon != cand:
-                    df[canon] = df[cand]
-                break
-        # if none found, leave missing -> handled downstream
-    return df
-
-
-def socrata_fetch_all(dataset_id: str,
-                      app_token: str,
-                      where: str,
-                      select: str,
-                      order: str,
-                      page_size: int = 50000) -> pd.DataFrame:
-    """Fetch all rows from Socrata dataset with paging. Uses both header and
-    $$app_token param; on 401/403 retries without token (lower rate limit)."""
+def socrata_fetch(dataset: str, where: str, select: Optional[str], order: Optional[str], page=50000) -> pd.DataFrame:
+    url = f"{BASE}/{dataset}.json"
     rows = []
-    offset = 0
-    token = clean_token(app_token)
-
+    off = 0
     while True:
-        params = {
-            "$select": select,
-            "$where":  where,
-            "$order":  order,
-            "$limit":  page_size,
-            "$offset": offset
-        }
-        headers = {}
-        if token:
-            headers["X-App-Token"] = token
-            params["$$app_token"]   = token
-
-        url = f"{BASE}/{dataset_id}.json"
-        r = requests.get(url, params=params, headers=headers, timeout=60)
-
-        if r.status_code in (401, 403):
-            # fallback: try without token (sometimes header is rejected)
-            params.pop("$$app_token", None)
-            r = requests.get(url, params=params, timeout=60)
-
-        if r.status_code != 200:
-            raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
-
+        params = {"$where": where, "$limit": page, "$offset": off}
+        if select: params["$select"] = select
+        if order:  params["$order"]  = order
+        r = req(url, params)
         chunk = r.json()
         if not chunk:
             break
         rows.extend(chunk)
-        if len(chunk) < page_size:
+        if len(chunk) < page:
             break
-        offset += page_size
-        time.sleep(0.2)
-
+        off += page
+        time.sleep(0.15)
     return pd.DataFrame(rows)
 
+def pick_first(existing: List[str], candidates: List[str]) -> Optional[str]:
+    ex = set(x.lower() for x in existing)
+    for c in candidates:
+        if c.lower() in ex:
+            return c
+    return None
 
-def percent_share(series: pd.Series) -> float:
-    if series is None or len(series) == 0:
-        return None
-    s = pd.to_numeric(series, errors="coerce").fillna(0.0)
-    total = s.sum()
-    if total <= 0:
-        return None
-    return float(100.0 * s.max() / total)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Main
-# ──────────────────────────────────────────────────────────────────────────────
 def main() -> int:
     ensure_dirs()
-    errors: List[Dict] = []
+    errs: List[Dict] = []
+    sdate = since_date()
 
-    since = _since_date()
-    select = ",".join([
-        "market_and_exchange_names",
-        "report_date_as_yyyy_mm_dd",
-        "open_interest_all",
-        "noncomm_positions_long_all",
-        "noncomm_positions_short_all",
-        "noncomm_positions_net_all"
-    ])
-    where  = f"report_date_as_yyyy_mm_dd >= '{since}'"
-    order  = "report_date_as_yyyy_mm_dd ASC"
-
+    # 1) Schema sniffen
     try:
-        df = socrata_fetch_all(
-            dataset_id=DATASET_ID,
-            app_token=APP_TOKEN,
-            where=where,
-            select=select,
-            order=order,
-            page_size=50000
-        )
+        fields = socrata_probe_fields(DATASET_ID)
     except Exception as e:
-        # Hard failure: write empty outputs + report error
+        report = {"ts": dt.datetime.utcnow().isoformat()+"Z",
+                  "dataset": DATASET_ID, "since": sdate, "rows": 0,
+                  "filtered_markets": MARKET_PATTERNS,
+                  "errors":[{"stage":"probe","msg":str(e)}],
+                  "token_len": len(APP_TOKEN)}
         pd.DataFrame(columns=["market","report_date","oi","ncl","ncs","noncomm_net"]).to_csv(OUT_SUMMARY, index=False)
         pd.DataFrame().to_csv(OUT_LATEST, index=False)
-        report = {
-            "ts": dt.datetime.utcnow().isoformat()+"Z",
-            "dataset": DATASET_ID,
-            "since": since,
-            "rows": 0,
-            "latest": None,
-            "filtered_markets": MARKET_PATTERNS,
-            "errors": [{"stage": "fetch", "msg": str(e)}],
-            "token_len": len(clean_token(APP_TOKEN))
-        }
-        with open(OUT_REPORT, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2)
-        print("COT fetch failed:", e)
+        with open(OUT_REPORT,"w",encoding="utf-8") as f: json.dump(report,f,indent=2)
+        print("COT probe failed:", e)
         return 0
 
-    df = _normalize_cols(df)
+    # Kandidaten für übliche Feldnamen (verschiedene Datasets/Versionen)
+    cand_market = [
+        "market_and_exchange_names","market_and_exchange_name","contract_market_name",
+        "mkt_and_exch","market_name","cftc_contract_market_name"
+    ]
+    cand_date = [
+        "report_date_as_yyyy_mm_dd","report_date","as_of_date","report_date_as_yyyy_mm_dd_"
+    ]
+    cand_oi = [
+        "open_interest_all","open_interest_all_","futopt_tot_open_interest","open_interest"
+    ]
+    cand_noncomm_long = [
+        "noncomm_positions_long_all","noncomm_long_all","noncomm_long","noncomm_long_all_",
+        "tff_noncomm_long_all","tff_money_mgr_long_all"
+    ]
+    cand_noncomm_short = [
+        "noncomm_positions_short_all","noncomm_short_all","noncomm_short","noncomm_short_all_",
+        "tff_noncomm_short_all","tff_money_mgr_short_all"
+    ]
+    cand_noncomm_net = [
+        "noncomm_positions_net_all","noncomm_net_all","noncomm_net","tff_noncomm_net_all",
+        "tff_money_mgr_net_all"
+    ]
 
-    # early exit if nothing
-    if df is None or df.empty or "market_and_exchange_names" not in df.columns:
-        pd.DataFrame(columns=["market","report_date","oi","ncl","ncs","noncomm_net"]).to_csv(OUT_SUMMARY, index=False)
-        pd.DataFrame().to_csv(OUT_LATEST, index=False)
-        report = {
-            "ts": dt.datetime.utcnow().isoformat()+"Z",
-            "dataset": DATASET_ID,
-            "since": since,
-            "rows": 0,
-            "latest": None,
-            "filtered_markets": MARKET_PATTERNS,
-            "errors": [{"stage": "normalize", "msg": "no rows or missing columns"}],
-            "token_len": len(clean_token(APP_TOKEN))
-        }
-        with open(OUT_REPORT, "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2)
-        print("COT note: no rows")
-        return 0
+    m_col = pick_first(fields, cand_market)
+    d_col = pick_first(fields, cand_date)
+    oi_col = pick_first(fields, cand_oi)
+    nl_col = pick_first(fields, cand_noncomm_long)
+    ns_col = pick_first(fields, cand_noncomm_short)
+    nn_col = pick_first(fields, cand_noncomm_net)
 
-    # Coerce date + numbers
-    if "report_date" not in df.columns and "report_date_as_yyyy_mm_dd" in df.columns:
-        df["report_date"] = df["report_date_as_yyyy_mm_dd"]
-    if "report_date" in df.columns:
-        df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce").dt.date
-
-    for col in ["open_interest_all", "noncomm_positions_long_all", "noncomm_positions_short_all", "noncomm_positions_net_all"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Filter by patterns, then pick latest week per pattern
-    summary_rows = []
-    latest_rows = []
-
-    for pat in MARKET_PATTERNS:
+    # Mindestset muss existieren
+    if not (m_col and d_col):
+        errs.append({"stage":"map","msg":f"mandatory columns missing. have={fields[:10]}..."})
+        df = pd.DataFrame()
+    else:
+        # 2) Daten holen – ohne $select (sicherer), wir filtern über $where + sortieren
+        where = f"{d_col} >= '{sdate}'"
         try:
-            sub = df[df["market_and_exchange_names"].str.contains(pat, case=False, na=False)].copy()
-            if sub.empty:
-                errors.append({"market": pat, "stage": "filter", "msg": "no_match"})
-                continue
-
-            latest_date = sub["report_date"].max() if "report_date" in sub.columns else None
-            if latest_date is None:
-                errors.append({"market": pat, "stage": "latest", "msg": "no_report_date"})
-                continue
-
-            latest = sub[sub["report_date"] == latest_date].copy()
-            if latest.empty:
-                errors.append({"market": pat, "stage": "latest", "msg": "no_latest_rows"})
-                continue
-
-            # Summaries (aggregate if multiple rows per market)
-            oi  = float(pd.to_numeric(latest.get("open_interest_all", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-            ncl = float(pd.to_numeric(latest.get("noncomm_positions_long_all", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-            ncs = float(pd.to_numeric(latest.get("noncomm_positions_short_all", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-            nnet = float(pd.to_numeric(latest.get("noncomm_positions_net_all", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-
-            summary_rows.append({
-                "market": pat,
-                "report_date": latest_date.isoformat(),
-                "oi": int(oi),
-                "ncl": int(ncl),
-                "ncs": int(ncs),
-                "noncomm_net": int(nnet)
-            })
-
-            latest["filter_key"] = pat
-            latest_rows.append(latest)
+            df = socrata_fetch(DATASET_ID, where=where, select=None, order=f"{d_col} ASC")
         except Exception as e:
-            errors.append({"market": pat, "stage": "process", "msg": str(e)})
+            errs.append({"stage":"fetch","msg":str(e)})
+            df = pd.DataFrame()
 
-    # Write outputs
-    pd.DataFrame(summary_rows, columns=["market","report_date","oi","ncl","ncs","noncomm_net"]).to_csv(OUT_SUMMARY, index=False)
+    if df.empty:
+        pd.DataFrame(columns=["market","report_date","oi","ncl","ncs","noncomm_net"]).to_csv(OUT_SUMMARY, index=False)
+        pd.DataFrame().to_csv(OUT_LATEST, index=False)
+        with open(OUT_REPORT,"w",encoding="utf-8") as f:
+            json.dump({"ts": dt.datetime.utcnow().isoformat()+"Z",
+                       "dataset": DATASET_ID, "since": sdate, "rows": 0,
+                       "filtered_markets": MARKET_PATTERNS, "errors": errs,
+                       "token_len": len(APP_TOKEN)}, f, indent=2)
+        print("COT: no rows")
+        return 0
 
-    if latest_rows:
-        raw = pd.concat(latest_rows, ignore_index=True)
-        raw.to_csv(OUT_LATEST, index=False)
+    # Normieren
+    df = df.rename(columns={m_col:"market_name", d_col:"report_date"})
+    df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce").dt.date
+
+    # Optional-Kennzahlen zu numerisch casten (falls vorhanden)
+    for c, newc in [(oi_col,"open_interest_all"),
+                    (nl_col,"noncomm_long_all"),
+                    (ns_col,"noncomm_short_all"),
+                    (nn_col,"noncomm_net_all")]:
+        if c and c in df.columns:
+            df[newc] = pd.to_numeric(df[c], errors="coerce")
+
+    # 3) Märkte filtern und je Markt die letzte Woche zusammenfassen
+    summary = []
+    latest_raw_parts = []
+
+    for key in MARKET_PATTERNS:
+        sub = df[df["market_name"].str.contains(key, case=False, na=False)].copy()
+        if sub.empty:
+            errs.append({"market":key,"stage":"filter","msg":"no_match"})
+            continue
+
+        latest_date = sub["report_date"].max()
+        latest = sub[sub["report_date"] == latest_date].copy()
+
+        # Summen/Netto nur, wenn vorhanden – sonst None
+        def safe_sum(col):
+            return float(pd.to_numeric(latest[col], errors="coerce").fillna(0).sum()) if col in latest.columns else None
+
+        oi  = safe_sum("open_interest_all")
+        ncl = safe_sum("noncomm_long_all")
+        ncs = safe_sum("noncomm_short_all")
+        nnt = safe_sum("noncomm_net_all")
+
+        summary.append({
+            "market": key,
+            "report_date": latest_date.isoformat(),
+            "oi": int(oi) if oi is not None else None,
+            "ncl": int(ncl) if ncl is not None else None,
+            "ncs": int(ncs) if ncs is not None else None,
+            "noncomm_net": int(nnt) if nnt is not None else None
+        })
+
+        latest["filter_key"] = key
+        latest_raw_parts.append(latest)
+
+    pd.DataFrame(summary, columns=["market","report_date","oi","ncl","ncs","noncomm_net"]).to_csv(OUT_SUMMARY, index=False)
+    if latest_raw_parts:
+        pd.concat(latest_raw_parts, ignore_index=True).to_csv(OUT_LATEST, index=False)
     else:
         pd.DataFrame().to_csv(OUT_LATEST, index=False)
 
-    report = {
-        "ts": dt.datetime.utcnow().isoformat()+"Z",
-        "dataset": DATASET_ID,
-        "since": since,
-        "rows": int(len(df)),
-        "latest": None if df.get("report_date") is None or df["report_date"].isna().all()
-                  else str(pd.to_datetime(df["report_date"]).max().date()),
-        "filtered_markets": MARKET_PATTERNS,
-        "errors": errors,
-        "token_len": len(clean_token(APP_TOKEN))
-    }
-    with open(OUT_REPORT, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    with open(OUT_REPORT,"w",encoding="utf-8") as f:
+        json.dump({"ts": dt.datetime.utcnow().isoformat()+"Z",
+                   "dataset": DATASET_ID, "since": sdate,
+                   "rows": int(len(df)),
+                   "latest": str(pd.to_datetime(df["report_date"]).max().date()),
+                   "filtered_markets": MARKET_PATTERNS,
+                   "mapped_cols": {"market":m_col,"date":d_col,"oi":oi_col,"ncl":nl_col,"ncs":ns_col,"nnet":nn_col},
+                   "errors": errs,
+                   "token_len": len(APP_TOKEN)}, f, indent=2)
 
-    print(f"wrote {OUT_SUMMARY} rows={len(summary_rows)} ; latest_raw={OUT_LATEST}")
+    print(f"wrote {OUT_SUMMARY} rows={len(summary)} ; latest_raw={OUT_LATEST}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

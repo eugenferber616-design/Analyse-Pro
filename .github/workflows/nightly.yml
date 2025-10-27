@@ -166,14 +166,14 @@ jobs:
       - name: Pull COT (CFTC Socrata)
         env:
           CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID: gpe5-46if
-          COT_WEEKS: "260"   # ~5 Jahre
-          COT_MARKETS: ""
+          COT_DATASET_ID: gpe5-46if     # Futures+Options Combined
+          COT_WEEKS: "260"              # ~5 Jahre (kannst du erhöhen, z.B. 520)
+          COT_MARKETS_FILE: watchlists/cot_markets.txt
         run: |
           python scripts/fetch_cot_socrata.py
+          head -n 5 data/processed/cot.csv || true
           head -n 5 data/processed/cot_summary.csv || true
-          # Kompat-Alias für alte Verbraucher
-          cp -f data/processed/cot_summary.csv data/processed/cot.csv
+
 
       - name: Pull macro (FRED)
         env:

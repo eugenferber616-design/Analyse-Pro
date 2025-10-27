@@ -168,7 +168,7 @@ jobs:
           CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
           COT_DATASET_ID: gpe5-46if
           COT_WEEKS: "260"   # ~5 Jahre
-          COT_MARKETS: "E-MINI S&P 500, EURO FX, WTI, 10-YEAR NOTE, GOLD"
+          COT_MARKETS: "ALL"
         run: |
           python scripts/fetch_cot_socrata.py
           head -n 5 data/processed/cot_summary.csv || true

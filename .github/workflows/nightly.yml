@@ -1,14 +1,9 @@
-name: Nightly Data Pull & Cache
+name: Nightly Data Pull & Cache (No LLM)
 
 on:
   schedule:
-    - cron: "30 0 * * *"         # täglich 00:30 UTC
-  workflow_dispatch:             # manueller Start
-    inputs:
-      extra_args:
-        description: "Zusätzliche Args für nightly.py (z.B. --watchlist watchlists/sample_watchlist.csv)"
-        required: false
-        default: ""
+    - cron: "30 0 * * *"       # täglich 00:30 UTC
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,13 +11,9 @@ permissions:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -34,30 +25,42 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ensure data folders exist
-        run: |
-          mkdir -p data data/reports data/fundamentals data/macro/fred data/earnings
-          # .gitkeep, damit Ordner in Commits auftauchen
-          touch data/.gitkeep data/reports/.gitkeep data/fundamentals/.gitkeep data/macro/fred/.gitkeep data/earnings/.gitkeep
-
-      - name: Run nightly pipeline
+      - name: Run nightly pipeline (Finnhub+FRED only)
         env:
-            OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-            FRED_API_KEY:   ${{ secrets.FRED_API_KEY }}
-            FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-            MAX_OPENAI_EUR_PER_MONTH: ${{ secrets.MAX_OPENAI_EUR_PER_MONTH }}
+          FRED_API_KEY:   ${{ secrets.FRED_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          # harte Abschaltung von LLM:
+          LLM_DISABLED: "1"
         run: |
-          python scripts/nightly.py --watchlist watchlists/mylist.txt --window-days 7 --cheap-mode
+          python scripts/nightly.py \
+            --watchlist watchlists/mylist.txt \
+            --window-days 30 \
+            --no-llm \
+            --sources finnhub,fred
 
+      - name: List written files (sizes)
+        run: |
+          echo "== data tree =="
+          find data -type f -printf "%p\t%k KB\n" | sort || true
+          echo "== reports tree =="
+          find reports -type f -printf "%p\t%k KB\n" | sort || true
+          test -f last_run.json && echo "== last_run.json ==" && cat last_run.json || true
+
+      - name: Fail if outputs empty
+        run: |
+          cnt=$(find data -type f -size +0c | wc -l || true)
+          if [ "$cnt" -eq 0 ]; then
+            echo "No non-empty files produced."
+            exit 1
+          fi
 
       - name: Commit updated cache & reports
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A data/
-          git status
-          git commit -m "Nightly cache update" || echo "Nothing to commit"
-          git push || echo "Nothing to push"
+          git add data/cache/ reports/ || true
+          git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
+          git push
 
       - name: Upload data artifact
         if: always()
@@ -66,3 +69,5 @@ jobs:
           name: data-bundle
           path: |
             data/**
+            reports/**
+            last_run.json

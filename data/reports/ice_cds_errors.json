@@ -4,13 +4,31 @@
   "errors": [
     {
       "source": "single_names",
-      "reason": "exception",
+      "reason": "http",
       "msg": "404 Client Error: Not Found for url: https://www.ice.com/report/180"
     },
     {
+      "source": "single_names",
+      "reason": "http",
+      "msg": "404 Client Error: Not Found for url: https://www.ice.com/report/180"
+    },
+    {
+      "source": "single_names",
+      "reason": "no_data"
+    },
+    {
       "source": "indices",
-      "reason": "exception",
+      "reason": "http",
       "msg": "404 Client Error: Not Found for url: https://www.ice.com/report/181"
+    },
+    {
+      "source": "indices",
+      "reason": "http",
+      "msg": "404 Client Error: Not Found for url: https://www.ice.com/report/181"
+    },
+    {
+      "source": "indices",
+      "reason": "no_data"
     }
   ]
 }

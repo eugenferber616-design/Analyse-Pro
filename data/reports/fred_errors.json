@@ -1,1 +1,1 @@
-[]
+[{"id": "GOLDAMGBD228NLBM", "error": "400 Client Error: Bad Request for url: https://api.stlouisfed.org/fred/series/observations?series_id=GOLDAMGBD228NLBM&api_key=a62b1a06c6cdc4bb8c32d733a492326f&file_type=json&observation_start=1990-01-01"}]

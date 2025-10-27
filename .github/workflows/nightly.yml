@@ -135,6 +135,15 @@ jobs:
           head -n 30 data/processed/futures_quotes.csv || true
           test -f data/reports/fut_errors.json && cat data/reports/fut_errors.json || true
 
+          - name: Pull ICE CDS EoD (public tables)
+          run: |
+          python scripts/fetch_ice_cds_snapshot.py \
+          --out data/processed/cds_eod.csv \
+          --rawdir data/cds || true
+          tail -n 20 data/processed/cds_eod.csv || true
+          test -f data/reports/ice_cds_errors.json && cat data/reports/ice_cds_errors.json || true
+
+
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}

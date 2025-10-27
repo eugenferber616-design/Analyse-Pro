@@ -1,222 +1,223 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Fetch COT history from CFTC (robust, multiple fallbacks) and build a compact summary.
+Robustes COT-Fetch:
+1) Bevorzugt die aktuellen Weekly-Feeds (newcot/*.txt)
+2) Fallback: versucht mehrere History-ZIP-Muster pro Jahr
+3) Aggregiert zu einer kleinen Summary (neueste Woche je Markt)
 
 Outputs
-- data/processed/cot_summary.csv    (tiny, kept in git)
-- data/processed/cot.csv.gz         (compressed full table; excluded from git)
-- data/reports/cot_report.json      (counts + errors)
-Raw cache (optional):
-- data/cot/raw/*.zip
+- data/processed/cot_summary.csv
+- data/reports/cot_errors.json
 """
 
-import os, io, json, gzip, csv, re, sys, time
+import os, io, sys, json, zipfile, time, re
 from datetime import datetime
-from typing import List, Tuple
-import pandas as pd
 import requests
-from zipfile import ZipFile
+import pandas as pd
 
-# ---------------- utils ----------------
 SESSION = requests.Session()
-SESSION.headers.update({"User-Agent": "cot-fetch/1.0"})
+SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (COT lightweight fetch; github actions)"
+})
+BASE = "https://www.cftc.gov"
+
+# Weekly feeds (relativ stabil, CSV-kompatibel)
+WEEKLY_ENDPOINTS = [
+    "/dea/newcot/FinFutWk.txt",     # Financial Futures (CSV-like)
+    "/dea/newcot/FutWk.txt",        # Legacy Futures (CSV-like)
+    "/dea/newcot/deacotdisagg.txt", # Disaggregated Futures (CSV-like)
+]
+
+# Yearly ZIP candidates – wir testen mehrere Muster je Jahr
+ZIP_PATTERNS = [
+    "/dea/history/deacotdisagg_txt_{YYYY}.zip",
+    "/dea/history/deahistfo_{YYYY}.zip",
+    "/dea/history/deahist_{YYYY}.zip",
+    "/dea/history/deacot_{YYYY}.zip",
+    "/dea/newcot/deacotdisagg_txt_{YYYY}.zip",  # manche Jahre liegen (noch) unter newcot
+]
+
+OUT_SUMMARY = "data/processed/cot_summary.csv"
+OUT_ERRORS  = "data/reports/cot_errors.json"
 
 def ensure_dirs():
     os.makedirs("data/processed", exist_ok=True)
     os.makedirs("data/reports", exist_ok=True)
-    os.makedirs("data/cot/raw", exist_ok=True)
 
-def ylist(start=2006) -> List[int]:
-    y0 = int(os.getenv("COT_START_YEAR", start))
-    y1 = datetime.utcnow().year
-    return list(range(y0, y1 + 1))
-
-def try_download(url: str) -> bytes:
+def fetch_text(url):
     r = SESSION.get(url, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"{r.status_code} for {url}")
+    return r.text
+
+def fetch_bytes(url):
+    r = SESSION.get(url, timeout=120)
     if r.status_code != 200:
         raise RuntimeError(f"{r.status_code} for {url}")
     return r.content
 
-def first_member(z: ZipFile, patterns: Tuple[str, ...]) -> str:
-    names = z.namelist()
-    for p in patterns:
-        for n in names:
-            if re.search(p, n, re.IGNORECASE):
-                return n
-    # fallback: erste Textdatei
-    for n in names:
-        if n.lower().endswith(".txt"):
-            return n
-    raise RuntimeError("no text file in zip")
-
-def parse_legacy_txt(text: str) -> pd.DataFrame:
-    """
-    CFTC text files are pipe '|' or comma separated, with header lines.
-    We normalize to CSV by replacing multiple spaces and splitting on comma or pipe.
-    """
-    lines = []
-    for ln in text.splitlines():
-        ln = ln.strip()
-        if not ln:
-            continue
-        # skip obvious header separators
-        if ln.lower().startswith("as of") or ln.lower().startswith("legacy") or ln.lower().startswith("disaggregated"):
-            continue
-        lines.append(ln)
-
-    # detect delimiter
-    sample = "|".join(lines[:5])
-    delim = "|" if "|" in sample else ","
-
-    # read with pandas
-    df = pd.read_csv(io.StringIO("\n".join(lines)), sep=delim, engine="python", dtype=str)
-    # unify column names
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    return df
-
-def normalize(df: pd.DataFrame) -> pd.DataFrame:
-    # Common columns across legacy/disaggregated often include:
-    # market_and_exchange_names, as_of_date_in_form_yyyymmdd, open_interest_all,
-    # noncomm_positions_long_all, noncomm_positions_short_all,
-    # comm_positions_long_all, comm_positions_short_all, 
-    # (or disaggregated equivalents: prod_merchant_long, money_mgr_long, etc.)
-    cols = {c: c for c in df.columns}
-
-    # Map potential variants
-    date_col = next((c for c in df.columns if "as_of_date" in c or c == "report_date_as_yyyymmdd"), None)
-    name_col = next((c for c in df.columns if "market_and_exchange" in c), None)
-    if not date_col or not name_col:
-        # sometimes 'market_and_exchange_names' is 'market_and_exchange_name'
-        name_col = name_col or next((c for c in df.columns if "market_and_exchange_name" in c), None)
-    if not date_col or not name_col:
-        raise RuntimeError("cannot find date/name columns")
-
-    out = pd.DataFrame()
-    out["date"]  = pd.to_datetime(df[date_col].astype(str), errors="coerce")
-    out["market"] = df[name_col].astype(str)
-
-    def num(col_candidates: List[str]) -> pd.Series:
-        for cc in col_candidates:
-            if cc in df.columns:
-                return pd.to_numeric(df[cc].astype(str).str.replace("[^0-9\\-\\.]", "", regex=True), errors="coerce")
-        return pd.Series([pd.NA]*len(df))
-
-    # Non-commercial long/short (legacy) or use disaggregated approximations (managed money)
-    out["noncomm_long"]  = num([
-        "noncomm_positions_long_all",
-        "m_money_mgr_long_all", "money_manager_long_all"
-    ])
-    out["noncomm_short"] = num([
-        "noncomm_positions_short_all",
-        "m_money_mgr_short_all", "money_manager_short_all"
-    ])
-    out["comm_long"]     = num([
-        "comm_positions_long_all",
-        "prod_merc_long_all","producer_merchant_long_all"
-    ])
-    out["comm_short"]    = num([
-        "comm_positions_short_all",
-        "prod_merc_short_all","producer_merchant_short_all"
-    ])
-    return out
-
-# -------------- main fetch --------------
-def fetch_all() -> Tuple[pd.DataFrame, list]:
-    errs = []
+def try_weekly_frames(errors):
+    """Versucht die drei Weekly-Feeds. Rückgabe: Liste DataFrames (kann leer sein)."""
     frames = []
+    for rel in WEEKLY_ENDPOINTS:
+        url = BASE + rel
+        try:
+            txt = fetch_text(url)
+            # Weekly-Dateien sind i.d.R. CSV-kompatibel (quoted)
+            df = pd.read_csv(io.StringIO(txt))
+            if not df.empty:
+                df["__source"] = rel.split("/")[-1]
+                frames.append(df)
+        except Exception as e:
+            errors.append({"stage": "weekly", "url": url, "msg": str(e)})
+        time.sleep(0.3)
+    return frames
 
-    years = ylist(2006)
+def try_zip_year(year, errors):
+    """Versucht mehrere ZIP-Namen pro Jahr, liefert Liste DataFrames aus gefundenen CSV/TXT Dateien."""
+    for pat in ZIP_PATTERNS:
+        url = BASE + pat.format(YYYY=year)
+        try:
+            content = fetch_bytes(url)
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                dfs = []
+                for name in zf.namelist():
+                    if not name.lower().endswith((".csv", ".txt")):
+                        continue
+                    raw = zf.read(name)
+                    # Viele CFTC-Textdateien sind CSV-ähnlich
+                    try:
+                        df = pd.read_csv(io.BytesIO(raw))
+                    except Exception:
+                        # Fallback: Semikolon / Tab / Pipe testen
+                        for sep in [";", "\t", "|"]:
+                            try:
+                                df = pd.read_csv(io.BytesIO(raw), sep=sep)
+                                break
+                            except Exception:
+                                df = None
+                    if df is not None and not df.empty:
+                        df["__source"] = f"{os.path.basename(url)}:{name}"
+                        dfs.append(df)
+                if dfs:
+                    return dfs  # beim ersten erfolgreichen ZIP aufhören
+        except Exception as e:
+            errors.append({"stage": "zip", "year": year, "url": url, "msg": str(e)})
+        time.sleep(0.3)
+    return []
 
-    # Modern disaggregated annual zips (pattern tried first)
-    # Examples historically used by CFTC; we try multiple patterns.
-    patt_disagg = [
-        "https://www.cftc.gov/files/dea/history/deacotdisagg_txt_{Y}.zip",
-        "https://www.cftc.gov/files/dea/history/deacotdisagg_{Y}.zip",
-        "https://www.cftc.gov/dea/newcot/deacotdisagg_txt_{Y}.zip",
-    ]
-    # Legacy futures+options history (pre-2006 exist as single-year zips)
-    patt_legacy = [
-        "https://www.cftc.gov/files/dea/history/deahistfo_{Y}.zip",
-        "https://www.cftc.gov/dea/history/deahistfo_{Y}.zip",
-    ]
+def normalize_columns(df):
+    """
+    Vereinheitlicht die wichtigsten Spaltennamen, soweit möglich.
+    CFTC liefert je Datei leicht unterschiedliche Labels.
+    Wir mappen häufige Varianten auf ein gemeinsames Set.
+    """
+    colmap = {c.lower(): c for c in df.columns}
+    def has(name):
+        return name in colmap
 
-    for Y in years:
-        got = False
-        for patt in patt_disagg + patt_legacy:
-            url = patt.format(Y=Y)
-            try:
-                raw = try_download(url)
-                raw_path = f"data/cot/raw/{os.path.basename(url)}"
-                with open(raw_path, "wb") as f:
-                    f.write(raw)
-                with ZipFile(io.BytesIO(raw)) as z:
-                    member = first_member(z, patterns=(r"txt$", r".*\\.txt$"))
-                    text = z.read(member).decode("latin-1", errors="ignore")
-                    df0 = parse_legacy_txt(text)
-                    dfN = normalize(df0)
-                    dfN["year_src"] = Y
-                    frames.append(dfN)
-                    got = True
-                break
-            except Exception as e:
-                errs.append({"year": Y, "url": url, "msg": str(e)})
-        if not got:
-            # do not abort whole run—continue
-            continue
+    # häufige Namensvarianten
+    rename = {}
+    for c in df.columns:
+        lc = c.lower()
+        if lc in ("market_and_exchange_names", "market_and_exchange_name"):
+            rename[c] = "market"
+        elif lc in ("as_of_date_in_form_mm/dd/yyyy","report_date_as_yyyy-mm-dd","report_date_as_yyyy_mm_dd",
+                    "report_date_as_yyyymmdd","report_date"):
+            rename[c] = "report_date"
+        elif lc in ("open_interest_all","open_interest"):
+            rename[c] = "oi"
+        elif "noncomm" in lc and "long" in lc:
+            rename[c] = "noncomm_long"
+        elif "noncomm" in lc and "short" in lc:
+            rename[c] = "noncomm_short"
+        elif ("noncommercial" in lc and "long" in lc):
+            rename[c] = "noncomm_long"
+        elif ("noncommercial" in lc and "short" in lc):
+            rename[c] = "noncomm_short"
+        elif ("commercial" in lc and "long" in lc):
+            rename[c] = "comm_long"
+        elif ("commercial" in lc and "short" in lc):
+            rename[c] = "comm_short"
+        elif ("nonreportable" in lc and "long" in lc) or ("nonrep" in lc and "long" in lc):
+            rename[c] = "nonrep_long"
+        elif ("nonreportable" in lc and "short" in lc) or ("nonrep" in lc and "short" in lc):
+            rename[c] = "nonrep_short"
+        elif ("spread" in lc) and ("noncomm" in lc or "noncommercial" in lc):
+            rename[c] = "noncomm_spread"
 
+    df = df.rename(columns=rename)
+
+    # report_date in ein Datumsformat bringen
+    if "report_date" in df.columns:
+        try:
+            df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
+        except Exception:
+            pass
+    else:
+        # manche Dateien haben "As of" etc. – ignorieren wir dann
+        df["report_date"] = pd.NaT
+
+    # Marktname
+    if "market" not in df.columns:
+        # manche Dateien splitten Name/Exchange getrennt:
+        cand = [c for c in df.columns if "market" in c.lower()]
+        if cand:
+            df["market"] = df[cand[0]]
+        else:
+            df["market"] = None
+
+    pick = ["market","report_date","oi","noncomm_long","noncomm_short","noncomm_spread",
+            "comm_long","comm_short","nonrep_long","nonrep_short","__source"]
+    present = [c for c in pick if c in df.columns]
+    return df[present].copy()
+
+def aggregate_latest(frames):
+    """Wählt pro Markt die neueste Woche und gibt eine kompakte Tabelle zurück."""
     if not frames:
-        return pd.DataFrame(), errs
-
+        return pd.DataFrame(columns=[
+            "market","report_date","oi","noncomm_long","noncomm_short","noncomm_spread",
+            "comm_long","comm_short","nonrep_long","nonrep_short","source"
+        ])
     df = pd.concat(frames, ignore_index=True)
-    df = df.dropna(subset=["date", "market"])
-    df = df.sort_values(["market", "date"])
-    return df, errs
-
-def build_summary(df: pd.DataFrame) -> pd.DataFrame:
-    # letzte Woche pro Markt + Kernzahlen
-    ix = df.groupby("market")["date"].idxmax()
-    last = df.loc[ix, ["market", "date", "noncomm_long","noncomm_short","comm_long","comm_short"]].copy()
-    last["noncomm_net"] = last["noncomm_long"].fillna(0) - last["noncomm_short"].fillna(0)
-    last["comm_net"]    = last["comm_long"].fillna(0)    - last["comm_short"].fillna(0)
-    last = last.sort_values("market").reset_index(drop=True)
+    df = normalize_columns(df)
+    # neueste Woche je Markt
+    df = df.sort_values(["market","report_date"])
+    last = df.groupby("market").tail(1).reset_index(drop=True)
+    last = last.rename(columns={"__source":"source"})
     return last
 
 def main():
     ensure_dirs()
+    errors = []
+    frames = []
 
-    df, errs = fetch_all()
+    # 1) Weekly first
+    weekly = try_weekly_frames(errors)
+    frames.extend(weekly)
 
-    if df.empty:
-        # still write empty summary & report
-        pd.DataFrame(columns=["market","date","noncomm_long","noncomm_short","comm_long","comm_short","noncomm_net","comm_net"])\
-          .to_csv("data/processed/cot_summary.csv", index=False)
-        report = {"ts": datetime.utcnow().isoformat()+"Z", "rows": 0, "errors": errs}
-        with open("data/reports/cot_report.json","w") as f: json.dump(report, f, indent=2)
-        print("no COT data fetched.")
-        return 0
+    # 2) If nothing, try some years (neueste -> zurück)
+    if not frames:
+        current_year = datetime.utcnow().year
+        for y in range(current_year, current_year-5, -1):
+            dfs = try_zip_year(y, errors)
+            if dfs:
+                frames.extend(dfs)
+                break
 
-    # write full compressed
-    full_out = "data/processed/cot.csv.gz"
-    with gzip.open(full_out, "wt", encoding="utf-8") as gz:
-        df.to_csv(gz, index=False)
-    print("wrote", full_out, "rows=", len(df))
+    # 3) Aggregate
+    summary = aggregate_latest(frames)
 
-    # summary
-    sm = build_summary(df)
-    sm.to_csv("data/processed/cot_summary.csv", index=False)
-    print("wrote data/processed/cot_summary.csv rows=", len(sm))
+    # 4) Write outputs
+    summary.to_csv(OUT_SUMMARY, index=False)
+    print(f"wrote {OUT_SUMMARY} rows={len(summary)}")
 
-    # report
-    report = {
-        "ts": datetime.utcnow().isoformat()+"Z",
-        "rows_full": int(len(df)),
-        "rows_summary": int(len(sm)),
-        "years": list(sorted(df["date"].dt.year.unique().tolist())),
-        "errors": errs[:50],
-    }
-    with open("data/reports/cot_report.json","w") as f:
-        json.dump(report, f, indent=2)
+    with open(OUT_ERRORS, "w", encoding="utf-8") as f:
+        json.dump({"errors": errors[-100:]}, f, indent=2)
+
+    if not len(summary):
+        print("COT note: no rows (see cot_errors.json)")
 
     return 0
 

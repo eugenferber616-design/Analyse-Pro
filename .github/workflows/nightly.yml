@@ -11,6 +11,7 @@ permissions:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,26 +26,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run nightly pipeline (Finnhub+FRED only)
+      - name: Run nightly pipeline (Finnhub+FRED only, no LLM)
         env:
-          FRED_API_KEY:   ${{ secrets.FRED_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          # harte Abschaltung von LLM:
+          FRED_API_KEY:      ${{ secrets.FRED_API_KEY }}
+          FINNHUB_API_KEY:   ${{ secrets.FINNHUB_API_KEY }}
+          # harte Abschaltung von LLM (Script liest das und nutzt kein OpenAI):
           LLM_DISABLED: "1"
         run: |
+          # Variante A: Watchlist (empfohlen zum Testen)
           python scripts/nightly.py \
             --watchlist watchlists/mylist.txt \
             --window-days 30 \
-            --no-llm \
-            --sources finnhub,fred
+            --cheap-mode
+          # Variante B: große Batch (erst nutzen, wenn A sauber läuft)
+          # python scripts/nightly.py --batch 12000 --window-days 7 --cheap-mode
 
       - name: List written files (sizes)
         run: |
-          echo "== data tree =="
-          find data -type f -printf "%p\t%k KB\n" | sort || true
-          echo "== reports tree =="
-          find reports -type f -printf "%p\t%k KB\n" | sort || true
-          test -f last_run.json && echo "== last_run.json ==" && cat last_run.json || true
+          echo "== data tree ==" || true
+          (command -v tree >/dev/null || sudo apt-get update && sudo apt-get install -y tree) >/dev/null 2>&1 || true
+          tree -a data | sed -n '1,200p' || true
+          echo "== reports tree ==" || true
+          tree -a reports | sed -n '1,200p' || true
+          test -f last_run.json && { echo "== last_run.json =="; cat last_run.json; } || true
 
       - name: Fail if outputs empty
         run: |
@@ -58,7 +62,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/cache/ reports/ || true
+          git add data/cache/ reports/ last_run.json || true
           git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
           git push
 

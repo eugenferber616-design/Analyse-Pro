@@ -1,105 +1,96 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Fetch ICE BofA OAS (US & Euro) from FRED into data/processed/fred_oas.csv
-Columns: date, series_id, value, bucket, region
-- Accepts: --api-key <FRED_API_KEY>
-- Gracefully handles existing column name 'date_series_id'
-"""
-
-import os, sys, argparse, time, json
-import pandas as pd
+import os, sys, json, time
+from typing import List, Dict
 import requests
+import pandas as pd
+from datetime import datetime
 
-OUT_CSV = "data/processed/fred_oas.csv"
-REP_JSON = "data/reports/fred_errors.json"
-os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
-os.makedirs(os.path.dirname(REP_JSON), exist_ok=True)
+FRED_API = "https://api.stlouisfed.org/fred/series/observations"
 
-# FRED series map (feel free to extend when you have official Euro OAS series)
-SERIES = [
-    # US Investment Grade & High Yield (monthly, FRED)
-    {"series_id": "BAMLC0A0CM",   "bucket": "IG", "region": "US"},   # ICE BofA US Corp Master OAS
-    {"series_id": "BAMLH0A0HYM2", "bucket": "HY", "region": "US"},   # ICE BofA US High Yield OAS
-
-    # Euro area (falls verfügbar; placeholder: versuche EU IG/HY – ggf. liefern sie NAs, dann siehst du es im Report)
-    {"series_id": "BEMLCC0A0M",   "bucket": "IG", "region": "EU"},   # ICE BofA Euro IG Corp OAS (falls vorhanden)
-    {"series_id": "BEMLH0A0HYM2", "bucket": "HY", "region": "EU"},   # ICE BofA Euro High Yield OAS (falls vorhanden)
+# Bewährte OAS-Serien (US & Euro). Wenn eine Serie bei FRED nicht existiert,
+# wird sie sauber geloggt und übersprungen.
+SERIES: List[Dict[str, str]] = [
+    {"series_id": "BAMLC0A0CM",   "bucket": "US_IG"},  # ICE BofA US Corporate Master OAS
+    {"series_id": "BAMLH0A0HYM2", "bucket": "US_HY"},  # ICE BofA US High Yield OAS
+    # Euro-Buckets (funktionieren bei FRED i.d.R.; falls nicht, wird es geloggt)
+    {"series_id": "BEMLC0A0CM",   "bucket": "EU_IG"},  # ICE BofA Euro Corporate OAS
+    {"series_id": "BEMLH0A0HYM2", "bucket": "EU_HY"},  # ICE BofA Euro High Yield OAS
 ]
 
-BASE = "https://api.stlouisfed.org/fred/series/observations"
+OUT_CSV   = "data/processed/fred_oas.csv"
+ERR_JSON  = "data/reports/fred_errors.json"
+MIN_DATE  = "1998-01-01"
 
-def fetch_series(series_id: str, api_key: str):
+def fetch_series(series_id: str, api_key: str) -> pd.DataFrame:
     params = {
         "series_id": series_id,
         "api_key": api_key,
         "file_type": "json",
-        "observation_start": "1998-01-01"
+        "observation_start": MIN_DATE,
     }
-    r = requests.get(BASE, params=params, timeout=60)
+    r = requests.get(FRED_API, params=params, timeout=40)
     r.raise_for_status()
-    js = r.json()
-    obs = js.get("observations", [])
-    rows = []
-    for o in obs:
-        d = o.get("date")
-        v = o.get("value")
-        try:
-            val = float(v)
-        except Exception:
-            val = None
-        rows.append({"date": d, "series_id": series_id, "value": val})
-    return rows
+    j = r.json()
+    obs = j.get("observations", [])
+    if not obs:
+        return pd.DataFrame(columns=["date", "series_id", "value"])
+    df = pd.DataFrame(obs)
+    # Werte in float umwandeln ('.' -> NaN)
+    df = df.assign(value=pd.to_numeric(df["value"], errors="coerce"))
+    return df[["date", "value"]].assign(series_id=series_id)
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--api-key", required=True)
-    args = ap.parse_args()
+    os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
+    os.makedirs(os.path.dirname(ERR_JSON), exist_ok=True)
 
+    api_key = os.getenv("FRED_API_KEY", "")
+    if not api_key and len(sys.argv) > 1 and sys.argv[1] == "--api-key":
+        api_key = sys.argv[2]
+    if not api_key:
+        print("❌ FRED_API_KEY fehlt")
+        sys.exit(1)
+
+    rows = []
     errors = []
-    frames = []
-
     for s in SERIES:
         sid = s["series_id"]
+        bucket = s["bucket"]
         try:
-            data = fetch_series(sid, args.api_key)
-            df = pd.DataFrame(data)
-            df["bucket"] = s["bucket"]
-            df["region"] = s["region"]
-            frames.append(df)
-            time.sleep(0.2)
+            df = fetch_series(sid, api_key)
+            if df.empty:
+                errors.append({"series_id": sid, "error": "empty"})
+                continue
+            region = bucket.split("_")[0]  # US/EU
+            df["bucket"] = bucket
+            df["region"] = region
+            rows.append(df)
+        except requests.HTTPError as e:
+            errors.append({"series_id": sid, "error": f"{e.response.status_code} {e}"})
         except Exception as e:
             errors.append({"series_id": sid, "error": str(e)})
 
-    if frames:
-        df_all = pd.concat(frames, ignore_index=True)
-
-        # ---- Robust: 'date' sicherstellen & bereinigen
-        if "date" not in df_all.columns and "date_series_id" in df_all.columns:
-            df_all = df_all.rename(columns={"date_series_id": "date"})
-
-        # nur Datumsteil (YYYY-MM-DD)
-        df_all["date"] = df_all["date"].astype(str).str.slice(0, 10)
-
-        # sortiere robust, nur vorhandene Spalten verwenden
-        sort_cols = [c for c in ["date", "region", "bucket"] if c in df_all.columns]
-        if sort_cols:
-            df_all = df_all.sort_values(sort_cols)
-
-        df_all.to_csv(OUT_CSV, index=False)
+    if rows:
+        out = pd.concat(rows, ignore_index=True)
+        out.sort_values(["date", "region", "bucket", "series_id"], inplace=True)
+        out.to_csv(OUT_CSV, index=False)
+        print(f"✅ wrote {OUT_CSV} with {len(out)} rows")
     else:
-        # Wenn gar nichts geladen wurde, leere Datei mit Header schreiben
-        pd.DataFrame(columns=["date","series_id","value","bucket","region"]).to_csv(OUT_CSV, index=False)
+        # leere Datei trotzdem anlegen (Header), damit Downstream nicht crasht
+        pd.DataFrame(columns=["date","value","series_id","bucket","region"]).to_csv(OUT_CSV, index=False)
+        print("⚠️ no rows for fred_oas.csv")
 
-    report = {
-        "ts": pd.Timestamp.utcnow().isoformat(),
-        "rows": int(sum(len(f) for f in frames)) if frames else 0,
+    rep = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "rows": sum((len(x) for x in rows), 0) if rows else 0,
         "errors": errors,
-        "file": OUT_CSV
+        "file": OUT_CSV,
     }
-    with open(REP_JSON, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    with open(ERR_JSON, "w", encoding="utf-8") as f:
+        json.dump(rep, f, indent=2)
+    if errors:
+        print("ℹ️ FRED errors:", json.dumps(errors, indent=2))
 
 if __name__ == "__main__":
     main()

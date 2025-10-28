@@ -1,34 +1,52 @@
-# scripts/fetch_ecb.py
-import os, json, requests
+# scripts/fetch_ecb.py (Ausschnitt)
+
+import os, sys, time, json, csv, pathlib, urllib.parse
+import requests
 
 BASE = "https://data-api.ecb.europa.eu/service/data"
-OUTDIR = "data/macro/ecb"
-ERR = "data/reports/ecb_errors.json"
-os.makedirs(OUTDIR, exist_ok=True)
-os.makedirs(os.path.dirname(ERR), exist_ok=True)
+OUTDIR = pathlib.Path("data/macro/ecb"); OUTDIR.mkdir(parents=True, exist_ok=True)
+REPORT = pathlib.Path("data/reports/ecb_errors.json")
 
-errors = []
+SERIES = {
+    # Wechselkurs (läuft schon bei dir):
+    "exr_usd_eur": ("EXR", "EXR.D.USD.EUR.SP00.A", {"lastNObservations":"720", "format":"csvdata"}),
 
-def fetch_to_csv(url: str, out_path: str, alias: str):
-    r = requests.get(url, timeout=60)
-    if r.status_code == 200:
-        open(out_path, "w", encoding="utf-8").write(r.text)
-        print(f"ECB {alias}: {out_path}")
-    else:
-        errors.append({"alias": alias, "status": r.status_code, "err": r.text[:400]})
-        print(f"ECB {alias} failed: {r.status_code}")
+    # CISS – Composite Indicator of Systemic Stress (neue Keys):
+    "ciss_ea_d":  ("CISS", "CISS.D.U2.Z0Z.4F.EC.SS_CIN.IDX", {"lastNObservations":"720", "format":"csvdata"}),
+    "ciss_us_d":  ("CISS", "CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX", {"lastNObservations":"720", "format":"csvdata"}),
+    # Optional auch monthly:
+    # "ciss_ea_m": ("CISS", "CISS.M.U2.Z0Z.4F.EC.SS_CIN.IDX", {"lastNObservations":"240","format":"csvdata"}),
+}
+
+def fetch(dataflow, key, params):
+    url = f"{BASE}/{dataflow}/{key}"
+    r = requests.get(url, params=params, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code} for {r.url}\n{r.text[:400]}")
+    return r.text
+
+def write_csv(alias, csv_text):
+    out = OUTDIR / f"{alias}.csv"
+    out.write_text(csv_text, encoding="utf-8")
+    return out
 
 def main():
-    # USD/EUR Spot, daily, 3 Jahre (~720 Beobachtungen)
-    exr_url = f"{BASE}/EXR/D.USD.EUR.SP00.A?lastNObservations=720&format=csvdata"
-    fetch_to_csv(exr_url, os.path.join(OUTDIR, "exr_usd_eur.csv"), "exr_usd_eur")
+    errors = []
+    files  = {}
+    for alias, (dataflow, key, params) in SERIES.items():
+        try:
+            csv_text = fetch(dataflow, key, params)
+            path = write_csv(alias, csv_text)
+            files[alias] = str(path)
+            print(f"✅ ECB {alias}: {sum(1 for _ in csv_text.splitlines())-1} rows  -> {path}")
+        except Exception as e:
+            msg = str(e)
+            print(f"❌ ECB {alias} failed: {msg}")
+            errors.append({"alias": alias, "err": msg})
+            continue
 
-    # CISS (Euro area), weekly → optional; wenn 400 kommt, einfach im Workflow erstmal ignorieren
-    ciss_key = "CISS/M.U2.Z0Z.F.W0.SS_CI.4F.B.B"  # laut ECB Data Explorer
-    ciss_url = f"{BASE}/{ciss_key}?lastNObservations=520&format=csvdata"
-    fetch_to_csv(ciss_url, os.path.join(OUTDIR, "ciss_ea.csv"), "ciss_ea")
-
-    open(ERR, "w").write(json.dumps({"errors": errors}, indent=2))
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    REPORT.write_text(json.dumps({"files": files, "errors": errors}, indent=2), encoding="utf-8")
 
 if __name__ == "__main__":
     main()

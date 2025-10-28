@@ -1,61 +1,61 @@
 {
-  "ts": "2025-10-27T22:19:56.079380Z",
-  "asof": "2025-10-27",
+  "ts": "2025-10-28T00:25:01.361259Z",
+  "asof": "2025-10-28",
   "rows": 9,
   "missing": 0,
   "sample": [
     {
       "symbol": "AAPL",
       "proxy": "US_HY",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 4.17
     },
     {
       "symbol": "MSFT",
       "proxy": "US_IG",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 0.9
     },
     {
       "symbol": "AMZN",
       "proxy": "US_IG",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 0.96
     },
     {
       "symbol": "SPY",
       "proxy": "US_IG",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 0.83
     },
     {
       "symbol": "GLD",
       "proxy": "US_IG",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 0.88
     },
     {
       "symbol": "AVGO",
       "proxy": "US_HY",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 4.28
     },
     {
       "symbol": "META",
       "proxy": "US_IG",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 0.92
     },
     {
       "symbol": "NVDA",
       "proxy": "US_IG",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 0.94
     },
     {
       "symbol": "GOOGL",
       "proxy": "US_IG",
-      "asof": "2025-10-27",
+      "asof": "2025-10-28",
       "proxy_spread": 0.92
     }
   ],

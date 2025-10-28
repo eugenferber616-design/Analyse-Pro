@@ -1,34 +1,8 @@
 {
-  "ts": "2025-10-27T22:19:53.744655Z",
+  "ts": "2025-10-28T00:24:58Z",
   "dataset": "gpe5-46if",
-  "since": "2020-11-02",
-  "rows": 14331,
-  "latest": "2025-09-23",
-  "filtered_markets": [
-    "E-MINI S&P 500",
-    "EURO FX",
-    "WTI",
-    "10-YEAR NOTE"
-  ],
-  "mapped_cols": {
-    "market": "market_and_exchange_names",
-    "date": "report_date_as_yyyy_mm_dd",
-    "oi": "open_interest_all",
-    "ncl": null,
-    "ncs": null,
-    "nnet": null
-  },
-  "errors": [
-    {
-      "market": "WTI",
-      "stage": "filter",
-      "msg": "no_match"
-    },
-    {
-      "market": "10-YEAR NOTE",
-      "stage": "filter",
-      "msg": "no_match"
-    }
-  ],
-  "token_len": 25
+  "latest": "2025-09-23T00:00:00.000",
+  "rows": 77,
+  "filtered_mode": "ALL",
+  "errors": []
 }

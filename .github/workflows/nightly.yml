@@ -321,6 +321,24 @@ jobs:
           PY
           echo "== last_run.json ==" && cat data/reports/last_run.json
 
+      # ===== EU Coverage (Ampel + Missing-Listen) =====
+      - name: EU Coverage – Ampel & Missing-Listen erzeugen
+        env:
+          WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
+          WATCHLIST_ETF:    ${{ env.WATCHLIST_ETF }}
+        run: |
+          python scripts/eu_coverage_check.py
+          echo "==== EU Coverage summary ===="
+          cat data/reports/eu_checks/summary.txt || true
+
+      - name: Commit EU-Reports
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/reports/eu_checks/*.txt data/reports/eu_checks/*.json || true
+          git commit -m "EU coverage reports (Ampel & missing)" || echo "Nothing to commit"
+          git push
+
       - name: Fail if outputs empty
         shell: bash
         run: |

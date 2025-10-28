@@ -69,7 +69,12 @@ def fetch_range(date_from, date_to, markets=None):
     if markets:
         # Socrata-escaped in WHERE per IN (...) – wir hängen als String-Literal-Liste an
         # Beispiel: market_and_exchange_names in ("E-MINI S&P 500 – ...","EURO FX - ...")
-        quoted = ",".join([f"'{m.replace(\"'\",\"''\")}'" for m in markets])
+        def _soql_quote(s: str) -> str:
+    # SOQL: einfache Anführungszeichen werden als '' gedoppelt
+    return "'" + s.replace("'", "''") + "'"
+
+quoted = ",".join(_soql_quote(m) for m in markets)
+
         where = f"{base_where} AND market_and_exchange_names in ({quoted})"
 
     while True:

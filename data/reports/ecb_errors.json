@@ -1,14 +1,9 @@
 {
-  "ts": "2025-10-28T19:53:42.552969Z",
-  "files": {},
   "errors": [
     {
-      "alias": "exr_usd_eur",
-      "msg": "ECB fetch failed for EXR/D.USD.EUR.SP00.A"
-    },
-    {
       "alias": "ciss_ea",
-      "msg": "ECB fetch failed for CISS/M.U2.Z0Z.F.W0.SS_CI.4F.B.F"
+      "status": 400,
+      "err": "<html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-align: center; } h1{  font-size:38px; font-weight: normal; color:#003299; }  @media screen and (max-width: 480px) { h1{ font-size: 30px; } }  p { font-size: 15px; line-height: 20px; color: #333; margin-bottom: 20px; }  p"
     }
   ]
 }

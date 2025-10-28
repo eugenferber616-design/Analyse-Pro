@@ -1,1 +1,1 @@
-pair,bid,ask,last,timestamp
+symbol,last_date,last_close

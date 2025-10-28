@@ -41,7 +41,7 @@ def sget(path, params):
         raise RuntimeError(f"REQ_FAIL {url}: {e}") from e
 
 def get_latest_date():
-    # Robust: sort desc and limit 1 (avoids name typos in max(...))
+    # robust: sort desc and limit 1
     rows = sget(f"{DATASET_ID}.json", {
         "$select": "report_date_as_yyyy_mm_dd",
         "$order": "report_date_as_yyyy_mm_dd DESC",
@@ -49,7 +49,8 @@ def get_latest_date():
     })
     if not rows:
         return None
-    return rows[0]["report_date_as_yyyy_mm_dd"]  # "YYYY-MM-DD"
+    # Wert ist bei diesem Datensatz i.d.R. z.B. "2025-09-23T00:00:00.000"
+    return rows[0]["report_date_as_yyyy_mm_dd"]
 
 def read_markets(path):
     if not os.path.exists(path):
@@ -63,13 +64,17 @@ def read_markets(path):
     return out
 
 def fetch_latest_all(latest):
-    # Pull ALL rows for that latest date, with pagination
+    """
+    Holt ALLE Zeilen für das jüngste Datum mit Pagination.
+    WICHTIG: keine gebundenen Parameter (@d) benutzen – direkt einbetten & quoten.
+    """
     offset = 0
     chunks = []
+    # latest kommt als String wie "2025-09-23T00:00:00.000"
+    where = f"report_date_as_yyyy_mm_dd = '{latest}'"
     while True:
         params = {
-            "$where": "report_date_as_yyyy_mm_dd = @d",
-            "@d": latest,
+            "$where": where,
             "$limit": LIMIT,
             "$offset": offset
         }
@@ -80,7 +85,7 @@ def fetch_latest_all(latest):
         if len(rows) < LIMIT:
             break
         offset += LIMIT
-        time.sleep(0.15)  # be nice
+        time.sleep(0.15)
     return pd.DataFrame(chunks)
 
 def main():
@@ -113,7 +118,7 @@ def main():
         json.dump(report, open(os.path.join(REP_DIR, "cot_errors.json"), "w"), indent=2)
         raise SystemExit(1)
 
-    # Optional: filter by watchlist only if MODE != ALL
+    # Optional filtern, nur wenn MODE != ALL
     if MODE != "ALL":
         wl = read_markets(MARKETS_FILE)
         if wl:

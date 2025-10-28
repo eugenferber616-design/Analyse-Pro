@@ -4,7 +4,7 @@
 """
 Pull 10y COT (Futures+Options Combined) from CFTC Socrata (gpe5-46if)
 - ohne $select-Liste (vermeidet Spalten-Mismatch)
-- WHERE: Datumsbereich + optionales Market-IN-Filter
+- WHERE: Datumsbereich + optionales Market-IN-Filter (mit literal quotes)
 - robust (Retry/Timeout/kleinere Pages)
 - schreibt:
     data/processed/cot_10y.csv
@@ -36,8 +36,6 @@ REP_DIR = "data/reports"
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(REP_DIR, exist_ok=True)
 
-# ---------------------------------------------------------------------------
-
 def make_session():
     s = requests.Session()
     retry = Retry(
@@ -68,8 +66,6 @@ def sget(path, params):
         raise RuntimeError(f"HTTP {r.status_code} for {url} ; body={r.text[:500]}") from e
     return r.json()
 
-# ---------------------------------------------------------------------------
-
 def read_markets(path):
     if not os.path.exists(path):
         return []
@@ -87,22 +83,23 @@ def soql_quote(s: str) -> str:
 
 def fetch_range(date_from, date_to, markets=None):
     rows_all, offset = [], 0
-    base_where = "report_date_as_yyyy_mm_dd between @f and @t"
+
+    # ⚠️ KEINE @f/@t Parameter – wir quoten die Literale direkt
+    base_where = f"report_date_as_yyyy_mm_dd between '{date_from}' and '{date_to}'"
     where = base_where
+
     if markets:
         quoted = ",".join(soql_quote(m) for m in markets)
         where = f"{base_where} AND market_and_exchange_names in ({quoted})"
 
     params_base = {
-        "@f": date_from,
-        "@t": date_to,
+        "$where": where,
         "$order": "report_date_as_yyyy_mm_dd ASC",
         "$limit": SOC_LIMIT,
     }
 
     while True:
         params = dict(params_base)
-        params["$where"]  = where
         params["$offset"] = offset
         chunk = sget(f"{DATASET_ID}.json", params)
         if not chunk:
@@ -113,8 +110,6 @@ def fetch_range(date_from, date_to, markets=None):
         offset += SOC_LIMIT
         time.sleep(0.2)
     return pd.DataFrame(rows_all)
-
-# ---------------------------------------------------------------------------
 
 def main():
     today = dt.date.today()

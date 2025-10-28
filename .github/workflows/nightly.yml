@@ -253,9 +253,10 @@ jobs:
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
-          python scripts/fetch_fred_oas.py --api-key "${FRED_API_KEY}" || true
+          python scripts/fetch_fred_oas.py || true
           tail -n +1 data/reports/fred_errors.json || true
           head -n 5 data/processed/fred_oas.csv || true
+
 
       - name: Pull ECB (new API)
         run: |
@@ -263,11 +264,13 @@ jobs:
           test -f data/reports/ecb_errors.json && cat data/reports/ecb_errors.json || true
           ls -l data/macro/ecb || true
 
-      - name: Pull Stooq quotes (EU & US aus Watchlist)
+
+      - name: Pull Stooq quotes (Xetra only)
         run: |
           mkdir -p data/market/stooq
           python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" --days 365 || true
-          head -n 5 data/processed/fx_quotes.csv || true
+          head -n 10 data/processed/fx_quotes.csv || true
+
 
 
       # ========= CDS Proxy v2 (nutzt US/EU OAS + Fundamentals + Stooq HV20) =========
@@ -283,10 +286,9 @@ jobs:
       # ========= EU Ampel (ECB/Stooq/CDS Previews) =========
       - name: EU macro checks (Ampel)
         run: |
-          python scripts/build_eu_ampel.py
-          echo "== ECB preview ==" && head -n 20 data/reports/eu_checks/ecb_preview.txt || true
-          echo "== Stooq preview ==" && head -n 20 data/reports/eu_checks/stooq_preview.txt || true
-          echo "== CDS proxy (EU) ==" && head -n 20 data/reports/eu_checks/cds_proxy_preview.txt || true
+          python scripts/build_eu_ampel.py || true
+          test -f data/reports/eu_checks/ampel_preview.json && cat data/reports/eu_checks/ampel_preview.json || true
+
 
       - name: Validate processed outputs
         shell: bash

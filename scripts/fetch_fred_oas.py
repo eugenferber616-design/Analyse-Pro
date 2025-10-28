@@ -1,83 +1,105 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, json, time, argparse
-from datetime import datetime
-import requests
+"""
+Fetch ICE BofA OAS (US & Euro) from FRED into data/processed/fred_oas.csv
+Columns: date, series_id, value, bucket, region
+- Accepts: --api-key <FRED_API_KEY>
+- Gracefully handles existing column name 'date_series_id'
+"""
+
+import os, sys, argparse, time, json
 import pandas as pd
+import requests
 
-OUT = "data/processed/fred_oas.csv"
-REP = "data/reports/fred_errors.json"
-os.makedirs("data/processed", exist_ok=True)
-os.makedirs("data/reports", exist_ok=True)
+OUT_CSV = "data/processed/fred_oas.csv"
+REP_JSON = "data/reports/fred_errors.json"
+os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
+os.makedirs(os.path.dirname(REP_JSON), exist_ok=True)
 
-# --- FRED series (ICE BofA) -----------------------------------------------
-# US:
-#   IG  = BAMLC0A0CM  (ICE BofA US Corporate Index OAS)
-#   HY  = BAMLH0A0HYM2 (ICE BofA US High Yield Index OAS)
-# EU (Euro area):
-#   IG  = BAMLEMCBPIOAS (ICE BofA Euro Corporate Index OAS)
-#   HY  = BAMLHE00EHYIOAS (ICE BofA Euro High Yield Index OAS)
-FRED_SERIES = [
-    ("BAMLC0A0CM",       "IG", "US"),
-    ("BAMLH0A0HYM2",     "HY", "US"),
-    ("BAMLEMCBPIOAS",    "IG", "EU"),
-    ("BAMLHE00EHYIOAS",  "HY", "EU"),
+# FRED series map (feel free to extend when you have official Euro OAS series)
+SERIES = [
+    # US Investment Grade & High Yield (monthly, FRED)
+    {"series_id": "BAMLC0A0CM",   "bucket": "IG", "region": "US"},   # ICE BofA US Corp Master OAS
+    {"series_id": "BAMLH0A0HYM2", "bucket": "HY", "region": "US"},   # ICE BofA US High Yield OAS
+
+    # Euro area (falls verfügbar; placeholder: versuche EU IG/HY – ggf. liefern sie NAs, dann siehst du es im Report)
+    {"series_id": "BEMLCC0A0M",   "bucket": "IG", "region": "EU"},   # ICE BofA Euro IG Corp OAS (falls vorhanden)
+    {"series_id": "BEMLH0A0HYM2", "bucket": "HY", "region": "EU"},   # ICE BofA Euro High Yield OAS (falls vorhanden)
 ]
 
-def fred_get(series_id, api_key=None, retries=3, timeout=30):
-    url = "https://api.stlouisfed.org/fred/series/observations"
+BASE = "https://api.stlouisfed.org/fred/series/observations"
+
+def fetch_series(series_id: str, api_key: str):
     params = {
         "series_id": series_id,
-        "observation_start": "1990-01-01",
+        "api_key": api_key,
         "file_type": "json",
+        "observation_start": "1998-01-01"
     }
-    if api_key:
-        params["api_key"] = api_key
-    err = None
-    for i in range(retries):
+    r = requests.get(BASE, params=params, timeout=60)
+    r.raise_for_status()
+    js = r.json()
+    obs = js.get("observations", [])
+    rows = []
+    for o in obs:
+        d = o.get("date")
+        v = o.get("value")
         try:
-            r = requests.get(url, params=params, timeout=timeout)
-            r.raise_for_status()
-            return r.json()
-        except requests.RequestException as e:
-            err = str(e); time.sleep(1.2*(i+1))
-    raise RuntimeError(f"FRED fetch failed for {series_id}: {err}")
+            val = float(v)
+        except Exception:
+            val = None
+        rows.append({"date": d, "series_id": series_id, "value": val})
+    return rows
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--api-key", default=os.getenv("FRED_API_KEY",""))
+    ap.add_argument("--api-key", required=True)
     args = ap.parse_args()
 
-    rows, errors = [], []
-    for sid, bucket, region in FRED_SERIES:
+    errors = []
+    frames = []
+
+    for s in SERIES:
+        sid = s["series_id"]
         try:
-            js = fred_get(sid, api_key=args.api_key)
-            obs = js.get("observations", [])
-            for o in obs:
-                v = o.get("value")
-                if v in (".", None, ""): 
-                    continue
-                rows.append({
-                    "date": o["date"],
-                    "series_id": sid,
-                    "value": float(v),
-                    "bucket": bucket,
-                    "region": region,
-                })
+            data = fetch_series(sid, args.api_key)
+            df = pd.DataFrame(data)
+            df["bucket"] = s["bucket"]
+            df["region"] = s["region"]
+            frames.append(df)
+            time.sleep(0.2)
         except Exception as e:
-            errors.append({"series_id": sid, "msg": str(e)})
+            errors.append({"series_id": sid, "error": str(e)})
 
-    df = pd.DataFrame(rows).sort_values(["date","region","bucket"])
-    df.to_csv(OUT, index=False)
+    if frames:
+        df_all = pd.concat(frames, ignore_index=True)
 
-    rep = {"ts": datetime.utcnow().isoformat()+"Z",
-           "rows": int(len(df)),
-           "errors": errors,
-           "file": OUT}
-    with open(REP, "w", encoding="utf-8") as f:
-        json.dump(rep, f, indent=2)
-    print(json.dumps(rep, indent=2))
+        # ---- Robust: 'date' sicherstellen & bereinigen
+        if "date" not in df_all.columns and "date_series_id" in df_all.columns:
+            df_all = df_all.rename(columns={"date_series_id": "date"})
+
+        # nur Datumsteil (YYYY-MM-DD)
+        df_all["date"] = df_all["date"].astype(str).str.slice(0, 10)
+
+        # sortiere robust, nur vorhandene Spalten verwenden
+        sort_cols = [c for c in ["date", "region", "bucket"] if c in df_all.columns]
+        if sort_cols:
+            df_all = df_all.sort_values(sort_cols)
+
+        df_all.to_csv(OUT_CSV, index=False)
+    else:
+        # Wenn gar nichts geladen wurde, leere Datei mit Header schreiben
+        pd.DataFrame(columns=["date","series_id","value","bucket","region"]).to_csv(OUT_CSV, index=False)
+
+    report = {
+        "ts": pd.Timestamp.utcnow().isoformat(),
+        "rows": int(sum(len(f) for f in frames)) if frames else 0,
+        "errors": errors,
+        "file": OUT_CSV
+    }
+    with open(REP_JSON, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
 
 if __name__ == "__main__":
     main()

@@ -2,8 +2,8 @@ name: Nightly Data Pull & Cache (No LLM)
 
 on:
   schedule:
-    - cron: "30 0 * * *"     # täglich 00:30 UTC
-  workflow_dispatch: {}       # manueller Start
+    - cron: "30 0 * * *"   # täglich 00:30 UTC
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,7 +20,7 @@ jobs:
       FINNHUB_SLEEP_MS: "1300"
 
       # Options-Tuning
-      OPTIONS_MAX_EXPIRIES: "all"   # oder Zahl (z.B. "6")
+      OPTIONS_MAX_EXPIRIES: "all"
       OPTIONS_TOPK:        "5"
       RISK_FREE_RATE:      "0.045"
       HV_WIN_SHORT:        "20"
@@ -62,8 +62,10 @@ jobs:
           print("cache DB ready at", db_path)
           PY
 
+      # ── Secrets prüfen + Watchlists sichern
       - name: Prepare env and watchlists
         id: prep
+        shell: bash
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -71,7 +73,8 @@ jobs:
           set -e
           TOKEN="${FINNHUB_TOKEN:-$FINNHUB_API_KEY}"
           if [ -z "$TOKEN" ]; then
-            echo "❌ FINNHUB_TOKEN/FINNHUB_API_KEY fehlt."; exit 1
+            echo "❌ FINNHUB_TOKEN/FINNHUB_API_KEY fehlt."
+            exit 1
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
 
@@ -128,37 +131,7 @@ jobs:
           python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/fundamentals
           head -n 20 data/processed/fundamentals_core.csv || true
 
-      - name: Pull OPTIONS OI/IV/HV summary (yfinance)
-        env:
-          WATCHLIST_STOCKS:     ${{ env.WATCHLIST_STOCKS }}
-          OPTIONS_MAX_EXPIRIES: ${{ env.OPTIONS_MAX_EXPIRIES }}
-          OPTIONS_TOPK:         ${{ env.OPTIONS_TOPK }}
-          RISK_FREE_RATE:       ${{ env.RISK_FREE_RATE }}
-          HV_WIN_SHORT:         ${{ env.HV_WIN_SHORT }}
-          HV_WIN_LONG:          ${{ env.HV_WIN_LONG }}
-        run: |
-          python scripts/fetch_options_oi.py
-          head -n 30 data/processed/options_oi_summary.csv || true
-          head -n 30 data/processed/options_oi_by_expiry.csv || true
-          head -n 30 data/processed/options_oi_totals.csv || true
-          test -f data/reports/options_oi_report.json && cat data/reports/options_oi_report.json || true
-
-      - name: Pull FRED OAS (US & Euro)
-        env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: |
-          python scripts/fetch_fred_oas.py
-          tail -n 20 data/processed/fred_oas.csv || true
-
-      - name: Check CFTC token wiring (masked)
-        env:
-          CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
-        run: |
-          if [ -z "${CFTC_APP_TOKEN}" ]; then
-            echo "❌ CFTC_APP_TOKEN ist leer"; exit 1
-          fi
-          echo "CFTC token length: ${#CFTC_APP_TOKEN}"
-
+      # ========= COT 10y (robust, mit ENV für Timeout/Limit) =========
       - name: Pull COT (10y, Socrata) + compress
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
@@ -167,10 +140,15 @@ jobs:
           COT_YEARS:       "10"
           COT_MARKETS_MODE: "ALL"
           COT_MARKETS_FILE: watchlists/cot_markets.txt
+          SOC_TIMEOUT: "120"
+          SOC_RETRIES: "6"
+          SOC_BACKOFF: "1.6"
+          SOC_LIMIT:   "25000"
+        shell: bash
         run: |
           set -euo pipefail
           echo "== Socrata Smoke-Test =="
-          curl -sS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
+          curl -fsS --max-time 40 -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
             --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
             --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
             --data-urlencode '$limit=1' \
@@ -178,19 +156,25 @@ jobs:
           echo
 
           echo "== Pull 10y =="
-          python -u scripts/fetch_cot_10y.py || {
-            echo "Fetcher failed. Dumping cot_10y_report.json (falls vorhanden):"
-            test -f data/reports/cot_10y_report.json && cat data/reports/cot_10y_report.json || true
-            exit 1
-          }
-
-          echo "== Report =="
-          test -f data/reports/cot_10y_report.json && cat data/reports/cot_10y_report.json || true
+          tries=3
+          for i in $(seq 1 $tries); do
+            if python -u scripts/fetch_cot_10y.py; then
+              break
+            fi
+            echo "Fetcher failed (try $i/$tries) – sleeping …"
+            sleep $((10 * i))
+            if [ "$i" -eq "$tries" ]; then
+              echo "❌ fetch_cot_10y.py failed after $tries tries"
+              test -f data/reports/cot_10y_report.json && cat data/reports/cot_10y_report.json || true
+              exit 1
+            fi
+          done
 
           echo "== Preview =="
           head -n 5 data/processed/cot_10y.csv || true
           ls -lh data/processed/cot_10y.*
 
+      # ========= COT (latest, robust) =========
       - name: Pull COT (CFTC Socrata)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
@@ -199,11 +183,22 @@ jobs:
           COT_MARKETS_MODE: "ALL"
           COT_MARKETS_FILE: watchlists/cot_markets.txt
           CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
+          SOC_TIMEOUT: "120"
+          SOC_RETRIES: "6"
+          SOC_BACKOFF: "1.6"
+          SOC_LIMIT:   "25000"
+        shell: bash
         run: |
           set -e
+          if [ -z "${CFTC_APP_TOKEN}" ]; then
+            echo "❌ CFTC_APP_TOKEN fehlt. Bitte Secrets setzen."
+            exit 1
+          fi
+
+          echo "== Socrata Smoke-Test (mit kleinem Retry) =="
           ok=0
           for i in 1 2 3; do
-            if curl -fsS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
+            if curl -fsS --max-time 40 -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
                  --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
                  --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
                  --data-urlencode '$limit=1' \
@@ -214,23 +209,39 @@ jobs:
             echo "…Retry $i/3 nach Netzwerk/DNS-Fehler…"; sleep 2
           done
           if [ "$ok" -ne 1 ]; then
-            echo "❌ Konnte Socrata nicht erreichen (DNS/Netz?). Abbruch."; exit 1
-          fi
-          if grep -q '"permission_denied"' /tmp/cftc_smoke.json; then
-            echo "❌ CFTC_APP_TOKEN ungültig (permission_denied)."; cat /tmp/cftc_smoke.json; exit 1
+            echo "❌ Konnte Socrata nicht erreichen (DNS/Netz?). Abbruch."
+            exit 1
           fi
 
-          python scripts/fetch_cot_socrata.py || {
-            echo "Fetcher fehlgeschlagen. Dump Fehlerreport:"
-            test -f data/reports/cot_errors.json && cat data/reports/cot_errors.json || true
+          if grep -q '"permission_denied"' /tmp/cftc_smoke.json; then
+            echo "❌ CFTC_APP_TOKEN ungültig (permission_denied). Bitte Token im Secret aktualisieren."
+            cat /tmp/cftc_smoke.json
             exit 1
-          }
+          fi
+
+          echo "== Fetcher starten (alle Märkte, letzter Report) =="
+          tries=3
+          for i in $(seq 1 $tries); do
+            if python -u scripts/fetch_cot_socrata.py; then
+              break
+            fi
+            echo "Fetcher failed (try $i/$tries) – sleeping …"
+            sleep $((10 * i))
+            if [ "$i" -eq "$tries" ]; then
+              echo "❌ fetch_cot_socrata.py failed after $tries tries"
+              test -f data/reports/cot_errors.json && cat data/reports/cot_errors.json || true
+              exit 1
+            fi
+          done
+
+          echo "== Vorschau (cot.csv / cot_summary.csv) =="
           head -n 5 data/processed/cot.csv || true
           head -n 5 data/processed/cot_summary.csv || true
 
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        shell: bash
         run: |
           mkdir -p data/macro/fred
           python scripts/fetch_fred.py --out data/macro/fred
@@ -239,12 +250,14 @@ jobs:
       - name: Build CDS proxy per symbol
         env:
           WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
+        shell: bash
         run: |
           python scripts/build_cds_proxy.py
           tail -n 5 data/processed/cds_proxy.csv || true
           test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
 
       - name: Validate processed outputs
+        shell: bash
         run: |
           python - << 'PY'
           import os, json
@@ -274,6 +287,7 @@ jobs:
           cat data/reports/qa_summary.json || true
 
       - name: List written files (sizes)
+        shell: bash
         run: |
           echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
           echo "== docs tree =="; find docs -type f -printf "%p\t%k KB\n" | sort || true
@@ -295,15 +309,18 @@ jobs:
           echo "== last_run.json ==" && cat data/reports/last_run.json
 
       - name: Fail if outputs empty
+        shell: bash
         run: |
           cnt=$(find data -type f -size +0c | wc -l || true)
           dcnt=$(find docs -type f -size +0c | wc -l || true)
           echo "Non-empty files in data: $cnt ; in docs: $dcnt"
           if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then
-            echo "No non-empty files produced."; exit 1
+            echo "No non-empty files produced."
+            exit 1
           fi
 
       - name: Commit updated cache & reports
+        shell: bash
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

@@ -1,47 +1,55 @@
 {
-  "total": 55,
-  "ok": 7,
-  "failed": 48,
+  "total": 83,
+  "ok": 8,
+  "failed": 75,
   "errors": [
+    {
+      "symbol": "# Germany",
+      "reason": "no_profile"
+    },
     {
       "symbol": "SAP.DE",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SAP.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "SIE.DE",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SIE.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "BAYN.DE",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BAYN.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
       "symbol": "DTE.DE",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=DTE.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "ADS.DE",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ADS.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
       "symbol": "ALV.DE",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ALV.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "SIE.DE",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SIE.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "BAS.DE",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BAS.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "BAYN.DE",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BAYN.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
       "symbol": "BMW.DE",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BMW.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "MBG.DE",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=MBG.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
       "symbol": "VOW3.DE",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=VOW3.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "BAS.DE",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BAS.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "ADS.DE",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ADS.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "IFX.DE",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=IFX.DE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "# France",
+      "reason": "no_profile"
     },
     {
       "symbol": "AIR.PA",
@@ -56,76 +64,60 @@
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=OR.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "BN.PA",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BN.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "BNP.PA",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BNP.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "SU.PA",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SU.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "AI.PA",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=AI.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "SAN.PA",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SAN.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
       "symbol": "DG.PA",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=DG.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
+      "symbol": "SGO.PA",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SGO.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "ENGI.PA",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ENGI.PA&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "# Netherlands (Euronext Amsterdam)",
+      "reason": "no_profile"
+    },
+    {
       "symbol": "ASML.AS",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ASML.AS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "AD.AS",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=AD.AS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "ADYEN.AS",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ADYEN.AS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "SHEL.AS",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SHEL.AS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "PHIA.AS",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=PHIA.AS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
       "symbol": "HEIA.AS",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=HEIA.AS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "ULVR.L",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ULVR.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "INGA.AS",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=INGA.AS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "AZN.L",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=AZN.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "SHELL.AS",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SHELL.AS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "GSK.L",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=GSK.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "# Spain",
+      "reason": "no_profile"
     },
     {
-      "symbol": "HSBA.L",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=HSBA.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "BP.L",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BP.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "RIO.L",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=RIO.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "SHEL.L",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SHEL.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "NESN.SW",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NESN.SW&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "ROG.SW",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ROG.SW&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
-    },
-    {
-      "symbol": "NOVN.SW",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NOVN.SW&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "ITX.MC",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ITX.MC&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
       "symbol": "SAN.MC",
@@ -140,24 +132,100 @@
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=IBE.MC&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "ITX.MC",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ITX.MC&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "TEF.MC",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=TEF.MC&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "FER.MC",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=FER.MC&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "# Italy",
+      "reason": "no_profile"
     },
     {
       "symbol": "ENEL.MI",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ENEL.MI&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
+      "symbol": "ENI.MI",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ENI.MI&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
       "symbol": "ISP.MI",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ISP.MI&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "NOVO-B.CO",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NOVO-B.CO&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "UCG.MI",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=UCG.MI&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "MAERSK-B.CO",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=MAERSK-B.CO&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "STM.MI",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=STM.MI&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "LUX.MI",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=LUX.MI&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "# Switzerland",
+      "reason": "no_profile"
+    },
+    {
+      "symbol": "NESN.SW",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NESN.SW&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "ROG.SW",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ROG.SW&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "NOVN.SW",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NOVN.SW&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "CSGN.SW",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=CSGN.SW&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "# UK (London)",
+      "reason": "no_profile"
+    },
+    {
+      "symbol": "HSBA.L",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=HSBA.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "BP.L",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=BP.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "SHEL.L",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SHEL.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "AZN.L",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=AZN.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "GSK.L",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=GSK.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "ULVR.L",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ULVR.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "RDSB.L",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=RDSB.L&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "# Nordics",
+      "reason": "no_profile"
+    },
+    {
+      "symbol": "NDA-SE.ST",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NDA-SE.ST&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
       "symbol": "ERIC-B.ST",
@@ -168,16 +236,56 @@
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=VOLV-B.ST&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
-      "symbol": "NDA-SE.ST",
-      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NDA-SE.ST&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+      "symbol": "ATCO-A.ST",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ATCO-A.ST&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
       "symbol": "NOKIA.HE",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NOKIA.HE&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
+      "symbol": "ORK.OL",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ORK.OL&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
       "symbol": "EQNR.OL",
       "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=EQNR.OL&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "NOVO-B.CO",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=NOVO-B.CO&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "MAERSK-B.CO",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=MAERSK-B.CO&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "# Austria / Belgium / Portugal / Poland / Czech",
+      "reason": "no_profile"
+    },
+    {
+      "symbol": "EBS.VI",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=EBS.VI&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "OMV.VI",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=OMV.VI&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "ABI.BR",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=ABI.BR&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "SOLB.BR",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=SOLB.BR&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "EDP.LS",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=EDP.LS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
+    },
+    {
+      "symbol": "GALP.LS",
+      "reason": "403 Client Error: Forbidden for url: https://finnhub.io/api/v1/stock/profile2?symbol=GALP.LS&token=d3t0rg1r01qpdd5lp120d3t0rg1r01qpdd5lp12g"
     },
     {
       "symbol": "PKN.WA",

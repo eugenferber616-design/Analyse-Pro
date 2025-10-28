@@ -10,3 +10,8 @@ numpy>=1.24
 beautifulsoup4
 lxml
 cot-reports
+pandas>=2.0
+pandas_datareader>=0.10.0
+yfinance>=0.2.40
+requests>=2.31.0
+python-dateutil>=2.8.2

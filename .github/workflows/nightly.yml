@@ -163,17 +163,18 @@ jobs:
           fi
           echo "CFTC token length: ${#CFTC_APP_TOKEN}"
 
+      # ========= COT (10y, Socrata) + Kompression =========
       - name: Pull COT (10y, Socrata) + compress
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
           COT_DATASET_ID:  gpe5-46if
           CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
-          COT_YEARS:       "10"         # <- kannst du anpassen
-          COT_MARKETS_MODE: "ALL"       # ALL | FILE | LIST
+          COT_YEARS:       "10"
+          COT_MARKETS_MODE: "ALL"                 # oder FILE/LIST
           COT_MARKETS_FILE: watchlists/cot_markets.txt
-          # COT_MARKETS_LIST: "E-MINI S&P 500 - CHICAGO MERCANTILE EXCHANGE|EURO FX - CHICAGO MERCANTILE EXCHANGE"
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           echo "== Socrata Smoke-Test =="
           curl -sS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
             --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
@@ -181,14 +182,20 @@ jobs:
             --data-urlencode '$limit=1' \
             -H "X-App-Token: ${CFTC_APP_TOKEN}" | tee /tmp/cftc_smoke_10y.json
           echo
+
           echo "== Pull 10y =="
-          python scripts/fetch_cot_10y.py
+          python -u scripts/fetch_cot_10y.py || {
+            echo "Fetcher failed. Dumping cot_10y_report.json (falls vorhanden):"
+            test -f data/reports/cot_10y_report.json && cat data/reports/cot_10y_report.json || true
+            exit 1
+          }
+
           echo "== Report =="
           test -f data/reports/cot_10y_report.json && cat data/reports/cot_10y_report.json || true
+
           echo "== Preview =="
           head -n 5 data/processed/cot_10y.csv || true
           ls -lh data/processed/cot_10y.*
-
 
       # ========= COT (CFTC Socrata) – ALLE Märkte, robuster Block =========
       - name: Pull COT (CFTC Socrata)
@@ -199,6 +206,7 @@ jobs:
           COT_MARKETS_MODE: "ALL"                    # ALLE Märkte (keine Filter)
           COT_MARKETS_FILE: watchlists/cot_markets.txt
           CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
+        shell: bash
         run: |
           set -e
 
@@ -225,7 +233,6 @@ jobs:
             exit 1
           fi
 
-          # Prüfe explizit auf permission_denied
           if grep -q '"permission_denied"' /tmp/cftc_smoke.json; then
             echo "❌ CFTC_APP_TOKEN ungültig (permission_denied). Bitte Token im Secret aktualisieren."
             cat /tmp/cftc_smoke.json
@@ -247,6 +254,7 @@ jobs:
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        shell: bash
         run: |
           mkdir -p data/macro/fred
           python scripts/fetch_fred.py --out data/macro/fred
@@ -255,54 +263,57 @@ jobs:
       - name: Build CDS proxy per symbol
         env:
           WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
+        shell: bash
         run: |
           python scripts/build_cds_proxy.py
           tail -n 5 data/processed/cds_proxy.csv || true
           test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
 
       - name: Validate processed outputs
+        shell: bash
         run: |
           python - << 'PY'
           import os, json
           def count_rows(p):
-            if not os.path.exists(p) or os.path.getsize(p)==0:
-              return 0
-            with open(p, encoding="utf-8") as f:
-              return max(0, sum(1 for _ in f) - 1)
+              if not os.path.exists(p) or os.path.getsize(p)==0:
+                  return 0
+              with open(p, encoding="utf-8") as f:
+                  return max(0, sum(1 for _ in f) - 1)
           checks = {
-            "fundamentals_core.csv":      count_rows("data/processed/fundamentals_core.csv"),
-            "earnings_results.csv":       count_rows("data/processed/earnings_results.csv"),
-            "etf_basics.csv":             count_rows("data/processed/etf_basics.csv"),
-            "fred_oas.csv":               count_rows("data/processed/fred_oas.csv"),
-            "cot_summary.csv":            count_rows("data/processed/cot_summary.csv"),
-            "options_oi_summary.csv":     count_rows("data/processed/options_oi_summary.csv"),
-            "options_oi_by_expiry.csv":   count_rows("data/processed/options_oi_by_expiry.csv"),
-            "options_oi_totals.csv":      count_rows("data/processed/options_oi_totals.csv"),
-            "cds_proxy.csv":              count_rows("data/processed/cds_proxy.csv"),
+              "fundamentals_core.csv":      count_rows("data/processed/fundamentals_core.csv"),
+              "earnings_results.csv":       count_rows("data/processed/earnings_results.csv"),
+              "etf_basics.csv":             count_rows("data/processed/etf_basics.csv"),
+              "fred_oas.csv":               count_rows("data/processed/fred_oas.csv"),
+              "cot_summary.csv":            count_rows("data/processed/cot_summary.csv"),
+              "options_oi_summary.csv":     count_rows("data/processed/options_oi_summary.csv"),
+              "options_oi_by_expiry.csv":   count_rows("data/processed/options_oi_by_expiry.csv"),
+              "options_oi_totals.csv":      count_rows("data/processed/options_oi_totals.csv"),
+              "cds_proxy.csv":              count_rows("data/processed/cds_proxy.csv"),
           }
           lamp = lambda n: "🟢" if n>0 else "🔴"
           print("\n=== QA Summary ===")
           for k,v in checks.items():
-            print(f"{lamp(v)} {k}: {v} rows")
+              print(f"{lamp(v)} {k}: {v} rows")
           os.makedirs("data/reports", exist_ok=True)
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
           cat data/reports/qa_summary.json || true
 
       - name: List written files (sizes)
+        shell: bash
         run: |
           echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
           echo "== docs tree =="; find docs -type f -printf "%p\t%k KB\n" | sort || true
           python - << 'PY'
           import json, time, os
           info = {
-            "batch": 100, "window_days": int(os.getenv("WINDOW_DAYS","30")),
-            "cheap_mode": os.getenv("CHEAP_MODE","true")=="true",
-            "watchlists": {
-              "stocks": os.getenv("WATCHLIST_STOCKS"),
-              "etf": os.getenv("WATCHLIST_ETF"),
-            },
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+              "batch": 100, "window_days": int(os.getenv("WINDOW_DAYS","30")),
+              "cheap_mode": os.getenv("CHEAP_MODE","true")=="true",
+              "watchlists": {
+                  "stocks": os.getenv("WATCHLIST_STOCKS"),
+                  "etf": os.getenv("WATCHLIST_ETF"),
+              },
+              "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
           }
           os.makedirs("data/reports", exist_ok=True)
           json.dump(info, open("data/reports/last_run.json","w"), indent=2)
@@ -311,6 +322,7 @@ jobs:
           echo "== last_run.json ==" && cat data/reports/last_run.json
 
       - name: Fail if outputs empty
+        shell: bash
         run: |
           cnt=$(find data -type f -size +0c | wc -l || true)
           dcnt=$(find docs -type f -size +0c | wc -l || true)
@@ -321,6 +333,7 @@ jobs:
           fi
 
       - name: Commit updated cache & reports
+        shell: bash
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

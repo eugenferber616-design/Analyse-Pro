@@ -1,84 +1,77 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Fetch daily OHLC from Stooq
-- One CSV per symbol: data/market/stooq/<symbol>.csv  (date,open,high,low,close,volume)
-- Combined file: data/processed/stooq_quotes.csv (symbol,date,close, ...)
-Usage:
-  python scripts/fetch_stooq.py --symbols "^dax,SAP.DE,AAPL.US"
-  python scripts/fetch_stooq.py --watchlist watchlists/mylist.txt
-"""
 
-import os, argparse, time
+import os, sys, time, argparse, csv
+from datetime import datetime, timedelta
 import pandas as pd
-import requests
 
-BASE = "https://stooq.com/q/d/l/"
+from pandas_datareader.data import DataReader
+import yfinance as yf
+
 OUT_DIR = "data/market/stooq"
-os.makedirs(OUT_DIR, exist_ok=True)
-PROC_DIR = "data/processed"
-os.makedirs(PROC_DIR, exist_ok=True)
+QUOTES_CSV = "data/processed/fx_quotes.csv"   # aggregierte Letztkurse
 
-def read_watchlist(path):
-    if not path or not os.path.exists(path):
-        return []
-    syms = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            s = line.strip()
-            if not s or s.startswith("#"): 
-                continue
-            syms.append(s)
-    return syms
+def to_stooq_symbol(sym: str) -> str:
+    s = sym.strip().lower()
+    if "." in s:
+        return s  # sap.de, air.pa, cez.pr, asml.as usw.
+    # US Ticker ohne Suffix -> stooq erwartet .us
+    return f"{s}.us"
 
-def stooq_fetch(symbol, retries=3, timeout=30):
-    params = {"s": symbol.lower(), "i": "d"}   # daily
-    for attempt in range(1, retries+1):
-        try:
-            r = requests.get(BASE, params=params, timeout=timeout)
-            if r.status_code == 200 and "Date,Open,High,Low,Close,Volume" in r.text:
-                df = pd.read_csv(pd.compat.StringIO(r.text))
-                # normalize
-                df.columns = [c.lower() for c in df.columns]
-                df.rename(columns={"date":"date","open":"open","high":"high","low":"low","close":"close","volume":"volume"}, inplace=True)
-                return df
-        except requests.RequestException:
-            pass
-        time.sleep(1.2*attempt)
-    raise RuntimeError(f"Stooq fetch failed for {symbol}")
+def fetch_one(sym: str, start: datetime, end: datetime) -> pd.DataFrame:
+    stq = to_stooq_symbol(sym)
+    try:
+        df = DataReader(stq, "stooq", start=start, end=end)  # OHLCV
+        if not df.empty:
+            df.sort_index(inplace=True)
+            return df
+    except Exception:
+        pass
+    # Fallback: yfinance (gleicher Zeitraum)
+    try:
+        yf_sym = sym if "." not in sym else sym.replace(".", "-")  # z.B. "AIR.PA" -> "AIR-PA"
+        df = yf.download(yf_sym, start=start.date(), end=end.date(), progress=False, auto_adjust=False)
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            df.rename(columns=str.capitalize, inplace=True)  # Angleichen: Open, High, Low, Close, Adj Close, Volume
+            return df
+    except Exception:
+        pass
+    raise RuntimeError(f"no data for {sym}")
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--symbols", help="comma separated list like ^dax,SAP.DE,AAPL.US")
-    ap.add_argument("--watchlist", help="optional watchlist file")
+    ap.add_argument("--watchlist", required=True)
+    ap.add_argument("--days", type=int, default=365)
     args = ap.parse_args()
 
-    symbols = []
-    if args.symbols:
-        symbols += [s.strip() for s in args.symbols.split(",") if s.strip()]
-    symbols += read_watchlist(args.watchlist)
-    symbols = sorted(set(symbols))
-    if not symbols:
-        print("No symbols given.")
-        return
+    os.makedirs(OUT_DIR, exist_ok=True)
 
-    rows = []
-    for sym in symbols:
+    with open(args.watchlist, "r", encoding="utf-8") as f:
+        syms = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
+
+    end = datetime.utcnow()
+    start = end - timedelta(days=args.days)
+
+    quotes = []
+    for sym in syms:
         try:
-            df = stooq_fetch(sym)
-            out = os.path.join(OUT_DIR, f"{sym.replace('^','idx_').lower()}.csv")
-            df.to_csv(out, index=False)
-            # add to combined (last close only to keep small, or full?)
-            last = df.tail(1).copy()
-            last.insert(0, "symbol", sym.upper())
-            rows.append(last)
-            print(f"OK {sym}: {len(df)} rows")
+            df = fetch_one(sym, start, end)
+            outp = os.path.join(OUT_DIR, f"{sym.replace('.', '_')}.csv")
+            df.to_csv(outp)
+            # Letzter Close
+            last = float(df["Close"].dropna().iloc[-1])
+            quotes.append({"symbol": sym, "date": df.index[-1].strftime("%Y-%m-%d"), "close": last})
+            print(f"✅ {sym}: {len(df)} rows")
         except Exception as e:
             print(f"ERR {sym}: {e}")
 
-    if rows:
-        comb = pd.concat(rows, ignore_index=True)
-        comb.to_csv(os.path.join(PROC_DIR,"stooq_quotes.csv"), index=False)
+    if quotes:
+        qdf = pd.DataFrame(quotes).sort_values(["symbol","date"])
+        os.makedirs(os.path.dirname(QUOTES_CSV), exist_ok=True)
+        qdf.to_csv(QUOTES_CSV, index=False)
+        print(f"✔ wrote {QUOTES_CSV} with {len(qdf)} rows")
+    else:
+        print("⚠️ no quotes aggregated")
 
 if __name__ == "__main__":
     main()

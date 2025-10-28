@@ -163,6 +163,33 @@ jobs:
           fi
           echo "CFTC token length: ${#CFTC_APP_TOKEN}"
 
+      - name: Pull COT (10y, Socrata) + compress
+        env:
+          CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
+          COT_DATASET_ID:  gpe5-46if
+          CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
+          COT_YEARS:       "10"         # <- kannst du anpassen
+          COT_MARKETS_MODE: "ALL"       # ALL | FILE | LIST
+          COT_MARKETS_FILE: watchlists/cot_markets.txt
+          # COT_MARKETS_LIST: "E-MINI S&P 500 - CHICAGO MERCANTILE EXCHANGE|EURO FX - CHICAGO MERCANTILE EXCHANGE"
+        run: |
+          set -e
+          echo "== Socrata Smoke-Test =="
+          curl -sS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
+            --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
+            --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
+            --data-urlencode '$limit=1' \
+            -H "X-App-Token: ${CFTC_APP_TOKEN}" | tee /tmp/cftc_smoke_10y.json
+          echo
+          echo "== Pull 10y =="
+          python scripts/fetch_cot_10y.py
+          echo "== Report =="
+          test -f data/reports/cot_10y_report.json && cat data/reports/cot_10y_report.json || true
+          echo "== Preview =="
+          head -n 5 data/processed/cot_10y.csv || true
+          ls -lh data/processed/cot_10y.*
+
+
       # ========= COT (CFTC Socrata) – ALLE Märkte, robuster Block =========
       - name: Pull COT (CFTC Socrata)
         env:

@@ -1,669 +1,383 @@
 {
-  "ts": "2025-10-28T18:12:06Z",
+  "ts": "2025-10-28T20:03:46.109345Z",
+  "rows": 74,
   "fred_oas_used": {
-    "US": {
-      "HY": 2.88,
-      "IG": 0.77
-    }
+    "US_IG": null,
+    "US_HY": null,
+    "EU_IG": null,
+    "EU_HY": null
   },
-  "symbols": [
+  "errors": [
     {
-      "symbol": "SAP.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "DTE.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ALV.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "SIE.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "BAS.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "BAYN.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "BMW.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "VOW3.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ADS.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "IFX.DE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "AIR.PA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "MC.PA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "OR.PA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "BNP.PA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "SAN.PA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "DG.PA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "SGO.PA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ENGI.PA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ASML.AS",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ADYEN.AS",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "PHIA.AS",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "HEIA.AS",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "INGA.AS",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "SHELL.AS",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ITX.MC",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "SAN.MC",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "BBVA.MC",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "IBE.MC",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "TEF.MC",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "FER.MC",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ENEL.MI",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ENI.MI",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ISP.MI",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "UCG.MI",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "STM.MI",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "LUX.MI",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "NESN.SW",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "ROG.SW",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "NOVN.SW",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "CSGN.SW",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "HSBA.L",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "BP.L",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "SHEL.L",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "AZN.L",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "GSK.L",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "ULVR.L",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "RDSB.L",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "NDA-SE.ST",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ERIC-B.ST",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "VOLV-B.ST",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ATCO-A.ST",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "NOKIA.HE",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "ORK.OL",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "EQNR.OL",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "NOVO-B.CO",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "MAERSK-B.CO",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "EBS.VI",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "OMV.VI",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
+      "symbol": "AAPL",
+      "reason": "no_curves",
+      "region": "US"
     },
     {
       "symbol": "ABI.BR",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
-      "symbol": "SOLB.BR",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
+      "symbol": "ADS.DE",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
-      "symbol": "EDP.LS",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
+      "symbol": "ADYEN.AS",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
-      "symbol": "GALP.LS",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
+      "symbol": "AIR.PA",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
-      "symbol": "PKN.WA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "PKO.WA",
-      "proxy": "NA",
-      "asof": "2025-10-28",
-      "proxy_spread": null
-    },
-    {
-      "symbol": "CEZ.PR",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "AAPL",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "MSFT",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
+      "symbol": "ALV.DE",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
       "symbol": "AMZN",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "SPY",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "GLD",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "AVGO",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "META",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "NVDA",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    },
-    {
-      "symbol": "GOOGL",
-      "proxy": "US_IG",
-      "asof": "2025-10-28",
-      "proxy_spread": 0.77
-    }
-  ],
-  "errors": [
-    {
-      "symbol": "SAP.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "DTE.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ALV.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "SIE.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "BAS.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "BAYN.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "BMW.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "VOW3.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ADS.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "IFX.DE",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "AIR.PA",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "MC.PA",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "OR.PA",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "BNP.PA",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "SAN.PA",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "DG.PA",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "SGO.PA",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ENGI.PA",
-      "msg": "no OAS for region=EU"
+      "reason": "no_curves",
+      "region": "US"
     },
     {
       "symbol": "ASML.AS",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ADYEN.AS",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "PHIA.AS",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "HEIA.AS",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "INGA.AS",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "SHELL.AS",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ITX.MC",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "SAN.MC",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "BBVA.MC",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "IBE.MC",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "TEF.MC",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "FER.MC",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ENEL.MI",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ENI.MI",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ISP.MI",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "UCG.MI",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "STM.MI",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "LUX.MI",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "NDA-SE.ST",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ERIC-B.ST",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "VOLV-B.ST",
-      "msg": "no OAS for region=EU"
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
       "symbol": "ATCO-A.ST",
-      "msg": "no OAS for region=EU"
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
-      "symbol": "NOKIA.HE",
-      "msg": "no OAS for region=EU"
+      "symbol": "AVGO",
+      "reason": "no_curves",
+      "region": "US"
     },
     {
-      "symbol": "ORK.OL",
-      "msg": "no OAS for region=EU"
+      "symbol": "AZN.L",
+      "reason": "no_curves",
+      "region": "US"
     },
     {
-      "symbol": "EQNR.OL",
-      "msg": "no OAS for region=EU"
+      "symbol": "BAS.DE",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
-      "symbol": "NOVO-B.CO",
-      "msg": "no OAS for region=EU"
+      "symbol": "BAYN.DE",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
-      "symbol": "MAERSK-B.CO",
-      "msg": "no OAS for region=EU"
+      "symbol": "BBVA.MC",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "BMW.DE",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "BNP.PA",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "BP.L",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "CEZ.PR",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "CSGN.SW",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "DG.PA",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "DTE.DE",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
       "symbol": "EBS.VI",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "OMV.VI",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "ABI.BR",
-      "msg": "no OAS for region=EU"
-    },
-    {
-      "symbol": "SOLB.BR",
-      "msg": "no OAS for region=EU"
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
       "symbol": "EDP.LS",
-      "msg": "no OAS for region=EU"
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "ENEL.MI",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "ENGI.PA",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "ENI.MI",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "EQNR.OL",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "ERIC-B.ST",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "FER.MC",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
       "symbol": "GALP.LS",
-      "msg": "no OAS for region=EU"
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "GLD",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "GOOGL",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "GSK.L",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "HEIA.AS",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "HSBA.L",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "IBE.MC",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "IFX.DE",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "INGA.AS",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "ISP.MI",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "ITX.MC",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "LUX.MI",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "MAERSK-B.CO",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "MC.PA",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "META",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "MSFT",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "NDA-SE.ST",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "NESN.SW",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "NOKIA.HE",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "NOVN.SW",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "NOVO-B.CO",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "NVDA",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "OMV.VI",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "OR.PA",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "ORK.OL",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "PHIA.AS",
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
       "symbol": "PKN.WA",
-      "msg": "no OAS for region=EU"
+      "reason": "no_curves",
+      "region": "EU"
     },
     {
       "symbol": "PKO.WA",
-      "msg": "no OAS for region=EU"
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "RDSB.L",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "ROG.SW",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "SAN.MC",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "SAN.PA",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "SAP.DE",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "SGO.PA",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "SHEL.L",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "SHELL.AS",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "SIE.DE",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "SOLB.BR",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "SPY",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "STM.MI",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "TEF.MC",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "UCG.MI",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "ULVR.L",
+      "reason": "no_curves",
+      "region": "US"
+    },
+    {
+      "symbol": "VOLV-B.ST",
+      "reason": "no_curves",
+      "region": "EU"
+    },
+    {
+      "symbol": "VOW3.DE",
+      "reason": "no_curves",
+      "region": "EU"
     }
-  ]
+  ],
+  "preview": "data/processed/cds_proxy.csv"
 }

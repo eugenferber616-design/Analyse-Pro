@@ -1,1 +1,23 @@
-[{"id": "GOLDAMGBD228NLBM", "error": "400 Client Error: Bad Request for url: https://api.stlouisfed.org/fred/series/observations?series_id=GOLDAMGBD228NLBM&api_key=a62b1a06c6cdc4bb8c32d733a492326f&file_type=json&observation_start=1990-01-01"}]
+{
+  "ts": "2025-10-28T19:53:42.076583+00:00",
+  "rows": 0,
+  "errors": [
+    {
+      "series_id": "BAMLC0A0CM",
+      "error": "400 Client Error: Bad Request for url: https://api.stlouisfed.org/fred/series/observations?series_id=BAMLC0A0CM&api_key=a62b1a06c6cdc4bb8c32d733a492326f+&file_type=json&observation_start=1998-01-01"
+    },
+    {
+      "series_id": "BAMLH0A0HYM2",
+      "error": "400 Client Error: Bad Request for url: https://api.stlouisfed.org/fred/series/observations?series_id=BAMLH0A0HYM2&api_key=a62b1a06c6cdc4bb8c32d733a492326f+&file_type=json&observation_start=1998-01-01"
+    },
+    {
+      "series_id": "BEMLCC0A0M",
+      "error": "400 Client Error: Bad Request for url: https://api.stlouisfed.org/fred/series/observations?series_id=BEMLCC0A0M&api_key=a62b1a06c6cdc4bb8c32d733a492326f+&file_type=json&observation_start=1998-01-01"
+    },
+    {
+      "series_id": "BEMLH0A0HYM2",
+      "error": "400 Client Error: Bad Request for url: https://api.stlouisfed.org/fred/series/observations?series_id=BEMLH0A0HYM2&api_key=a62b1a06c6cdc4bb8c32d733a492326f+&file_type=json&observation_start=1998-01-01"
+    }
+  ],
+  "file": "data/processed/fred_oas.csv"
+}

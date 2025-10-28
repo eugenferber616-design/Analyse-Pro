@@ -1,113 +1,12 @@
 {
-  "ts": "2025-10-28T23:05:11.446814Z",
+  "ts": "2025-10-28T23:56:15.278660Z",
   "rows": 20,
   "fred_oas_used": {
-    "US_IG": null,
-    "US_HY": null,
+    "US_IG": 0.76,
+    "US_HY": 2.8,
     "EU_IG": null,
     "EU_HY": null
   },
-  "errors": [
-    {
-      "symbol": "AAPL,aapl.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "ADS.DE,ads.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "ALV.DE,alv.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "AMZN,amzn.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "AVGO,avgo.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "BAS.DE,bas.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "BAYN.DE,bayn.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "BMW.DE,bmw.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "DTE.DE,dte.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "GLD,gld.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "GOOGL,googl.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "IFX.DE,ifx.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "META,meta.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "MSFT,msft.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "NVDA,nvda.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "SAP.DE,sap.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "SIE.DE,sie.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "SPY,spy.us",
-      "reason": "no_curves",
-      "region": "US"
-    },
-    {
-      "symbol": "VOW3.DE,vow3.de",
-      "reason": "no_curves",
-      "region": "EU"
-    },
-    {
-      "symbol": "symbol,stooq",
-      "reason": "no_curves",
-      "region": "US"
-    }
-  ],
+  "errors": [],
   "preview": "data/processed/cds_proxy.csv"
 }

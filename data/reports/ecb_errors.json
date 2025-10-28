@@ -2,11 +2,15 @@
   "errors": [
     {
       "alias": "ciss_ea",
-      "err": "HTTP Error 400: Bad Request"
+      "err": "HTTP 400: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-"
     },
     {
       "alias": "ciss_us",
-      "err": "HTTP Error 400: Bad Request"
+      "err": "HTTP 400: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-"
+    },
+    {
+      "alias": "exr_usd_eur",
+      "err": "HTTP 400: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-"
     }
   ]
 }

@@ -1,1 +1,4 @@
 file,last_date,last_value
+data/macro/ecb/ciss_ea.csv,,
+data/macro/ecb/ciss_us.csv,,
+data/macro/ecb/exr_usd_eur.csv,2025-10-28,1.163

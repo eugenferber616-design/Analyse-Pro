@@ -1,13 +1,4 @@
 {
   "file": "data/processed/fred_oas.csv",
-  "errors": [
-    {
-      "series_id": "BAMLC0A0CM",
-      "error": "400 {\"error_code\":400,\"error_message\":\"Bad Request.  The value for variable api_key is not a 32 character alpha-numeric lower-case string.  Read https:\\/\\/fred.stlouisfed.org\\/docs\\/api\\/api_key.html for "
-    },
-    {
-      "series_id": "BAMLH0A0HYM2",
-      "error": "400 {\"error_code\":400,\"error_message\":\"Bad Request.  The value for variable api_key is not a 32 character alpha-numeric lower-case string.  Read https:\\/\\/fred.stlouisfed.org\\/docs\\/api\\/api_key.html for "
-    }
-  ]
+  "errors": []
 }

@@ -1,0 +1,14 @@
+{
+  "ts": "2025-10-28T01:55:18Z",
+  "dataset": "gpe5-46if",
+  "years": 10,
+  "mode": "ALL",
+  "rows": 25679,
+  "date_from": "2015-10-21",
+  "date_to": "2025-10-28",
+  "errors": [],
+  "files": {
+    "cot_10y_csv_gz": "data/processed/cot_10y.csv.gz",
+    "cot_10y_csv": "data/processed/cot_10y.csv"
+  }
+}

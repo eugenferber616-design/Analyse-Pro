@@ -1,126 +1,122 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Build very-lightweight 'CDS proxy' per symbol by mapping listing region to
-US/EU IG (or HY) option-adjusted spreads pulled into data/processed/fred_oas.csv.
 
-Output: data/processed/cds_proxy.csv with columns:
-  symbol, bucket, as_of, value
-Where:
-  bucket ∈ {US_IG, US_HY, EU_IG, EU_HY}
-  value  = latest OAS (percent), e.g. 0.77 for IG
+"""
+build_cds_proxy.py  (ERSATZ)
+Erzeugt einen CDS-Proxy je Symbol anhand von Region → (IG/HY)-OAS aus FRED.
+Input:  data/processed/fred_oas.csv (mit Region/Bucket) + Watchlist
+Output: data/processed/cds_proxy.csv
+Report: data/reports/cds_proxy_report.json
 """
 
-import csv, os, sys, datetime as dt
-from collections import defaultdict
+import os, csv, json, datetime as dt
+from typing import Dict, Tuple
 
-FRED_OAS_PATH = "data/processed/fred_oas.csv"
-WATCHLIST_PATH = os.environ.get("WATCHLIST_STOCKS", "watchlists/mylist.txt")
-OUT_PATH = "data/processed/cds_proxy.csv"
+OUT_CSV = "data/processed/cds_proxy.csv"
+REP_JSON = "data/reports/cds_proxy_report.json"
+FRED_OAS_CSV = "data/processed/fred_oas.csv"
 
-# --- Region mapping by ticker suffix (very permissive EU map)
-EU_SUFFIXES = {
-    ".DE",".F",".FR",".PA",".AS",".BR",".MC",".MI",".SW",".CO",".VX",".L",".LN",
-    ".ES",".MC",".ST",".HE",".OL",".WA",".PR",".VI",".BR",".BE",".BRU",".LU",".LS",
-    ".IR",".IE",".AT",".DK",".FI",".SE",".NO",".CH",".PL",".CZ",".HU",".PT",".NL"
-}
-US_SUFFIXES = {".US",".N",".O",".A",".K",".P",".Q",".NY",".AM"}  # not exhaustive
+WATCHLIST = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
+STRICT = os.getenv("CDS_STRICT", "true").lower() == "true"
 
-def sym_region(symbol: str) -> str:
+os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
+os.makedirs(os.path.dirname(REP_JSON), exist_ok=True)
+
+EU_SUFFIX = (
+    ".DE",".PA",".AS",".MC",".BR",".MI",".ST",".CO",".SE",".FI",".DK",".IE",".AT",".BE",".PT",
+    ".PL",".CZ",".HU",".NO",".CH",".GB",".NL",".HE",".OL",".WA",".LS",".VI",".BR",".BRX"
+)
+
+def detect_region(symbol: str) -> str:
     s = symbol.upper()
-    for suf in EU_SUFFIXES:
-        if s.endswith(suf): return "EU"
-    for suf in US_SUFFIXES:
-        if s.endswith(suf): return "US"
-    # Heuristik: wenn keine EU-Suffixe -> als US behandeln (US ADRs / default)
-    return "US"
+    return "EU" if s.endswith(EU_SUFFIX) else "US"
 
-def choose_bucket(symbol: str, region: str) -> str:
-    # Default alles IG. Du kannst hier Regeln für HY ergänzen (Sektoren, Ratings…).
-    # Beispiel: sehr zyklische Ticker in HY packen:
-    # if region=="US" and symbol.endswith((".X","-J")): return f"{region}_HY"
-    return f"{region}_IG"
-
-def load_fred_oas(path: str):
-    """
-    Erwartetes CSV-Schema (wie unser fetch_fred_oas.py schreibt):
-      date_series_id,value,bucket,region
-    Wir picken je (region,bucket) den jüngsten Wert.
-    """
-    latest = {}  # (region,bucket) -> (date, value)
+def read_watchlist(path: str):
+    syms = []
     if not os.path.exists(path):
-        raise SystemExit(f"❌ missing {path} – run FRED step first")
+        return syms
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            t = line.strip()
+            if not t or t.startswith("#"):
+                continue
+            # CSV oder txt tolerant
+            t = t.split(",")[0].strip()
+            if t:
+                syms.append(t)
+    return syms
 
-    with open(path, newline="", encoding="utf-8") as f:
+def latest_oas_by_region_bucket() -> Dict[Tuple[str,str], float]:
+    """liest fred_oas.csv und nimmt den jüngsten Wert pro (region,bucket)"""
+    latest = {}
+    if not os.path.exists(FRED_OAS_CSV):
+        return latest
+    with open(FRED_OAS_CSV, encoding="utf-8") as f:
         r = csv.DictReader(f)
         for row in r:
+            region = (row.get("region") or "").upper()
+            bucket = (row.get("bucket") or "").upper()
             try:
-                val = float(row["value"])
+                val = float(row.get("value", ""))
             except Exception:
                 continue
-            region = row.get("region","").strip().upper() or "US"
-            bucket = row.get("bucket","").strip().upper() or "IG"
             key = (region, bucket)
-            ds = row.get("date_series_id","")
-            # robust: nimm letzte Zeile als "neueste" (Datei ist chronologisch)
-            latest[key] = (ds, val)
+            # Dateikomparator – wir überschreiben einfach, weil Datei schon sortiert war;
+            # alternativ: man könnte per Datum vergleichen.
+            latest[key] = val
     return latest
 
-def load_symbols(path: str):
-    """
-    Akzeptiert watchlists in Form:
-      - CSV/TSV mit Spalte 'symbol'   oder
-      - einfache 1-Spalten-Liste (ein Symbol pro Zeile)
-    """
-    if not os.path.exists(path):
-        return []
-
-    syms = []
-    with open(path, encoding="utf-8") as f:
-        head = f.readline()
-        f.seek(0)
-        if "symbol" in head.lower():
-            r = csv.DictReader(f)
-            for row in r:
-                s = (row.get("symbol") or "").strip()
-                if s: syms.append(s)
-        else:
-            for line in f:
-                s = line.strip()
-                if s and s.lower() != "symbol":
-                    syms.append(s)
-    # eindeutige Reihenfolge beibehalten
-    uniq, seen = [], set()
-    for s in syms:
-        if s not in seen:
-            uniq.append(s); seen.add(s)
-    return uniq
-
 def main():
-    latest = load_fred_oas(FRED_OAS_PATH)
-    syms   = load_symbols(WATCHLIST_PATH)
+    report = {
+        "ts": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "fred_oas_used": {},
+        "symbols": [],
+        "errors": []
+    }
+
+    symbols = read_watchlist(WATCHLIST)
+    oas = latest_oas_by_region_bucket()
+
+    # sichtbares Summary der verwendeten OAS
+    for (reg,bkt), v in sorted(oas.items()):
+        report["fred_oas_used"].setdefault(reg, {})[bkt] = v
 
     rows = []
-    today = dt.date.today().isoformat()
+    for sym in symbols:
+        reg = detect_region(sym)
+        # Strategie: IG bevorzugt; optionaler HY-Blend möglich
+        ig = oas.get((reg, "IG"))
+        hy = oas.get((reg, "HY"))
 
-    for s in syms:
-        region = sym_region(s)
-        bucket = choose_bucket(s, region).split("_")[1]  # IG/HY
-        key = (region, bucket)
-        ds, val = latest.get(key, (today, 0.0))
+        if ig is None and hy is None:
+            msg = f"no OAS for region={reg}"
+            report["errors"].append({"symbol": sym, "msg": msg})
+            if STRICT:
+                proxy = None
+            else:
+                # weicher Fallback: nimm US.IG falls EU fehlt
+                proxy = oas.get(("US", "IG"))
+        else:
+            # Einfach: IG als Proxy; optional (0.8*IG + 0.2*HY) möglich
+            proxy = ig if ig is not None else hy
+
         rows.append({
-            "symbol": s,
-            "bucket": f"{region}_{bucket}",
-            "as_of": ds.split(",")[0] if "," in ds else today,
-            "value": f"{val:.2f}",
+            "symbol": sym,
+            "region": reg+"_IG" if proxy is not None else reg+"_NA",
+            "asof": dt.date.today().isoformat(),
+            "proxy_spread": f"{proxy:.2f}" if proxy is not None else ""
         })
+        report["symbols"].append({"symbol": sym, "proxy": f"{reg}_IG" if proxy is not None else "NA",
+                                  "asof": dt.date.today().isoformat(),
+                                  "proxy_spread": proxy})
 
-    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-    with open(OUT_PATH, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["symbol","bucket","as_of","value"])
-        w.writeheader(); w.writerows(rows)
+    # schreiben
+    with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["symbol","region","asof","proxy_spread"])
+        w.writeheader()
+        w.writerows(rows)
 
-    print(f"wrote {OUT_PATH} with {len(rows)} rows")
+    json.dump(report, open(REP_JSON, "w"), indent=2)
 
 if __name__ == "__main__":
     main()

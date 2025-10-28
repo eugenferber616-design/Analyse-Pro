@@ -1,0 +1,41 @@
+{
+  "watchlists": {
+    "stocks_all": 9,
+    "stocks_eu": 0,
+    "etf_all": 8,
+    "etf_eu": 0
+  },
+  "datasets": {
+    "fundamentals_core.csv": {
+      "present": 0,
+      "expected": 0,
+      "missing": [],
+      "ampel": "🟦"
+    },
+    "earnings_results.csv": {
+      "present": 0,
+      "expected": 0,
+      "missing": [],
+      "ampel": "🟦"
+    },
+    "etf_basics.csv": {
+      "present": 0,
+      "expected": 0,
+      "missing": [],
+      "ampel": "🟦"
+    },
+    "options_oi_totals.csv": {
+      "present": 0,
+      "expected": 0,
+      "missing": [],
+      "ampel": "🟦"
+    },
+    "fred_oas.csv": {
+      "present": 1,
+      "expected": 1,
+      "missing": [],
+      "ampel": "🟢"
+    }
+  },
+  "overall": "🟢 ALLES DA"
+}

@@ -23,3 +23,10 @@ HYG
 XLF
 XLK
 XLE
+
+SXR8.DE      # iShares Core S&P 500 UCITS
+EUNL.DE      # iShares Core MSCI World UCITS
+EXS1.DE      # iShares Core DAX UCITS
+VUSA.L       # Vanguard S&P 500 UCITS (GBP)
+VUKE.L       # Vanguard FTSE 100 UCITS
+IMEU.L       # iShares Core MSCI Europe UCITS

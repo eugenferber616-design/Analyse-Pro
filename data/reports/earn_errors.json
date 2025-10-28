@@ -1,43 +1,14 @@
 {
-  "total_symbols": 9,
-  "symbols_ok": 0,
-  "rows_written": 0,
-  "errors": [
-    {
-      "symbol": "AAPL",
-      "reason": "empty"
-    },
-    {
-      "symbol": "MSFT",
-      "reason": "empty"
-    },
-    {
-      "symbol": "AMZN",
-      "reason": "empty"
-    },
-    {
-      "symbol": "SPY",
-      "reason": "empty"
-    },
-    {
-      "symbol": "GLD",
-      "reason": "empty"
-    },
-    {
-      "symbol": "AVGO",
-      "reason": "empty"
-    },
-    {
-      "symbol": "META",
-      "reason": "empty"
-    },
-    {
-      "symbol": "NVDA",
-      "reason": "empty"
-    },
-    {
-      "symbol": "GOOGL",
-      "reason": "empty"
-    }
-  ]
+  "ts": "2025-10-28T15:25:45Z",
+  "watchlist": "watchlists/mylist.txt",
+  "overrides": "watchlists/earnings_overrides.csv",
+  "rows": 116,
+  "symbols": 55,
+  "errors": [],
+  "missing": 0,
+  "files": {
+    "earnings_results_csv": "data/processed/earnings_results.csv",
+    "preview": "data/reports/eu_checks/earnings_results_preview.txt",
+    "missing": "data/reports/eu_checks/earnings_results_missing.txt"
+  }
 }

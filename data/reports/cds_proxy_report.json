@@ -1,62 +1,68 @@
 {
-  "ts": "2025-10-28T11:50:08.192865Z",
+  "ts": "2025-10-28T15:28:13.573375Z",
   "asof": "2025-10-28",
-  "rows": 9,
+  "rows": 55,
   "missing": 0,
   "sample": [
     {
-      "symbol": "AAPL",
-      "proxy": "US_HY",
-      "asof": "2025-10-28",
-      "proxy_spread": 4.17
-    },
-    {
-      "symbol": "MSFT",
+      "symbol": "SAP.DE",
       "proxy": "US_IG",
       "asof": "2025-10-28",
-      "proxy_spread": 0.9
+      "proxy_spread": 0.77
     },
     {
-      "symbol": "AMZN",
+      "symbol": "SIE.DE",
       "proxy": "US_IG",
       "asof": "2025-10-28",
-      "proxy_spread": 0.96
+      "proxy_spread": 0.77
     },
     {
-      "symbol": "SPY",
+      "symbol": "BAYN.DE",
       "proxy": "US_IG",
       "asof": "2025-10-28",
-      "proxy_spread": 0.83
+      "proxy_spread": 0.77
     },
     {
-      "symbol": "GLD",
+      "symbol": "DTE.DE",
       "proxy": "US_IG",
       "asof": "2025-10-28",
-      "proxy_spread": 0.88
+      "proxy_spread": 0.77
     },
     {
-      "symbol": "AVGO",
-      "proxy": "US_HY",
-      "asof": "2025-10-28",
-      "proxy_spread": 4.28
-    },
-    {
-      "symbol": "META",
+      "symbol": "ADS.DE",
       "proxy": "US_IG",
       "asof": "2025-10-28",
-      "proxy_spread": 0.92
+      "proxy_spread": 0.77
     },
     {
-      "symbol": "NVDA",
+      "symbol": "ALV.DE",
       "proxy": "US_IG",
       "asof": "2025-10-28",
-      "proxy_spread": 0.94
+      "proxy_spread": 0.77
     },
     {
-      "symbol": "GOOGL",
+      "symbol": "BMW.DE",
       "proxy": "US_IG",
       "asof": "2025-10-28",
-      "proxy_spread": 0.92
+      "proxy_spread": 0.77
+    },
+    {
+      "symbol": "MBG.DE",
+      "proxy": "US_IG",
+      "asof": "2025-10-28",
+      "proxy_spread": 0.77
+    },
+    {
+      "symbol": "VOW3.DE",
+      "proxy": "US_IG",
+      "asof": "2025-10-28",
+      "proxy_spread": 0.77
+    },
+    {
+      "symbol": "BAS.DE",
+      "proxy": "US_IG",
+      "asof": "2025-10-28",
+      "proxy_spread": 0.77
     }
   ],
   "fred_oas_used": {

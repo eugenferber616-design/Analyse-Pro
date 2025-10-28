@@ -4,6 +4,7 @@ MSFT,US_IG
 HYG,US_HY
 XLF,US_IG
 BMW.DE,EU_IG
+
 regions:
   US:
     IG:  "<FRED_SERIES_ID_US_IG>"   # z.B. US IG OAS

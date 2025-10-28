@@ -44,7 +44,7 @@ jobs:
 
       - name: Init cache DB
         run: |
-          mkdir -p data/cache data/earnings data/macro/fred data/processed data/reports docs watchlists
+          mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/processed data/reports docs watchlists
           python - << 'PY'
           import os, sqlite3
           db_path = os.path.join('data','cache','cache.db')
@@ -238,6 +238,7 @@ jobs:
           head -n 5 data/processed/cot.csv || true
           head -n 5 data/processed/cot_summary.csv || true
 
+      # ========= Macro (diverse FRED-Reihen für Heatmaps etc.) =========
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -247,14 +248,46 @@ jobs:
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
 
+      # ========= FRED OAS (US & Euro) -> data/processed/fred_oas.csv =========
+      - name: Pull FRED OAS (US & Euro)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python scripts/fetch_fred_oas.py --api-key "${FRED_API_KEY}"
+          tail -n 5 data/processed/fred_oas.csv || true
+          test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
+
+      # ========= ECB (neue API) – Beispiele: EXR & CISS =========
+      - name: Pull ECB (new API)
+        run: |
+          python scripts/fetch_ecb.py --since 2010-01-01
+          test -f data/reports/ecb_errors.json && cat data/reports/ecb_errors.json || true
+          ls -lh data/macro/ecb/* || true
+
+      # ========= Stooq Quotes (EU & US aus Watchlist) =========
+      - name: Pull Stooq quotes (EU & US aus Watchlist)
+        run: |
+          mkdir -p data/market/stooq
+          python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" || true
+          find data/market/stooq -type f | head -n 10 || true
+
+      # ========= CDS Proxy v2 (nutzt US/EU OAS + Fundamentals + Stooq HV20) =========
       - name: Build CDS proxy per symbol
         env:
           WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
         shell: bash
         run: |
-          python scripts/build_cds_proxy.py
-          tail -n 5 data/processed/cds_proxy.csv || true
+          python scripts/build_cds_proxy_v2.py
+          tail -n 10 data/processed/cds_proxy.csv || true
           test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
+
+      # ========= EU Ampel (ECB/Stooq/CDS Previews) =========
+      - name: EU macro checks (Ampel)
+        run: |
+          python scripts/build_eu_ampel.py
+          echo "== ECB preview ==" && head -n 20 data/reports/eu_checks/ecb_preview.txt || true
+          echo "== Stooq preview ==" && head -n 20 data/reports/eu_checks/stooq_preview.txt || true
+          echo "== CDS proxy (EU) ==" && head -n 20 data/reports/eu_checks/cds_proxy_preview.txt || true
 
       - name: Validate processed outputs
         shell: bash

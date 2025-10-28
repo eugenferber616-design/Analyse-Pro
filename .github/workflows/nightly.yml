@@ -253,23 +253,22 @@ jobs:
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
-          python scripts/fetch_fred_oas.py --api-key "${FRED_API_KEY}"
-          tail -n 5 data/processed/fred_oas.csv || true
-          test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
+          python scripts/fetch_fred_oas.py --api-key "${FRED_API_KEY}" || true
+          tail -n +1 data/reports/fred_errors.json || true
+          head -n 5 data/processed/fred_oas.csv || true
 
-      # ========= ECB (neue API) – Beispiele: EXR & CISS =========
       - name: Pull ECB (new API)
         run: |
-          python scripts/fetch_ecb.py --since 2010-01-01
+          python scripts/fetch_ecb.py || true
           test -f data/reports/ecb_errors.json && cat data/reports/ecb_errors.json || true
-          ls -lh data/macro/ecb/* || true
+          ls -l data/macro/ecb || true
 
-      # ========= Stooq Quotes (EU & US aus Watchlist) =========
       - name: Pull Stooq quotes (EU & US aus Watchlist)
         run: |
           mkdir -p data/market/stooq
-          python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" || true
-          find data/market/stooq -type f | head -n 10 || true
+          python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" --days 365 || true
+          head -n 5 data/processed/fx_quotes.csv || true
+
 
       # ========= CDS Proxy v2 (nutzt US/EU OAS + Fundamentals + Stooq HV20) =========
       - name: Build CDS proxy per symbol
@@ -295,29 +294,29 @@ jobs:
           python - << 'PY'
           import os, json
           def count_rows(p):
-              if not os.path.exists(p) or os.path.getsize(p)==0:
-                  return 0
-              with open(p, encoding="utf-8") as f:
-                  return max(0, sum(1 for _ in f) - 1)
+              import csv
+              return sum(1 for _ in open(p, encoding="utf-8"))-1 if os.path.exists(p) and os.path.getsize(p)>0 else 0
           checks = {
-              "fundamentals_core.csv":      count_rows("data/processed/fundamentals_core.csv"),
-              "earnings_results.csv":       count_rows("data/processed/earnings_results.csv"),
-              "etf_basics.csv":             count_rows("data/processed/etf_basics.csv"),
-              "fred_oas.csv":               count_rows("data/processed/fred_oas.csv"),
-              "cot_summary.csv":            count_rows("data/processed/cot_summary.csv"),
-              "options_oi_summary.csv":     count_rows("data/processed/options_oi_summary.csv"),
-              "options_oi_by_expiry.csv":   count_rows("data/processed/options_oi_by_expiry.csv"),
-              "options_oi_totals.csv":      count_rows("data/processed/options_oi_totals.csv"),
-              "cds_proxy.csv":              count_rows("data/processed/cds_proxy.csv"),
+              "fundamentals_core.csv":  count_rows("data/processed/fundamentals_core.csv"),
+              "earnings_results.csv":   count_rows("data/processed/earnings_results.csv"),
+              "etf_basics.csv":         count_rows("data/processed/etf_basics.csv"),
+              "fred_oas.csv":           count_rows("data/processed/fred_oas.csv"),
+              "cot_summary.csv":        count_rows("data/processed/cot_summary.csv"),
+              "options_oi_summary.csv": count_rows("data/processed/options_oi_summary.csv"),
+              "options_oi_by_expiry.csv": count_rows("data/processed/options_oi_by_expiry.csv"),
+              "options_oi_totals.csv":  count_rows("data/processed/options_oi_totals.csv"),
+              "cds_proxy.csv":          count_rows("data/processed/cds_proxy.csv"),
+              "fx_quotes.csv":          count_rows("data/processed/fx_quotes.csv"),
           }
           lamp = lambda n: "🟢" if n>0 else "🔴"
-          print("\n=== QA Summary ===")
+          print("\\n=== QA Summary ===")
           for k,v in checks.items():
               print(f"{lamp(v)} {k}: {v} rows")
           os.makedirs("data/reports", exist_ok=True)
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
           cat data/reports/qa_summary.json || true
+
 
       - name: List written files (sizes)
         shell: bash

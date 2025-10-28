@@ -2,7 +2,7 @@ name: Nightly Data Pull & Cache (No LLM)
 
 on:
   schedule:
-    - cron: "30 0 * * *"  # täglich 00:30 UTC
+    - cron: "30 0 * * *"   # täglich 00:30 UTC
   workflow_dispatch:
 
 permissions:
@@ -15,18 +15,19 @@ jobs:
     env:
       WATCHLIST_STOCKS: watchlists/mylist.txt
       WATCHLIST_ETF:    watchlists/etf_sample.txt
+      EARN_OVERRIDES:   watchlists/earnings_overrides.csv
       WINDOW_DAYS:      30
       CHEAP_MODE:       "true"
       FINNHUB_SLEEP_MS: "1300"
 
       # Options-Tuning
-      OPTIONS_MAX_EXPIRIES: "all"   # oder Zahl (z.B. "6")
+      OPTIONS_MAX_EXPIRIES: "all"     # oder Zahl (z. B. "6")
       OPTIONS_TOPK:        "5"
       RISK_FREE_RATE:      "0.045"
       HV_WIN_SHORT:        "20"
       HV_WIN_LONG:         "60"
 
-      ENABLE_FUTURES: "false"       # aktuell keine Futures-Steps aktiv
+      ENABLE_FUTURES: "false"         # aktuell keine Futures-Steps aktiv
 
     steps:
       - name: Checkout
@@ -42,7 +43,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Init cache DB
+      - name: Init folders & cache DB
         run: |
           mkdir -p data/cache data/earnings data/macro/fred data/processed data/reports docs watchlists
           python - << 'PY'
@@ -62,34 +63,185 @@ jobs:
           print("cache DB ready at", db_path)
           PY
 
-      # Secrets prüfen + Watchlists sicherstellen
-      - name: Prepare env and watchlists
-        id: prep
+      # ───────────────────────────────────────────────────────────────────
+      # Watchlists + EU EARNINGS OVERRIDES vorbereiten
+      # ───────────────────────────────────────────────────────────────────
+      - name: Prepare watchlists (incl. EU earnings overrides)
         shell: bash
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
           set -e
+
+          # Token Check (Finnhub)
           TOKEN="${FINNHUB_TOKEN:-$FINNHUB_API_KEY}"
           if [ -z "$TOKEN" ]; then
             echo "❌ FINNHUB_TOKEN/FINNHUB_API_KEY fehlt."
             exit 1
           fi
-          echo "token_present=true" >> "$GITHUB_OUTPUT"
 
+          # Aktien-Watchlist (Fallback)
           if [ ! -f "$WATCHLIST_STOCKS" ]; then
             echo "⚠️  $WATCHLIST_STOCKS fehlt – lege Fallback an."
-            printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
-            echo "WATCHLIST_STOCKS=watchlists/mylist.csv" >> "$GITHUB_ENV"
+            cat > watchlists/mylist.txt <<'TXT'
+SAP.DE
+ADS.DE
+ALV.DE
+SIE.DE
+BAS.DE
+BAYN.DE
+DTE.DE
+DHL.DE
+IFX.DE
+VOW3.DE
+MBG.DE
+BMW.DE
+AIR.PA
+MC.PA
+OR.PA
+KER.PA
+RMS.PA
+BNP.PA
+ACA.PA
+GLE.PA
+CS.PA
+TTE.PA
+ORAN.PA
+SAN.PA
+AI.PA
+ASML.AS
+ADYEN.AS
+HEIA.AS
+UNA.AS
+PRX.AS
+AD.AS
+PHIA.AS
+NESN.SW
+ROG.SW
+NOVN.SW
+UBSG.SW
+ZURN.SW
+HOLN.SW
+LOGN.SW
+ABBN.SW
+CFR.SW
+SREN.SW
+UHR.SW
+NOVO-B.CO
+MAERSK-B.CO
+ORSTED.CO
+VWS.CO
+NOKIA.HE
+ERIC-B.ST
+VOLV-B.ST
+HM-B.ST
+IBE.MC
+SAN.MC
+BBVA.MC
+ITX.MC
+ENEL.MI
+ENI.MI
+RACE.MI
+ISP.MI
+UCG.MI
+STLAM.MI
+SHEL.AS
+ULVR.L
+TXT
           fi
-          echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
+          echo "== Aktien Watchlist =="
+          head -n 10 "$WATCHLIST_STOCKS" || true
 
+          # ETF-Watchlist (Fallback)
           if [ ! -f "$WATCHLIST_ETF" ]; then
-            printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
+            cat > "$WATCHLIST_ETF" <<'TXT'
+SXR8.DE      # iShares Core S&P 500 UCITS
+EUNL.DE      # iShares Core MSCI World UCITS
+EXS1.DE      # iShares Core DAX UCITS
+VUSA.L       # Vanguard S&P 500 UCITS (GBP)
+VUKE.L       # Vanguard FTSE 100 UCITS
+IMEU.L       # iShares Core MSCI Europe UCITS
+TXT
           fi
-          echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
+          echo "== ETF Sample =="
+          head -n 10 "$WATCHLIST_ETF" || true
 
+          # EU Earnings Overrides (Mapping EU-Ticker -> US/ADR Symbol für Finnhub /earnings)
+          if [ ! -f "$EARN_OVERRIDES" ]; then
+            cat > "$EARN_OVERRIDES" <<'CSV'
+symbol,api_symbol
+SAP.DE,SAP
+ADS.DE,ADDYY
+ALV.DE,ALIZY
+SIE.DE,SIEGY
+BAS.DE,BASFY
+BAYN.DE,BAYRY
+DTE.DE,DTEGY
+DHL.DE,DPSGY
+IFX.DE,IFNNY
+VOW3.DE,VWAGY
+MBG.DE,MBGAF
+BMW.DE,BMWYY
+AIR.PA,EADSY
+MC.PA,LVMUY
+OR.PA,LRLCY
+KER.PA,PPRUY
+RMS.PA,HESAY
+BNP.PA,BNPQY
+ACA.PA,CRARY
+GLE.PA,SCGLY
+CS.PA,AXAHY
+TTE.PA,TTE
+ORAN.PA,ORAN
+SAN.PA,SNY
+AI.PA,AIQUY
+ASML.AS,ASML
+ADYEN.AS,ADYEY
+HEIA.AS,HEINY
+UNA.AS,UL
+PRX.AS,PROSY
+AD.AS,ADRNY
+PHIA.AS,PHG
+NESN.SW,NSRGY
+ROG.SW,RHHBY
+NOVN.SW,NVS
+UBSG.SW,UBS
+ZURN.SW,ZURVY
+HOLN.SW,HCMLY
+LOGN.SW,LOGI
+ABBN.SW,ABB
+CFR.SW,CFRUY
+SREN.SW,SSREY
+UHR.SW,SWGAY
+NOVO-B.CO,NVO
+MAERSK-B.CO,AMKBY
+ORSTED.CO,DNNGY
+VWS.CO,VWDRY
+NOKIA.HE,NOK
+ERIC-B.ST,ERIC
+VOLV-B.ST,VOLVY
+HM-B.ST,HNNMY
+IBE.MC,IBDRY
+SAN.MC,SAN
+BBVA.MC,BBVA
+ITX.MC,IDEXY
+ENEL.MI,ENLAY
+ENI.MI,E
+RACE.MI,RACE
+ISP.MI,ISNPY
+UCG.MI,UNCRY
+STLAM.MI,STLA
+SHEL.AS,SHEL
+ULVR.L,UL
+CSV
+          fi
+          echo "== Earnings overrides =="
+          head -n 10 "$EARN_OVERRIDES" || true
+
+      # ───────────────────────────────────────────────────────────────────
+      # Earnings
+      # ───────────────────────────────────────────────────────────────────
       - name: Pull earnings CALENDAR (optional)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -101,14 +253,21 @@ jobs:
 
       - name: Pull earnings RESULTS (EPS/Revenue)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:    ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
           mkdir -p data/earnings/results
-          python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12
+          # Script unterstützt --overrides für EU-Mappings
+          python scripts/fetch_earnings_results.py \
+            --watchlist "${WATCHLIST_STOCKS}" \
+            --overrides "${EARN_OVERRIDES}" \
+            --outdir data/earnings/results --limit 12
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
+      # ───────────────────────────────────────────────────────────────────
+      # ETF Basics, Fundamentals
+      # ───────────────────────────────────────────────────────────────────
       - name: Pull ETF basics (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -123,15 +282,17 @@ jobs:
 
       - name: Pull FUNDAMENTALS (profile2 + metrics)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:    ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
           mkdir -p data/fundamentals
           python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/fundamentals
           head -n 20 data/processed/fundamentals_core.csv || true
 
+      # ───────────────────────────────────────────────────────────────────
       # OPTIONS: OI + IV + HV
+      # ───────────────────────────────────────────────────────────────────
       - name: Pull OPTIONS OI/IV/HV summary (yfinance)
         env:
           WATCHLIST_STOCKS:     ${{ env.WATCHLIST_STOCKS }}
@@ -142,11 +303,14 @@ jobs:
           HV_WIN_LONG:          ${{ env.HV_WIN_LONG }}
         run: |
           python scripts/fetch_options_oi.py
-          head -n 30 data/processed/options_oi_summary.csv || true
+          head -n 30 data/processed/options_oi_summary.csv   || true
           head -n 30 data/processed/options_oi_by_expiry.csv || true
-          head -n 30 data/processed/options_oi_totals.csv || true
+          head -n 30 data/processed/options_oi_totals.csv    || true
           test -f data/reports/options_oi_report.json && cat data/reports/options_oi_report.json || true
 
+      # ───────────────────────────────────────────────────────────────────
+      # FRED
+      # ───────────────────────────────────────────────────────────────────
       - name: Pull FRED OAS (US & Euro)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -154,6 +318,9 @@ jobs:
           python scripts/fetch_fred_oas.py
           tail -n 20 data/processed/fred_oas.csv || true
 
+      # ───────────────────────────────────────────────────────────────────
+      # COT – 10y + ALL (Socrata)
+      # ───────────────────────────────────────────────────────────────────
       - name: Check CFTC token wiring (masked)
         env:
           CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
@@ -163,14 +330,13 @@ jobs:
           fi
           echo "CFTC token length: ${#CFTC_APP_TOKEN}"
 
-      # ========= COT (10y, Socrata) + Kompression =========
       - name: Pull COT (10y, Socrata) + compress
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
           COT_DATASET_ID:  gpe5-46if
           CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
           COT_YEARS:       "10"
-          COT_MARKETS_MODE: "ALL"                 # oder FILE/LIST
+          COT_MARKETS_MODE: "ALL"
           COT_MARKETS_FILE: watchlists/cot_markets.txt
         shell: bash
         run: |
@@ -197,24 +363,17 @@ jobs:
           head -n 5 data/processed/cot_10y.csv || true
           ls -lh data/processed/cot_10y.*
 
-      # ========= COT (CFTC Socrata) – ALLE Märkte, robuster Block =========
-      - name: Pull COT (CFTC Socrata)
+      - name: Pull COT (CFTC Socrata) – latest ALL
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID:  gpe5-46if                 # Futures+Options Combined
+          COT_DATASET_ID:  gpe5-46if
           COT_WEEKS:       "260"
-          COT_MARKETS_MODE: "ALL"                    # ALLE Märkte (keine Filter)
+          COT_MARKETS_MODE: "ALL"
           COT_MARKETS_FILE: watchlists/cot_markets.txt
           CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
         shell: bash
         run: |
           set -e
-
-          if [ -z "${CFTC_APP_TOKEN}" ]; then
-            echo "❌ CFTC_APP_TOKEN fehlt. Bitte Secrets setzen."
-            exit 1
-          fi
-
           echo "== Socrata Smoke-Test (mit kleinem Retry) =="
           ok=0
           for i in 1 2 3; do
@@ -223,97 +382,150 @@ jobs:
                  --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
                  --data-urlencode '$limit=1' \
                  -H "X-App-Token: ${CFTC_APP_TOKEN}" \
-              | tee /tmp/cftc_smoke.json ; then
-              ok=1; break
-            fi
-            echo "…Retry $i/3 nach Netzwerk/DNS-Fehler…"; sleep 2
+              | tee /tmp/cftc_smoke.json ; then ok=1; break; fi
+            echo "…Retry $i/3…"; sleep 2
           done
-          if [ "$ok" -ne 1 ]; then
-            echo "❌ Konnte Socrata nicht erreichen (DNS/Netz?). Abbruch."
-            exit 1
-          fi
+          [ "$ok" -eq 1 ] || { echo "❌ CFTC Socrata unreachable"; exit 1; }
+          grep -q '"permission_denied"' /tmp/cftc_smoke.json && { echo "❌ invalid CFTC token"; cat /tmp/cftc_smoke.json; exit 1; }
 
-          if grep -q '"permission_denied"' /tmp/cftc_smoke.json; then
-            echo "❌ CFTC_APP_TOKEN ungültig (permission_denied). Bitte Token im Secret aktualisieren."
-            cat /tmp/cftc_smoke.json
-            exit 1
-          fi
-
-          echo "== Fetcher starten (alle Märkte, letzter Report) =="
+          echo "== Fetch latest =="
           python scripts/fetch_cot_socrata.py || {
-            echo "Fetcher fehlgeschlagen. Dump Fehlerreport (falls vorhanden):"
+            echo "Fetcher fehlgeschlagen. Dump Fehlerreport:"
             test -f data/reports/cot_errors.json && cat data/reports/cot_errors.json || true
             exit 1
           }
 
-          echo "== Vorschau (cot.csv / cot_summary.csv) =="
+          echo "== cot.csv + cot_summary.csv =="
           head -n 5 data/processed/cot.csv || true
           head -n 5 data/processed/cot_summary.csv || true
-      # ========================== Ende COT-Block ===========================
 
-      - name: Pull macro (FRED)
-        env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      # ───────────────────────────────────────────────────────────────────
+      # EU Coverage – Ampel + „missing“ (Previews)
+      # ───────────────────────────────────────────────────────────────────
+      - name: EU coverage reports (Ampel & missing)
         shell: bash
         run: |
-          mkdir -p data/macro/fred
-          python scripts/fetch_fred.py --out data/macro/fred
-          test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
+          set -e
+          OUTDIR="data/reports/eu_checks"
+          mkdir -p "$OUTDIR"
 
-      - name: Build CDS proxy per symbol
-        env:
-          WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
-        shell: bash
-        run: |
-          python scripts/build_cds_proxy.py
-          tail -n 5 data/processed/cds_proxy.csv || true
-          test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
+          # helper to extract SYMBOL column (assumes CSV w/ header and first column symbol or named 'symbol')
+          symcol () { awk -F',' 'NR==1{for(i=1;i<=NF;i++) if($i=="symbol"){c=i;break} if(c==""){c=1}} NR>1{print $c}'; }
 
+          # Earnings results preview
+          if [ -f data/processed/earnings_results.csv ]; then
+            { head -n 1 data/processed/earnings_results.csv; head -n 40 data/processed/earnings_results.csv | tail -n +2; } > "$OUTDIR/earnings_results_preview.txt"
+          fi
+
+          # ETF basics preview
+          if [ -f data/processed/etf_basics.csv ]; then
+            { head -n 1 data/processed/etf_basics.csv; head -n 15 data/processed/etf_basics.csv | tail -n +2; } > "$OUTDIR/etf_basics_preview.txt"
+          fi
+
+          # Fundamentals preview
+          if [ -f data/processed/fundamentals_core.csv ]; then
+            { head -n 1 data/processed/fundamentals_core.csv; head -n 15 data/processed/fundamentals_core.csv | tail -n +2; } > "$OUTDIR/fundamentals_preview.txt"
+          fi
+
+          # FRED OAS preview
+          if [ -f data/processed/fred_oas.csv ]; then
+            { head -n 1 data/processed/fred_oas.csv; head -n 30 data/processed/fred_oas.csv | tail -n +2; } > "$OUTDIR/fred_oas_preview.txt"
+          fi
+
+          # Options OI totals preview
+          if [ -f data/processed/options_oi_totals.csv ]; then
+            { head -n 1 data/processed/options_oi_totals.csv; head -n 15 data/processed/options_oi_totals.csv | tail -n +2; } > "$OUTDIR/options_oi_totals_preview.txt"
+          fi
+
+          # Missing-Listen (je Datenquelle vs. Watchlist)
+          sort -u "$WATCHLIST_STOCKS" > /tmp/wl_symbols.txt
+
+          if [ -f data/processed/fundamentals_core.csv ]; then
+            symcol < data/processed/fundamentals_core.csv | sort -u > /tmp/fund_syms.txt || true
+            comm -23 /tmp/wl_symbols.txt /tmp/fund_syms.txt > "$OUTDIR/fundamentals_missing.txt" || true
+          fi
+
+          if [ -f data/processed/options_oi_totals.csv ]; then
+            cut -d',' -f1 data/processed/options_oi_totals.csv | tail -n +2 | sort -u > /tmp/opt_syms.txt || true
+            comm -23 /tmp/wl_symbols.txt /tmp/opt_syms.txt > "$OUTDIR/options_oi_totals_missing.txt" || true
+          fi
+
+          if [ -f data/processed/earnings_results.csv ]; then
+            cut -d',' -f1 data/processed/earnings_results.csv | tail -n +2 | sort -u > /tmp/earn_syms.txt || true
+            comm -23 /tmp/wl_symbols.txt /tmp/earn_syms.txt > "$OUTDIR/earnings_results_missing.txt" || true
+          fi
+
+          # Summary JSON (Ampel)
+          python - << 'PY'
+          import json,os
+          base="data/reports/eu_checks"
+          def sz(p): 
+              try: 
+                  return sum(1 for _ in open(p,encoding="utf-8"))
+              except: 
+                  return 0
+          summary={
+            "fundamentals_preview": sz(f"{base}/fundamentals_preview.txt"),
+            "fundamentals_missing": sz(f"{base}/fundamentals_missing.txt"),
+            "earnings_results_preview": sz(f"{base}/earnings_results_preview.txt"),
+            "earnings_results_missing": sz(f"{base}/earnings_results_missing.txt"),
+            "etf_basics_preview": sz(f"{base}/etf_basics_preview.txt"),
+            "options_oi_totals_preview": sz(f"{base}/options_oi_totals_preview.txt"),
+            "options_oi_totals_missing": sz(f"{base}/options_oi_totals_missing.txt"),
+            "fred_oas_preview": sz(f"{base}/fred_oas_preview.txt"),
+          }
+          os.makedirs(base,exist_ok=True)
+          json.dump(summary,open(f"{base}/summary.json","w"),indent=2)
+          print(json.dumps(summary,indent=2))
+          PY
+
+      # ───────────────────────────────────────────────────────────────────
+      # QA + Reports
+      # ───────────────────────────────────────────────────────────────────
       - name: Validate processed outputs
-        shell: bash
         run: |
           python - << 'PY'
           import os, json
           def count_rows(p):
-              if not os.path.exists(p) or os.path.getsize(p)==0:
-                  return 0
-              with open(p, encoding="utf-8") as f:
-                  return max(0, sum(1 for _ in f) - 1)
+            if not os.path.exists(p) or os.path.getsize(p)==0:
+              return 0
+            with open(p, encoding="utf-8") as f:
+              return max(0, sum(1 for _ in f) - 1)
           checks = {
-              "fundamentals_core.csv":      count_rows("data/processed/fundamentals_core.csv"),
-              "earnings_results.csv":       count_rows("data/processed/earnings_results.csv"),
-              "etf_basics.csv":             count_rows("data/processed/etf_basics.csv"),
-              "fred_oas.csv":               count_rows("data/processed/fred_oas.csv"),
-              "cot_summary.csv":            count_rows("data/processed/cot_summary.csv"),
-              "options_oi_summary.csv":     count_rows("data/processed/options_oi_summary.csv"),
-              "options_oi_by_expiry.csv":   count_rows("data/processed/options_oi_by_expiry.csv"),
-              "options_oi_totals.csv":      count_rows("data/processed/options_oi_totals.csv"),
-              "cds_proxy.csv":              count_rows("data/processed/cds_proxy.csv"),
+            "fundamentals_core.csv":      count_rows("data/processed/fundamentals_core.csv"),
+            "earnings_results.csv":       count_rows("data/processed/earnings_results.csv"),
+            "etf_basics.csv":             count_rows("data/processed/etf_basics.csv"),
+            "fred_oas.csv":               count_rows("data/processed/fred_oas.csv"),
+            "cot_summary.csv":            count_rows("data/processed/cot_summary.csv"),
+            "options_oi_summary.csv":     count_rows("data/processed/options_oi_summary.csv"),
+            "options_oi_by_expiry.csv":   count_rows("data/processed/options_oi_by_expiry.csv"),
+            "options_oi_totals.csv":      count_rows("data/processed/options_oi_totals.csv"),
+            "cds_proxy.csv":              count_rows("data/processed/cds_proxy.csv"),
+            "cot_10y.csv":                count_rows("data/processed/cot_10y.csv"),
           }
           lamp = lambda n: "🟢" if n>0 else "🔴"
-          print("\n=== QA Summary ===")
+          print("\\n=== QA Summary ===")
           for k,v in checks.items():
-              print(f"{lamp(v)} {k}: {v} rows")
+            print(f"{lamp(v)} {k}: {v} rows")
           os.makedirs("data/reports", exist_ok=True)
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
           cat data/reports/qa_summary.json || true
 
       - name: List written files (sizes)
-        shell: bash
         run: |
           echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
           echo "== docs tree =="; find docs -type f -printf "%p\t%k KB\n" | sort || true
           python - << 'PY'
           import json, time, os
           info = {
-              "batch": 100, "window_days": int(os.getenv("WINDOW_DAYS","30")),
-              "cheap_mode": os.getenv("CHEAP_MODE","true")=="true",
-              "watchlists": {
-                  "stocks": os.getenv("WATCHLIST_STOCKS"),
-                  "etf": os.getenv("WATCHLIST_ETF"),
-              },
-              "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            "batch": 100, "window_days": int(os.getenv("WINDOW_DAYS","30")),
+            "cheap_mode": os.getenv("CHEAP_MODE","true")=="true",
+            "watchlists": {
+              "stocks": os.getenv("WATCHLIST_STOCKS"),
+              "etf": os.getenv("WATCHLIST_ETF"),
+            },
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
           }
           os.makedirs("data/reports", exist_ok=True)
           json.dump(info, open("data/reports/last_run.json","w"), indent=2)
@@ -321,26 +533,7 @@ jobs:
           PY
           echo "== last_run.json ==" && cat data/reports/last_run.json
 
-      # ===== EU Coverage (Ampel + Missing-Listen) =====
-      - name: EU Coverage – Ampel & Missing-Listen erzeugen
-        env:
-          WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
-          WATCHLIST_ETF:    ${{ env.WATCHLIST_ETF }}
-        run: |
-          python scripts/eu_coverage_check.py
-          echo "==== EU Coverage summary ===="
-          cat data/reports/eu_checks/summary.txt || true
-
-      - name: Commit EU-Reports
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/reports/eu_checks/*.txt data/reports/eu_checks/*.json || true
-          git commit -m "EU coverage reports (Ampel & missing)" || echo "Nothing to commit"
-          git push
-
       - name: Fail if outputs empty
-        shell: bash
         run: |
           cnt=$(find data -type f -size +0c | wc -l || true)
           dcnt=$(find docs -type f -size +0c | wc -l || true)
@@ -351,11 +544,9 @@ jobs:
           fi
 
       - name: Commit updated cache & reports
-        shell: bash
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # große Dateien ausschließen
           git add data/ docs/ ':!data/processed/*.gz' ':!data/processed/*.zip' || true
           git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
           git push

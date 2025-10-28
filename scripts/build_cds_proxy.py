@@ -2,121 +2,137 @@
 # -*- coding: utf-8 -*-
 
 """
-build_cds_proxy.py  (ERSATZ)
-Erzeugt einen CDS-Proxy je Symbol anhand von Region → (IG/HY)-OAS aus FRED.
-Input:  data/processed/fred_oas.csv (mit Region/Bucket) + Watchlist
-Output: data/processed/cds_proxy.csv
-Report: data/reports/cds_proxy_report.json
+Baut cds_proxy.csv auf Basis der letzten verfügbaren OAS.
+Regeln:
+- US-Ticker: IG vs HY anhand Beta-Threshold (Default 1.15). Fehlt Beta -> IG.
+- EU-Ticker: bis EU-OAS vorhanden sind, Fallback auf US-Kurven (klar markiert).
+Outputs:
+  data/processed/cds_proxy.csv  (symbol, region, proxy, asof, proxy_spread)
+  data/reports/cds_proxy_report.json
 """
 
-import os, csv, json, datetime as dt
-from typing import Dict, Tuple
+import os, json, re
+import pandas as pd
+from datetime import datetime
 
-OUT_CSV = "data/processed/cds_proxy.csv"
-REP_JSON = "data/reports/cds_proxy_report.json"
-FRED_OAS_CSV = "data/processed/fred_oas.csv"
+BETA_TH = float(os.getenv("CDS_BETA_TH", "1.15"))
 
-WATCHLIST = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
-STRICT = os.getenv("CDS_STRICT", "true").lower() == "true"
+def guess_region(sym: str) -> str:
+    sym = sym.upper()
+    if sym.endswith(".DE") or sym.endswith(".PA") or sym.endswith(".AS") or sym.endswith(".MC") or sym.endswith(".MI") or sym.endswith(".BR"):
+        return "EU"
+    return "US"
 
-os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
-os.makedirs(os.path.dirname(REP_JSON), exist_ok=True)
-
-EU_SUFFIX = (
-    ".DE",".PA",".AS",".MC",".BR",".MI",".ST",".CO",".SE",".FI",".DK",".IE",".AT",".BE",".PT",
-    ".PL",".CZ",".HU",".NO",".CH",".GB",".NL",".HE",".OL",".WA",".LS",".VI",".BR",".BRX"
-)
-
-def detect_region(symbol: str) -> str:
-    s = symbol.upper()
-    return "EU" if s.endswith(EU_SUFFIX) else "US"
-
-def read_watchlist(path: str):
-    syms = []
+def load_watchlist(path: str) -> list:
     if not os.path.exists(path):
-        return syms
+        return []
+    syms = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             t = line.strip()
-            if not t or t.startswith("#"):
+            if not t or t.startswith("#"): 
                 continue
-            # CSV oder txt tolerant
-            t = t.split(",")[0].strip()
-            if t:
-                syms.append(t)
+            syms.append(t)
     return syms
 
-def latest_oas_by_region_bucket() -> Dict[Tuple[str,str], float]:
-    """liest fred_oas.csv und nimmt den jüngsten Wert pro (region,bucket)"""
-    latest = {}
-    if not os.path.exists(FRED_OAS_CSV):
-        return latest
-    with open(FRED_OAS_CSV, encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        for row in r:
-            region = (row.get("region") or "").upper()
-            bucket = (row.get("bucket") or "").upper()
-            try:
-                val = float(row.get("value", ""))
-            except Exception:
-                continue
-            key = (region, bucket)
-            # Dateikomparator – wir überschreiben einfach, weil Datei schon sortiert war;
-            # alternativ: man könnte per Datum vergleichen.
-            latest[key] = val
-    return latest
+def latest_oas() -> pd.DataFrame:
+    p = "data/processed/fred_oas.csv"
+    if not os.path.exists(p):
+        return pd.DataFrame(columns=["bucket","region","value","date"])
+    df = pd.read_csv(p)
+    if df.empty:
+        return pd.DataFrame(columns=["bucket","region","value","date"])
+    df["date"] = pd.to_datetime(df["date"])
+    idx = df.groupby(["bucket","region"])["date"].idxmax()
+    last = df.loc[idx, ["bucket","region","value","date","series_id"]].reset_index(drop=True)
+    last.rename(columns={"date":"asof","value":"proxy_spread","series_id":"source"}, inplace=True)
+    return last
+
+def fundamentals_beta() -> dict:
+    p = "data/processed/fundamentals_core.csv"
+    if not os.path.exists(p):
+        return {}
+    try:
+        df = pd.read_csv(p)
+        df = df[["symbol","beta"]].dropna()
+        return dict(zip(df["symbol"].str.upper(), df["beta"]))
+    except Exception:
+        return {}
+
+def choose_bucket(beta: float | None) -> str:
+    if beta is None:
+        return "IG"
+    return "HY" if beta >= BETA_TH else "IG"
 
 def main():
-    report = {
-        "ts": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "fred_oas_used": {},
-        "symbols": [],
-        "errors": []
-    }
+    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs("data/reports", exist_ok=True)
 
-    symbols = read_watchlist(WATCHLIST)
-    oas = latest_oas_by_region_bucket()
+    wl = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
+    syms = load_watchlist(wl)
 
-    # sichtbares Summary der verwendeten OAS
-    for (reg,bkt), v in sorted(oas.items()):
-        report["fred_oas_used"].setdefault(reg, {})[bkt] = v
+    last = latest_oas()
+    beta_map = fundamentals_beta()
+
+    have_us_ig = last[(last["region"]=="US") & (last["bucket"]=="IG")]
+    have_us_hy = last[(last["region"]=="US") & (last["bucket"]=="HY")]
+
+    if have_us_ig.empty or have_us_hy.empty:
+        # Minimaler Fallback: leere Datei + Report
+        pd.DataFrame(columns=["symbol","region","proxy","asof","proxy_spread"]).to_csv(
+            "data/processed/cds_proxy.csv", index=False
+        )
+        report = {
+            "rows": 0,
+            "fred_oas_used": {"US_IG": None, "US_HY": None, "EU_IG": None, "EU_HY": None},
+            "errors": [{"reason": "missing_us_oas", "msg": "US IG/HY OAS not available"}],
+        }
+        json.dump(report, open("data/reports/cds_proxy_report.json","w"), indent=2)
+        print("⚠ US OAS not available – empty cds_proxy.csv written.")
+        return
+
+    us_ig = have_us_ig.iloc[0].to_dict()
+    us_hy = have_us_hy.iloc[0].to_dict()
 
     rows = []
-    for sym in symbols:
-        reg = detect_region(sym)
-        # Strategie: IG bevorzugt; optionaler HY-Blend möglich
-        ig = oas.get((reg, "IG"))
-        hy = oas.get((reg, "HY"))
+    for s in syms:
+        reg = guess_region(s)
+        b = beta_map.get(s.upper())
+        bucket = choose_bucket(b)
 
-        if ig is None and hy is None:
-            msg = f"no OAS for region={reg}"
-            report["errors"].append({"symbol": sym, "msg": msg})
-            if STRICT:
-                proxy = None
-            else:
-                # weicher Fallback: nimm US.IG falls EU fehlt
-                proxy = oas.get(("US", "IG"))
+        # Proxy-Wahl:
+        if bucket == "IG":
+            src = us_ig
+            proxy_name = "US_IG" if reg=="US" else "US_IG (EU-fallback)"
         else:
-            # Einfach: IG als Proxy; optional (0.8*IG + 0.2*HY) möglich
-            proxy = ig if ig is not None else hy
+            src = us_hy
+            proxy_name = "US_HY" if reg=="US" else "US_HY (EU-fallback)"
 
         rows.append({
-            "symbol": sym,
-            "region": reg+"_IG" if proxy is not None else reg+"_NA",
-            "asof": dt.date.today().isoformat(),
-            "proxy_spread": f"{proxy:.2f}" if proxy is not None else ""
+            "symbol": s,
+            "region": reg,
+            "proxy": proxy_name,
+            "asof": str(src["asof"].date()) if hasattr(src["asof"], "date") else str(src["asof"]),
+            "proxy_spread": float(src["proxy_spread"]),
         })
-        report["symbols"].append({"symbol": sym, "proxy": f"{reg}_IG" if proxy is not None else "NA",
-                                  "asof": dt.date.today().isoformat(),
-                                  "proxy_spread": proxy})
 
-    # schreiben
-    with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["symbol","region","asof","proxy_spread"])
-        w.writeheader()
-        w.writerows(rows)
+    out = pd.DataFrame(rows)
+    out.to_csv("data/processed/cds_proxy.csv", index=False)
 
-    json.dump(report, open(REP_JSON, "w"), indent=2)
+    report = {
+        "rows": len(out),
+        "fred_oas_used": {
+            "US_IG": float(us_ig["proxy_spread"]),
+            "US_HY": float(us_hy["proxy_spread"]),
+            "EU_IG": None,
+            "EU_HY": None,
+        },
+        "errors": [
+            {"reason": "eu_curves_missing", "msg": "EU OAS not available on FRED; EU mapped to US curves (fallback)."}
+        ],
+    }
+    json.dump(report, open("data/reports/cds_proxy_report.json","w"), indent=2)
+    print(f"cds_proxy.csv rows: {len(out)}")
 
 if __name__ == "__main__":
     main()

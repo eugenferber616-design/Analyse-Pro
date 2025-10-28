@@ -1,3 +1,20 @@
+VGK      # Vanguard FTSE Europe ETF (US)
+EZU      # iShares MSCI EMU (US)
+IEUR     # iShares Core MSCI Europe (US)
+FEZ      # SPDR Euro STOXX 50 (US)
+EWU      # iShares MSCI United Kingdom (US)
+EWG      # iShares MSCI Germany (US)
+EWQ      # iShares MSCI France (US)
+EWL      # iShares MSCI Switzerland (US)
+EWI      # iShares MSCI Italy (US)
+EWP      # iShares MSCI Spain (US)
+
+SXR8.DE  # iShares Core S&P 500 UCITS (Xetra) – Test für UCITS-Auflösung
+EXS1.DE  # iShares Core MSCI World UCITS (Xetra)
+VUSA.L   # Vanguard S&P 500 UCITS (LSE)
+VEVE.L   # Vanguard FTSE Dev World UCITS (LSE)
+IEMA.L   # iShares Core MSCI EM IMI UCITS (LSE)
+
 SPY
 QQQ
 IWM

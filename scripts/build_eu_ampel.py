@@ -1,57 +1,21 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-import os, json, pandas as pd
-from datetime import datetime
+# scripts/build_eu_ampel.py
+import os, sys, pandas as pd, json
+p = "data/processed/fred_oas.csv"
+if not os.path.exists(p):
+    print("EU-Ampel: kein fred_oas.csv – skip")
+    sys.exit(0)
 
-BASE="data/reports/eu_checks"; os.makedirs(BASE, exist_ok=True)
+df = pd.read_csv(p)
+if df.empty or "date" not in df or "value" not in df:
+    print("EU-Ampel: fred_oas.csv leer/ohne Spalten – skip")
+    sys.exit(0)
 
-def write_txt(path, lines):
-    with open(path,"w",encoding="utf-8") as f:
-        for ln in lines: f.write(ln+"\n")
+# Beispiel: nur letzte verfügbare EU_IG Zahl als „Ampel“
+df["date"] = pd.to_datetime(df["date"])
+eu_ig = df[(df["bucket"]=="EU_IG")].sort_values("date").tail(1)
+value = None if eu_ig.empty else float(eu_ig["value"].iloc[0])
 
-def main():
-    summary = {"ts": datetime.utcnow().isoformat()+"Z"}
-
-    # --- ECB preview ---
-    ecb_dir="data/macro/ecb"
-    ecb_files=[f for f in os.listdir(ecb_dir)] if os.path.isdir(ecb_dir) else []
-    ecb_preview=[]
-    for fn in sorted(ecb_files)[:10]:
-        df=pd.read_csv(os.path.join(ecb_dir,fn))
-        last = "" if df.empty else f"{df.iloc[-1]['date']},{df.iloc[-1]['value']}"
-        ecb_preview.append(f"{fn},{last}")
-    write_txt(os.path.join(BASE,"ecb_preview.txt"), ["file,last_date,last_value"]+ecb_preview)
-    summary["ecb_files"]=len(ecb_files)
-
-    # --- Stooq preview (EU Symbole aus Watchlist) ---
-    wl = []
-    wlf = "watchlists/mylist.txt"
-    if os.path.exists(wlf):
-        wl=[l.strip() for l in open(wlf,encoding="utf-8") if l.strip() and not l.startswith("#")]
-    EU_SUFFIX = (".DE",".PA",".AS",".MC",".MI",".BR",".WA",".PR",".VI",".LS",".BE",".SW",".HE",".CO",".OL",".ST",".FR",".IR",".NL",".PT",".PL",".CZ",".HU",".AT",".FI",".DK",".IE",".NO",".SE",".CH",".GB")
-    eu_syms=[s for s in wl if s.upper().endswith(EU_SUFFIX)]
-    stq_lines=["symbol,last_date,rows"]
-    for s in eu_syms[:30]:
-        p=os.path.join("data/market/stooq", f"{s.lower().replace('^','idx_')}.csv")
-        if os.path.exists(p):
-            df=pd.read_csv(p); last=df.iloc[-1]["date"] if not df.empty else ""
-            stq_lines.append(f"{s},{last},{len(df)}")
-        else:
-            stq_lines.append(f"{s},,0")
-    write_txt(os.path.join(BASE,"stooq_preview.txt"), stq_lines)
-    summary["stooq_eu_symbols"]=len(eu_syms)
-
-    # --- CDS proxy preview (EU only) ---
-    cds = "data/processed/cds_proxy.csv"
-    cds_lines=["symbol,region,proxy_spread"]
-    if os.path.exists(cds):
-        df=pd.read_csv(cds)
-        df=df[df["region"]=="EU"].head(30)
-        for _,r in df.iterrows():
-            cds_lines.append(f"{r['symbol']},{r['region']},{r['proxy_spread']}")
-    write_txt(os.path.join(BASE,"cds_proxy_preview.txt"), cds_lines)
-
-    json.dump(summary, open(os.path.join(BASE,"summary.json"),"w"), indent=2)
-    print(json.dumps(summary, indent=2))
-
-if __name__=="__main__": main()
+os.makedirs("data/reports/eu_checks", exist_ok=True)
+out = {"last_eu_ig_oas": value}
+open("data/reports/eu_checks/ampel_preview.json","w").write(json.dumps(out, indent=2))
+print("EU-Ampel OK:", out)

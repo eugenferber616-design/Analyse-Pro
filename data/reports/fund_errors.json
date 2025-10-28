@@ -1,46 +1,82 @@
 {
-  "total": 19,
-  "ok": 19,
-  "failed": 10,
+  "total": 20,
+  "ok": 20,
+  "failed": 19,
   "errors": [
     {
-      "symbol": "SAP.DE",
+      "symbol": "SAP.DE,sap.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "DTE.DE",
+      "symbol": "DTE.DE,dte.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "ALV.DE",
+      "symbol": "ALV.DE,alv.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "SIE.DE",
+      "symbol": "SIE.DE,sie.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "BAS.DE",
+      "symbol": "BAS.DE,bas.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "BAYN.DE",
+      "symbol": "BAYN.DE,bayn.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "BMW.DE",
+      "symbol": "BMW.DE,bmw.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "VOW3.DE",
+      "symbol": "VOW3.DE,vow3.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "ADS.DE",
+      "symbol": "ADS.DE,ads.de",
       "reason": "403 -> yahoo_fallback"
     },
     {
-      "symbol": "IFX.DE",
+      "symbol": "IFX.DE,ifx.de",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "AAPL,aapl.us",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "MSFT,msft.us",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "AMZN,amzn.us",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "SPY,spy.us",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "GLD,gld.us",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "AVGO,avgo.us",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "META,meta.us",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "NVDA,nvda.us",
+      "reason": "403 -> yahoo_fallback"
+    },
+    {
+      "symbol": "GOOGL,googl.us",
       "reason": "403 -> yahoo_fallback"
     }
   ]

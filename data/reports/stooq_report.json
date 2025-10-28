@@ -1,0 +1,13 @@
+{
+  "ts": "2025-10-28T23:05:11.060136+00:00",
+  "watchlist": "watchlists/mylist.txt",
+  "days": 365,
+  "symbols": 0,
+  "ok": 0,
+  "failed": 0,
+  "files_dir": "data/market/stooq",
+  "preview_csv": "data/processed/fx_quotes.csv",
+  "preview_txt": "data/reports/eu_checks/stooq_preview.txt",
+  "note": "Nur Xetra (.DE) via yfinance. Mapping-Datei wird nur f\u00fcr Logging/Vorschau mitgef\u00fchrt.",
+  "fail": []
+}

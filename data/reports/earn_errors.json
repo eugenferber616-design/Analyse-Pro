@@ -1,9 +1,9 @@
 {
-  "ts": "2025-10-28T22:15:02Z",
+  "ts": "2025-10-28T23:04:12Z",
   "watchlist": "watchlists/mylist.txt",
   "overrides": "watchlists/earnings_overrides.csv",
-  "rows": 40,
-  "symbols": 20,
+  "rows": 12,
+  "symbols": 19,
   "errors": [],
   "missing": 0,
   "files": {

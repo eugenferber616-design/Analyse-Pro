@@ -1,17 +1,12 @@
 {
-  "files": {},
   "errors": [
     {
-      "alias": "exr_usd_eur",
-      "err": "HTTP 400 for https://data-api.ecb.europa.eu/service/data/EXR/EXR.D.USD.EUR.SP00.A?lastNObservations=720&format=csvdata\n<html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-align: center; } h1{  font-size:38px; font-weight: normal; color:#003299; }  @media screen and (max-width: 480px) { h1{ font-size: 30px; } }  p { font-size: 15px; line-height: 20px; color: #333; margin-bottom: 20px; }  p"
+      "alias": "ciss_ea",
+      "err": "HTTP Error 400: Bad Request"
     },
     {
-      "alias": "ciss_ea_d",
-      "err": "HTTP 400 for https://data-api.ecb.europa.eu/service/data/CISS/CISS.D.U2.Z0Z.4F.EC.SS_CIN.IDX?lastNObservations=720&format=csvdata\n<html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-align: center; } h1{  font-size:38px; font-weight: normal; color:#003299; }  @media screen and (max-width: 480px) { h1{ font-size: 30px; } }  p { font-size: 15px; line-height: 20px; color: #333; margin-bottom: 20px; }  p"
-    },
-    {
-      "alias": "ciss_us_d",
-      "err": "HTTP 400 for https://data-api.ecb.europa.eu/service/data/CISS/CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX?lastNObservations=720&format=csvdata\n<html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-align: center; } h1{  font-size:38px; font-weight: normal; color:#003299; }  @media screen and (max-width: 480px) { h1{ font-size: 30px; } }  p { font-size: 15px; line-height: 20px; color: #333; margin-bottom: 20px; }  p"
+      "alias": "ciss_us",
+      "err": "HTTP Error 400: Bad Request"
     }
   ]
 }

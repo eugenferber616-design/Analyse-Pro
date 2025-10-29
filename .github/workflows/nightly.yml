@@ -266,6 +266,34 @@ jobs:
           # 3) Roh-Kursdateien wieder löschen (Repo schlank halten)
           rm -f data/market/stooq/*.csv || true
 
+      - name: Fetch daily prices (Finnhub) for forecasts
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
+        run: |
+          python scripts/fetch_prices_simple.py \
+            --watchlist "${WATCHLIST_ETF}" \
+            --days 365
+
+      - name: Compute ensemble forecasts (no Pine)
+        run: |
+          mkdir -p data/processed docs
+          # Beispiel: für alle ETF der Watchlist (erste 15 Zeilen)
+          head -n 15 "${WATCHLIST_ETF}" | while read SYM; do
+            [ -z "$SYM" ] && continue
+            # Filter Kopfzeilen/Kommentare
+            echo "$SYM" | grep -E '^(#|//|symbol|SYMBOL)' >/dev/null && continue
+            python scripts/compute_forecast_cli.py \
+              --symbol "$SYM" \
+              --horizons "5,10" \
+              --iv-annual 0.22 || true
+          done
+          # Kleines Indexfile
+          jq -s 'map({symbol:.symbol, per_h:.per_h, meta:.meta})' data/processed/forecast_*.json > docs/forecast_dashboard.json
+          head -n 40 docs/forecast_dashboard.json || true
+
+
       # ========= CDS Proxy v2 (mit HV-Datei) =========
       - name: Build CDS proxy per symbol
         shell: bash

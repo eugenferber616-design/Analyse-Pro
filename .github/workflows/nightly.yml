@@ -122,14 +122,13 @@ jobs:
           test -f data/reports/etf_errors.json && cat data/reports/etf_errors.json || true
 
       - name: Pull FUNDAMENTALS (profile2 + metrics)
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
           mkdir -p data/fundamentals
-          python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/fundamentals
-          head -n 20 data/processed/fundamentals_core.csv || true
+          python scripts/fetch_fundamentals.py \
+          --watchlist watchlists/mylist.txt \
+          --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
+          --sleep_ms 150
+
 
       # ========= COT 10y (robust, mit ENV für Timeout/Limit) =========
       - name: Pull COT (10y, Socrata) + compress

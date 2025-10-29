@@ -1,12 +1,9 @@
 {
-  "ts": "2025-10-28T23:56:15.278660Z",
+  "ts": "2025-10-29T00:31:29.738364+00:00Z",
   "rows": 20,
   "fred_oas_used": {
     "US_IG": 0.76,
-    "US_HY": 2.8,
-    "EU_IG": null,
-    "EU_HY": null
+    "US_HY": 2.8
   },
-  "errors": [],
-  "preview": "data/processed/cds_proxy.csv"
+  "errors": []
 }

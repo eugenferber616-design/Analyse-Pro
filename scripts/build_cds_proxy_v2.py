@@ -1,237 +1,278 @@
 # scripts/build_cds_proxy_v2.py
-import os, csv, json
-from datetime import datetime
-from typing import Dict, Optional, Tuple
+# -*- coding: utf-8 -*-
+"""
+CDS-Proxy je Symbol:
+- Region-Erkennung (US/EU) aus Ticker-Suffix oder Fundamentals.country
+- IG/HY-Heuristik aus Fundamentals (marktnahe, robuste Defaults)
+- OAS-Zuordnung aus data/processed/fred_oas.csv
+- EU_HY → Fallback auf US_HY (+ optionaler Aufschlag)
+- Ausgabe: data/processed/cds_proxy.csv  (symbol,region,proxy_spread)
+
+Aufruf:
+  python scripts/build_cds_proxy_v2.py \
+      --watchlist watchlists/mylist.txt \
+      --eu-hy-premium 0.00
+
+Optional:
+  --fundamentals data/processed/fundamentals_core.csv
+  --fred-oas      data/processed/fred_oas.csv
+"""
+
+import argparse
+import csv
+import json
+import math
+import os
+from typing import Dict, Optional
 
 import pandas as pd
 
-FRED_OAS_FILE = "data/processed/fred_oas.csv"
-OUT_CSV       = "data/processed/cds_proxy.csv"
-OUT_REPORT    = "data/reports/cds_proxy_report.json"
-MAP_FILE      = "config/oas_proxy_map.csv"   # optional
 
-# ────────────────────────────────────────────────────────────────────
-# Hilfen
-# ────────────────────────────────────────────────────────────────────
+DEF_WATCHLIST = "watchlists/mylist.txt"
+DEF_FRED_OAS = "data/processed/fred_oas.csv"
+DEF_FUNDS = "data/processed/fundamentals_core.csv"
+OUT_CSV = "data/processed/cds_proxy.csv"
+PREVIEW_TXT = "data/reports/eu_checks/cds_proxy_preview.txt"
+REPORT_JSON = "data/reports/cds_proxy_report.json"
+
+
+# --------- Helpers ---------
+EU_SUFFIXES = {
+    ".DE", ".PA", ".AS", ".MI", ".BR", ".MC", ".BE", ".SW", ".OL", ".ST",
+    ".HE", ".CO", ".IR", ".LS", ".WA", ".VI", ".PR", ".PRG", ".VX", ".L"
+}
+# .L (London) ist nicht Eurozone; wir nutzen "EU" im Sinne "Nicht-US Europa" für den Proxy.
+# Das genügt, da wir EU_IG aus Euro Indices ziehen und EU_HY via Fallback behandeln.
+
+
+def read_watchlist(path: str) -> pd.Series:
+    """Akzeptiert .txt (ein Ticker pro Zeile) oder .csv (Spalte 'symbol')."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Watchlist nicht gefunden: {path}")
+    if path.lower().endswith(".csv"):
+        df = pd.read_csv(path)
+        col = "symbol" if "symbol" in df.columns else df.columns[0]
+        syms = df[col].astype(str).str.strip()
+    else:
+        # .txt: pro Zeile ein Symbol; Kommentarzeilen/Leerzeilen ignorieren
+        vals = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                t = line.strip()
+                if not t or t.startswith("#") or t.lower().startswith("symbol"):
+                    continue
+                vals.append(t.split(",")[0].strip())
+        syms = pd.Series(vals, name="symbol")
+    syms = syms[syms != ""].drop_duplicates().reset_index(drop=True)
+    return syms
+
+
+def load_fred_oas(path: str) -> pd.DataFrame:
+    """
+    Erwartet Spalten: date, series_id, value, bucket, region
+    Nimmt je (region,bucket) den letzten Wert.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"FRED-OAS fehlt: {path}")
+    df = pd.read_csv(path)
+    # Datentypen robust
+    for c in ["region", "bucket", "series_id"]:
+        if c in df.columns:
+            df[c] = df[c].astype(str)
+    if "value" in df.columns:
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    if "date" in df.columns:
+        # neueste zuerst
+        df = df.sort_values("date")
+    # letzter Wert pro (region,bucket)
+    last = df.groupby(["region", "bucket"], as_index=False).tail(1)
+    # in Dict: (region,bucket) -> value
+    out = {}
+    for _, r in last.iterrows():
+        out[(r["region"], r["bucket"])] = float(r["value"]) if pd.notna(r["value"]) else math.nan
+    return pd.DataFrame(
+        [{"region": k[0], "bucket": k[1], "value": v} for k, v in out.items()]
+    )
+
+
+def load_fundamentals(path: str) -> pd.DataFrame:
+    """
+    Lädt Fundamentals; Spalten sind je nach Fetcher unterschiedlich.
+    Wir nutzen defensiv: symbol, market_cap, debt_to_equity, net_margin, country
+    """
+    if not os.path.exists(path):
+        # leeres DF -> Heuristik fällt deutlich konservativer aus
+        return pd.DataFrame(columns=["symbol", "country", "market_cap", "debt_to_equity", "net_margin"])
+    df = pd.read_csv(path)
+    # Normalize columns
+    cols_lower = {c: c.lower() for c in df.columns}
+    df.columns = [cols_lower[c] for c in df.columns]
+    # erwarte "symbol"; falls nicht, versuche aus "name" etc. – ansonsten fail-safe
+    if "symbol" not in df.columns:
+        # Manche Exporte haben in der ersten Spalte den Ticker
+        df = df.rename(columns={df.columns[0]: "symbol"})
+    # Datentypen
+    for num in ["market_cap", "debt_to_equity", "net_margin"]:
+        if num in df.columns:
+            df[num] = pd.to_numeric(df[num], errors="coerce")
+    if "country" not in df.columns:
+        df["country"] = None
+    # eindeutige letzte Zeile pro symbol
+    df = df.drop_duplicates(subset=["symbol"], keep="last").reset_index(drop=True)
+    return df[["symbol", "country", "market_cap", "debt_to_equity", "net_margin"]]
+
+
+def infer_region(symbol: str, fund_country: Optional[str]) -> str:
+    s = symbol.upper()
+    # 1) Ticker-Suffix
+    for suf in EU_SUFFIXES:
+        if s.endswith(suf):
+            return "EU"
+    # 2) Country-Backup
+    if fund_country:
+        c = str(fund_country).strip().upper()
+        if c and c not in ("US", "USA", "UNITED STATES", "UNITED-STATES"):
+            return "EU"
+    return "US"
+
+
+def infer_bucket(row: pd.Series) -> str:
+    """
+    IG/HY-Heuristik (robust, konservativ):
+      IG wenn
+        - market_cap ≥ 5 Mrd  (5e9)  UND
+        - debt_to_equity ≤ 150 (oder fehlt) UND
+        - net_margin >= 0 (oder fehlt)
+      sonst HY
+    """
+    mc = row.get("market_cap", float("nan"))
+    dte = row.get("debt_to_equity", float("nan"))
+    nm = row.get("net_margin", float("nan"))
+
+    cond_mc = (pd.notna(mc) and mc >= 5e9)
+    cond_dte = (pd.isna(dte) or dte <= 150.0)
+    cond_nm = (pd.isna(nm) or nm >= 0.0)
+
+    return "IG" if (cond_mc and cond_dte and cond_nm) else "HY"
+
+
+def pick_oas(oas_df: pd.DataFrame, region: str, bucket: str,
+             eu_hy_premium: float = 0.0) -> Optional[float]:
+    """
+    Holt (region,bucket) -> value; EU_HY-Fallback auf US_HY (+Premium).
+    """
+    # Direkt verfügbar?
+    m = oas_df[(oas_df["region"] == region) & (oas_df["bucket"] == bucket)]
+    if len(m):
+        val = m["value"].iloc[-1]
+        if pd.notna(val):
+            return float(val)
+
+    # EU_HY Fallback: US_HY + Premium
+    if region == "EU" and bucket == "HY":
+        mu = oas_df[(oas_df["region"] == "US") & (oas_df["bucket"] == "HY")]
+        if len(mu):
+            v = mu["value"].iloc[-1]
+            if pd.notna(v):
+                return float(v) + float(eu_hy_premium)
+
+    # Letzte Reserve: US_IG
+    r = oas_df[(oas_df["region"] == "US") & (oas_df["bucket"] == "IG")]
+    if len(r):
+        rv = r["value"].iloc[-1]
+        if pd.notna(rv):
+            return float(rv)
+    return None
+
 
 def ensure_dirs():
     os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
-    os.makedirs(os.path.dirname(OUT_REPORT), exist_ok=True)
+    os.makedirs(os.path.dirname(PREVIEW_TXT), exist_ok=True)
+    os.makedirs(os.path.dirname(REPORT_JSON), exist_ok=True)
 
-def read_watchlist(path: str) -> pd.DataFrame:
-    """
-    Akzeptiert:
-      - einfache Textliste (eine Spalte, optional header 'symbol')
-      - CSV mit Spalte 'symbol'
-    """
-    if not path or not os.path.exists(path):
-        raise FileNotFoundError(f"watchlist not found: {path}")
 
-    # Versuche CSV mit Kopf
-    try:
-        df = pd.read_csv(path)
-        if "symbol" in df.columns:
-            symbols = df["symbol"].astype(str).str.strip()
-            symbols = symbols[symbols.ne("")].dropna().unique()
-            return pd.DataFrame({"symbol": symbols})
-    except Exception:
-        pass
+# --------- Main ---------
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--watchlist", default=DEF_WATCHLIST, help="Pfad zur Watchlist (.txt/.csv)")
+    ap.add_argument("--fred-oas", default=DEF_FRED_OAS, help="Pfad zu data/processed/fred_oas.csv")
+    ap.add_argument("--fundamentals", default=DEF_FUNDS, help="Pfad zu data/processed/fundamentals_core.csv")
+    ap.add_argument("--eu-hy-premium", type=float, default=0.00,
+                    help="Aufschlag (in %-Punkten) wenn EU_HY auf US_HY fällt, z.B. 0.20")
+    args = ap.parse_args()
 
-    # Fallback: simple Zeilenliste
-    rows = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            s = line.strip()
-            if not s or s.lower() == "symbol":
-                continue
-            rows.append(s)
-    return pd.DataFrame({"symbol": pd.Series(rows).dropna().unique()})
-
-def read_oas_proxy_map(path: str) -> Tuple[Dict[str, Dict[str, Optional[str]]], Dict[str, str]]:
-    """
-    Erwartetes Format (siehe deine Vorlage):
-      regions:
-        US:
-          IG: "<FRED_SERIES_ID_US_IG>"
-          HY: "<FRED_SERIES_ID_US_HY>"
-        EU:
-          IG: "<FRED_SERIES_ID_EU_IG>"
-          HY: "<FRED_SERIES_ID_EU_HY>"
-
-      symbol,proxy
-      <SYMBOL>,<REGION_TAG>   # z.B. SAP.DE,EU_IG (überschreibt Auto-Logik)
-    Datei ist eine 'lockere' CSV/YAML-Mischung – wir parsen simple key:value Paare Zeile für Zeile.
-    """
-    region_series = {
-        "US": {"IG": "BAMLC0A0CM",   "HY": "BAMLH0A0HYM2"},
-        "EU": {"IG": None,           "HY": "BAMLHE00EHYIOAS"},
-    }
-    symbol_region_override: Dict[str, str] = {}
-
-    if not os.path.exists(path):
-        return region_series, symbol_region_override
-
-    # Lockeres Parsen
-    current = None
-    with open(path, "r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            if line.lower().startswith("regions:"):
-                current = "regions"
-                continue
-
-            if current == "regions":
-                # Beispiele:
-                # US:
-                #   IG: "BAMLC0A0CM"
-                #   HY: "BAMLH0A0HYM2"
-                if line.endswith(":") and line[:-1] in ("US", "EU"):
-                    block = line[:-1]
-                    # read inner lines until next block/section
-                    continue
-
-            # minimalistische Key:Value-Erkennung
-            if ":" in line:
-                key, val = [x.strip() for x in line.split(":", 1)]
-                val = val.strip().strip('"').strip("'")
-                # Section-Style:
-                if key in ("US", "EU") and val == "":
-                    current = f"REGION_{key}"
-                    region_block = key
-                    continue
-                if key in ("IG", "HY") and current and current.startswith("REGION_"):
-                    region = current.split("_", 1)[1]
-                    region_series[region][key] = (val or None) if val != '""' else None
-                    continue
-
-            # Symbol-Liste
-            if "," in line and not line.lower().startswith("symbol"):
-                sym, prox = [x.strip() for x in line.split(",", 1)]
-                if prox:
-                    symbol_region_override[sym] = prox
-
-    return region_series, symbol_region_override
-
-def load_fred_oas(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    # Erwartete Spalten: date, series_id, value, bucket, region
-    needed = {"date", "series_id", "value"}
-    missing = needed - set(df.columns)
-    if missing:
-        raise ValueError(f"{path} missing columns: {missing}")
-
-    # Datums-Typ
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.sort_values(["series_id", "date"])
-    return df
-
-def series_last(df: pd.DataFrame, series_id: str) -> Optional[float]:
-    d = df[df["series_id"] == series_id]
-    if d.empty:
-        return None
-    # Letzter nicht-NaN-Wert
-    d = d.dropna(subset=["value"])
-    if d.empty:
-        return None
-    return float(d.iloc[-1]["value"])
-
-def infer_region(symbol: str) -> str:
-    # sehr einfache Heuristik
-    return "EU_IG" if symbol.upper().endswith(".DE") else "US_IG"
-
-# ────────────────────────────────────────────────────────────────────
-# Hauptlogik
-# ────────────────────────────────────────────────────────────────────
-
-def main(watchlist_path: Optional[str] = None):
     ensure_dirs()
 
-    # Watchlist einlesen
-    wl_path = os.environ.get("WATCHLIST_STOCKS") if not watchlist_path else watchlist_path
-    if not wl_path:
-        raise RuntimeError("WATCHLIST_STOCKS env not set and no --watchlist provided")
-    watch = read_watchlist(wl_path)
+    # Eingaben laden
+    syms = read_watchlist(args.watchlist)
+    oas_df = load_fred_oas(args.fred_oas)
+    funds = load_fundamentals(args.fundamentals)
 
-    # Mapping/Defaults lesen
-    region_series, overrides = read_oas_proxy_map(MAP_FILE)
+    # Für schnelle Joins: Fundamentals per Symbol
+    funds_idx = funds.set_index("symbol") if "symbol" in funds.columns else pd.DataFrame().set_index(pd.Index([]))
 
-    # FRED OAS laden
-    fred = load_fred_oas(FRED_OAS_FILE)
+    out_rows = []
+    preview_lines = ["symbol,region,proxy_spread"]
+    errors = []
 
-    # Letzte Werte je Serie greifen
-    us_ig_sid = region_series["US"]["IG"]
-    us_hy_sid = region_series["US"]["HY"]
-    eu_ig_sid = region_series["EU"]["IG"]
-    eu_hy_sid = region_series["EU"]["HY"]
+    for sym in syms:
+        fs = funds_idx.loc[sym] if sym in funds_idx.index else None
+        country = None
+        if fs is not None and "country" in funds_idx.columns:
+            country = fs.get("country", None)
 
-    us_ig = series_last(fred, us_ig_sid) if us_ig_sid else None
-    us_hy = series_last(fred, us_hy_sid) if us_hy_sid else None
-    eu_ig = series_last(fred, eu_ig_sid) if eu_ig_sid else None
-    eu_hy = series_last(fred, eu_hy_sid) if eu_hy_sid else None
+        region = infer_region(sym, country)
 
-    # Fallback-Heuristik, wenn EU_IG fehlt:
-    if eu_ig is None:
-        # einfache, nachvollziehbare Regel: EU_IG ≈ US_IG − 0.08 (Floor 0.40)
-        if us_ig is not None:
-            eu_ig = max(0.40, round(us_ig - 0.08, 2))
-        elif eu_hy is not None:
-            eu_ig = max(0.40, round(eu_hy * 0.35, 2))
+        # Heuristik-Datenzeile bauen
+        if fs is None:
+            base = pd.Series({"market_cap": float("nan"),
+                              "debt_to_equity": float("nan"),
+                              "net_margin": float("nan")})
         else:
-            eu_ig = None
+            base = fs
 
-    fred_used = {
-        "US_IG": us_ig,
-        "US_HY": us_hy,
-        "EU_IG": eu_ig,
-        "EU_HY": eu_hy,
+        bucket = infer_bucket(base)
+
+        val = pick_oas(oas_df, region, bucket, eu_hy_premium=args.eu_hy_premium)
+
+        if val is None or pd.isna(val):
+            errors.append({"symbol": sym, "reason": "no_oas_value"})
+            preview_lines.append(f"{sym},{region},nan")
+        else:
+            out_rows.append({"symbol": sym, "region": f"{region}_{bucket}", "proxy_spread": round(float(val), 2)})
+            preview_lines.append(f"{sym},{region}_{bucket},{round(float(val), 2)}")
+
+    # Schreiben
+    with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["symbol", "region", "proxy_spread"])
+        w.writeheader()
+        for r in out_rows:
+            w.writerow(r)
+
+    with open(PREVIEW_TXT, "w", encoding="utf-8") as f:
+        f.write("\n".join(preview_lines) + "\n")
+
+    # Report
+    fred_map = {(r["region"], r["bucket"]): r["value"] for _, r in oas_df.iterrows()}
+    rep = {
+        "ts": pd.Timestamp.utcnow().isoformat() + "Z",
+        "rows": len(out_rows),
+        "fred_oas_used": {
+            "US_IG": fred_map.get(("US", "IG")),
+            "US_HY": fred_map.get(("US", "HY")),
+            "EU_IG": fred_map.get(("EU", "IG")),
+            "EU_HY": fred_map.get(("EU", "HY")),  # bleibt i. d. R. None
+        },
+        "eu_hy_premium": args.eu_hy_premium,
+        "errors": errors,
+        "preview": OUT_CSV,
     }
+    with open(REPORT_JSON, "w", encoding="utf-8") as f:
+        json.dump(rep, f, indent=2)
 
-    rows = []
-    for sym in watch["symbol"].tolist():
-        prox_tag = overrides.get(sym)  # z.B. "EU_IG" oder "US_IG"
-        if not prox_tag:
-            prox_tag = infer_region(sym)
+    # Konsolen-Ausgabe (kurz)
+    print(json.dumps({k: v for k, v in rep.items() if k in ("ts", "rows", "fred_oas_used", "errors", "preview")}, indent=2))
 
-        base = None
-        if prox_tag == "US_IG":
-            base = us_ig
-        elif prox_tag == "EU_IG":
-            base = eu_ig
-        elif prox_tag == "US_HY":
-            base = us_hy
-        elif prox_tag == "EU_HY":
-            base = eu_hy
-
-        # sehr defensiv: falls None, setze 0.70 als neutralen Fallback
-        if base is None:
-            base = 0.70
-
-        rows.append({"symbol": sym, "region": prox_tag, "proxy_spread": round(float(base), 2)})
-
-    out_df = pd.DataFrame(rows)
-    out_df.to_csv(OUT_CSV, index=False)
-
-    report = {
-        "ts": datetime.utcnow().isoformat() + "Z",
-        "rows": len(out_df),
-        "fred_oas_used": fred_used,
-        "errors": [],
-        "preview": OUT_CSV
-    }
-    with open(OUT_REPORT, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
-
-    # Konsole: kleine Vorschau
-    print(json.dumps(report, indent=2))
-    for _, r in out_df.head(10).iterrows():
-        print(f'{r["symbol"]},{r["region"]},{r["proxy_spread"]}')
 
 if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--watchlist", help="Pfad zu Watchlist (überschreibt env WATCHLIST_STOCKS)", default=None)
-    args = ap.parse_args()
-    main(args.watchlist)
+    main()

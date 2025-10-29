@@ -125,10 +125,9 @@ jobs:
         run: |
           mkdir -p data/fundamentals
           python scripts/fetch_fundamentals.py \
-          --watchlist watchlists/mylist.txt \
-          --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
-          --sleep_ms 150
-
+            --watchlist "${WATCHLIST_STOCKS}" \
+            --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
+            --sleep_ms 150
 
       # ========= COT 10y (robust, mit ENV für Timeout/Limit) =========
       - name: Pull COT (10y, Socrata) + compress
@@ -237,7 +236,7 @@ jobs:
           head -n 5 data/processed/cot.csv || true
           head -n 5 data/processed/cot_summary.csv || true
 
-      # ========= Macro (diverse FRED-Reihen für Heatmaps etc.) =========
+      # ========= Macro (diverse FRED-Reihen) =========
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -256,13 +255,11 @@ jobs:
           tail -n +1 data/reports/fred_errors.json || true
           head -n 5 data/processed/fred_oas.csv || true
 
-
       - name: Pull ECB (new API)
         run: |
           python scripts/fetch_ecb.py || true
           test -f data/reports/ecb_errors.json && cat data/reports/ecb_errors.json || true
           ls -l data/macro/ecb || true
-
 
       - name: Pull Stooq quotes (Xetra only)
         run: |
@@ -270,15 +267,11 @@ jobs:
           python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" --days 365 || true
           head -n 10 data/processed/fx_quotes.csv || true
 
-
-
-      # ========= CDS Proxy v2 (nutzt US/EU OAS + Fundamentals + Stooq HV20) =========
+      # ========= CDS Proxy v2 =========
       - name: Build CDS proxy per symbol
-        env:
-          WATCHLIST_STOCKS: ${{ env.WATCHLIST_STOCKS }}
         shell: bash
         run: |
-          python scripts/build_cds_proxy_v2.py
+          python scripts/build_cds_proxy_v2.py --watchlist "${WATCHLIST_STOCKS}"
           tail -n 10 data/processed/cds_proxy.csv || true
           test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
 
@@ -287,7 +280,6 @@ jobs:
         run: |
           python scripts/build_eu_ampel.py || true
           test -f data/reports/eu_checks/ampel_preview.json && cat data/reports/eu_checks/ampel_preview.json || true
-
 
       - name: Validate processed outputs
         shell: bash
@@ -317,7 +309,6 @@ jobs:
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
           cat data/reports/qa_summary.json || true
-
 
       - name: List written files (sizes)
         shell: bash

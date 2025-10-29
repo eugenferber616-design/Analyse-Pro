@@ -7,6 +7,7 @@
   "options_oi_summary.csv": 193,
   "options_oi_by_expiry.csv": 193,
   "options_oi_totals.csv": 9,
+  "hv_summary.csv.gz": 10,
   "cds_proxy.csv": 19,
   "fx_quotes.csv": 0
 }

@@ -129,7 +129,7 @@ jobs:
             --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
             --sleep_ms 150
 
-      # ========= COT 10y (robust, mit ENV für Timeout/Limit) =========
+      # ========= COT 10y (robust) =========
       - name: Pull COT (10y, Socrata) + compress
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
@@ -152,27 +152,11 @@ jobs:
             --data-urlencode '$limit=1' \
             -H "X-App-Token: ${CFTC_APP_TOKEN}" | tee /tmp/cftc_smoke_10y.json
           echo
+          echo "== Pull 10y =="; python -u scripts/fetch_cot_10y.py || true
+          echo "== Preview =="; head -n 5 data/processed/cot_10y.csv || true
+          ls -lh data/processed/cot_10y.* || true
 
-          echo "== Pull 10y =="
-          tries=3
-          for i in $(seq 1 $tries); do
-            if python -u scripts/fetch_cot_10y.py; then
-              break
-            fi
-            echo "Fetcher failed (try $i/$tries) – sleeping …"
-            sleep $((10 * i))
-            if [ "$i" -eq "$tries" ]; then
-              echo "❌ fetch_cot_10y.py failed after $tries tries"
-              test -f data/reports/cot_10y_report.json && cat data/reports/cot_10y_report.json || true
-              exit 1
-            fi
-          done
-
-          echo "== Preview =="
-          head -n 5 data/processed/cot_10y.csv || true
-          ls -lh data/processed/cot_10y.*
-
-      # ========= COT (latest, robust) =========
+      # ========= COT (latest) =========
       - name: Pull COT (CFTC Socrata)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
@@ -192,8 +176,6 @@ jobs:
             echo "❌ CFTC_APP_TOKEN fehlt. Bitte Secrets setzen."
             exit 1
           fi
-
-          echo "== Socrata Smoke-Test (mit kleinem Retry) =="
           ok=0
           for i in 1 2 3; do
             if curl -fsS --max-time 40 -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
@@ -204,39 +186,15 @@ jobs:
               | tee /tmp/cftc_smoke.json ; then
               ok=1; break
             fi
-            echo "…Retry $i/3 nach Netzwerk/DNS-Fehler…"; sleep 2
+            echo "…Retry $i/3 …"; sleep 2
           done
-          if [ "$ok" -ne 1 ]; then
-            echo "❌ Konnte Socrata nicht erreichen (DNS/Netz?). Abbruch."
-            exit 1
-          fi
-
-          if grep -q '"permission_denied"' /tmp/cftc_smoke.json; then
-            echo "❌ CFTC_APP_TOKEN ungültig (permission_denied). Bitte Token im Secret aktualisieren."
-            cat /tmp/cftc_smoke.json
-            exit 1
-          fi
-
-          echo "== Fetcher starten (alle Märkte, letzter Report) =="
-          tries=3
-          for i in $(seq 1 $tries); do
-            if python -u scripts/fetch_cot_socrata.py; then
-              break
-            fi
-            echo "Fetcher failed (try $i/$tries) – sleeping …"
-            sleep $((10 * i))
-            if [ "$i" -eq "$tries" ]; then
-              echo "❌ fetch_cot_socrata.py failed after $tries tries"
-              test -f data/reports/cot_errors.json && cat data/reports/cot_errors.json || true
-              exit 1
-            fi
-          done
-
-          echo "== Vorschau (cot.csv / cot_summary.csv) =="
+          [ "$ok" -eq 1 ] || { echo "❌ Socrata nicht erreichbar"; exit 1; }
+          ! grep -q '"permission_denied"' /tmp/cftc_smoke.json || { echo "❌ Token ungültig"; cat /tmp/cftc_smoke.json; exit 1; }
+          python -u scripts/fetch_cot_socrata.py || true
           head -n 5 data/processed/cot.csv || true
           head -n 5 data/processed/cot_summary.csv || true
 
-      # ========= Macro (diverse FRED-Reihen) =========
+      # ========= Macro (FRED) =========
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -246,7 +204,7 @@ jobs:
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
 
-      # ========= FRED OAS (US & Euro) -> data/processed/fred_oas.csv =========
+      # ========= FRED OAS =========
       - name: Pull FRED OAS (US & Euro)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -255,27 +213,68 @@ jobs:
           tail -n +1 data/reports/fred_errors.json || true
           head -n 5 data/processed/fred_oas.csv || true
 
+      # ========= ECB (neue API) =========
       - name: Pull ECB (new API)
         run: |
           python scripts/fetch_ecb.py || true
           test -f data/reports/ecb_errors.json && cat data/reports/ecb_errors.json || true
           ls -l data/macro/ecb || true
 
-      - name: Pull Stooq quotes (Xetra only)
+      # ========= Stooq → HV-Summary (Rohdaten wieder löschen) =========
+      - name: Pull Stooq quotes (Xetra only) → build HV summary → purge raws
+        env:
+          HV_WIN_SHORT: ${{ env.HV_WIN_SHORT }}
+          HV_WIN_LONG:  ${{ env.HV_WIN_LONG }}
         run: |
-          mkdir -p data/market/stooq
+          set -e
+          mkdir -p data/market/stooq data/processed
+          # 1) Kurse kurzzeitig ziehen
           python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" --days 365 || true
-          head -n 10 data/processed/fx_quotes.csv || true
+          # 2) HV-Summary berechnen (nur Adj Close; jährliche Vol auf Basis log-returns)
+          python - << 'PY'
+          import os, csv, math, gzip, glob
+          import pandas as pd
+          from pathlib import Path
+          in_dir = Path("data/market/stooq")
+          rows = []
+          win_s = int(os.getenv("HV_WIN_SHORT","20"))
+          win_l = int(os.getenv("HV_WIN_LONG","60"))
+          for p in sorted(in_dir.glob("*.csv")):
+              try:
+                  df = pd.read_csv(p)
+                  col = "Adj Close" if "Adj Close" in df.columns else "Close"
+                  s = pd.to_numeric(df[col], errors="coerce").dropna()
+                  if s.size < max(win_s, win_l) + 2: 
+                      continue
+                  r = (s.pct_change().dropna())
+                  # robust annualized vol (sqrt(252) * std of returns)
+                  hv20 = float((r.tail(win_s).std() * (252**0.5)))
+                  hv60 = float((r.tail(win_l).std() * (252**0.5)))
+                  sym = p.stem
+                  rows.append({"symbol": sym, "hv20": hv20, "hv60": hv60})
+              except Exception as e:
+                  pass
+          outp = Path("data/processed/hv_summary.csv.gz")
+          outp.parent.mkdir(parents=True, exist_ok=True)
+          with gzip.open(outp, "wt", encoding="utf-8", newline="") as f:
+              w = csv.DictWriter(f, fieldnames=["symbol","hv20","hv60"])
+              w.writeheader()
+              for r in rows:
+                  w.writerow(r)
+          print(f"HV rows: {len(rows)} -> {outp}")
+          PY
+          # 3) Roh-Kursdateien wieder löschen (Repo schlank halten)
+          rm -f data/market/stooq/*.csv || true
 
-      # ========= CDS Proxy v2 =========
+      # ========= CDS Proxy v2 (mit HV-Datei) =========
       - name: Build CDS proxy per symbol
         shell: bash
         run: |
-          python scripts/build_cds_proxy_v2.py --watchlist "${WATCHLIST_STOCKS}"
+          python scripts/build_cds_proxy_v2.py --watchlist "${WATCHLIST_STOCKS}" --hv data/processed/hv_summary.csv.gz
           tail -n 10 data/processed/cds_proxy.csv || true
           test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
 
-      # ========= EU Ampel (ECB/Stooq/CDS Previews) =========
+      # ========= EU Ampel (Previews) =========
       - name: EU macro checks (Ampel)
         run: |
           python scripts/build_eu_ampel.py || true
@@ -285,21 +284,25 @@ jobs:
         shell: bash
         run: |
           python - << 'PY'
-          import os, json
-          def count_rows(p):
-              import csv
+          import os, json, gzip, csv
+          def count_rows_csv(p):
               return sum(1 for _ in open(p, encoding="utf-8"))-1 if os.path.exists(p) and os.path.getsize(p)>0 else 0
+          def count_rows_gz(p):
+              if not os.path.exists(p) or os.path.getsize(p)==0: return 0
+              with gzip.open(p, "rt", encoding="utf-8") as f:
+                  return sum(1 for _ in f)-1
           checks = {
-              "fundamentals_core.csv":  count_rows("data/processed/fundamentals_core.csv"),
-              "earnings_results.csv":   count_rows("data/processed/earnings_results.csv"),
-              "etf_basics.csv":         count_rows("data/processed/etf_basics.csv"),
-              "fred_oas.csv":           count_rows("data/processed/fred_oas.csv"),
-              "cot_summary.csv":        count_rows("data/processed/cot_summary.csv"),
-              "options_oi_summary.csv": count_rows("data/processed/options_oi_summary.csv"),
-              "options_oi_by_expiry.csv": count_rows("data/processed/options_oi_by_expiry.csv"),
-              "options_oi_totals.csv":  count_rows("data/processed/options_oi_totals.csv"),
-              "cds_proxy.csv":          count_rows("data/processed/cds_proxy.csv"),
-              "fx_quotes.csv":          count_rows("data/processed/fx_quotes.csv"),
+              "fundamentals_core.csv":   count_rows_csv("data/processed/fundamentals_core.csv"),
+              "earnings_results.csv":    count_rows_csv("data/processed/earnings_results.csv"),
+              "etf_basics.csv":          count_rows_csv("data/processed/etf_basics.csv"),
+              "fred_oas.csv":            count_rows_csv("data/processed/fred_oas.csv"),
+              "cot_summary.csv":         count_rows_csv("data/processed/cot_summary.csv"),
+              "options_oi_summary.csv":  count_rows_csv("data/processed/options_oi_summary.csv"),
+              "options_oi_by_expiry.csv":count_rows_csv("data/processed/options_oi_by_expiry.csv"),
+              "options_oi_totals.csv":   count_rows_csv("data/processed/options_oi_totals.csv"),
+              "hv_summary.csv.gz":       count_rows_gz("data/processed/hv_summary.csv.gz"),
+              "cds_proxy.csv":           count_rows_csv("data/processed/cds_proxy.csv"),
+              "fx_quotes.csv":           count_rows_csv("data/processed/fx_quotes.csv"),
           }
           lamp = lambda n: "🟢" if n>0 else "🔴"
           print("\\n=== QA Summary ===")

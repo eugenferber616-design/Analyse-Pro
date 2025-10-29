@@ -12,3 +12,16 @@ regions:
   EU:
     IG:  "<FRED_SERIES_ID_EU_IG>"   # Euro IG OAS
     HY:  "<FRED_SERIES_ID_EU_HY>"   # Euro HY OAS
+
+symbol,proxy
+# pro Symbol optional Überschreiben; leer = auto
+# Beispiel:
+# SAP.DE,EU_IG
+
+regions:
+US:
+  IG: "BAMLC0A0CM"
+  HY: "BAMLH0A0HYM2"
+EU:
+  IG: ""                       # kein FRED series -> lassen wir leer
+  HY: "BAMLHE00EHYIOAS"

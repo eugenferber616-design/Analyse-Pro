@@ -2,15 +2,24 @@
   "errors": [
     {
       "alias": "ciss_ea",
-      "err": "HTTP 400: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-"
+      "status": 400,
+      "content_type": "text/html",
+      "err": "Unexpected response (not CSV). Snippet: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-align: center; } h1{  font-size:38px; font-weight: normal; c",
+      "url": "https://data-api.ecb.europa.eu/service/data/CISS/CISS.D.U2.Z0Z.4F.EC.SS_CIN.IDX?format=csvdata&startPeriod=1999-01-01"
     },
     {
       "alias": "ciss_us",
-      "err": "HTTP 400: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-"
+      "status": 400,
+      "content_type": "text/html",
+      "err": "Unexpected response (not CSV). Snippet: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-align: center; } h1{  font-size:38px; font-weight: normal; c",
+      "url": "https://data-api.ecb.europa.eu/service/data/CISS/CISS.D.US.Z0Z.4F.EC.SS_CIN.IDX?format=csvdata&startPeriod=1999-01-01"
     },
     {
       "alias": "exr_usd_eur",
-      "err": "HTTP 400: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-"
+      "status": 400,
+      "content_type": "text/html",
+      "err": "Unexpected response (not CSV). Snippet: <html lang=\"en\"><head><title>European Central Bank</title><style type=\"text/css\"> body{ font-family: \"Droid Sans\", sans-serif; margin:0; padding:0; background-color: #9099ab; text-align: center; } h1{  font-size:38px; font-weight: normal; c",
+      "url": "https://data-api.ecb.europa.eu/service/data/EXR/EXR.D.USD.EUR.SP00.A?format=csvdata&startPeriod=1999-01-01"
     }
   ]
 }

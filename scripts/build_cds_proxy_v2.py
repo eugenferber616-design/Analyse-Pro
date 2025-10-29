@@ -1,178 +1,237 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-CDS-Proxy v2 (US + EU)
-- Liest:
-  • data/processed/fundamentals_core.csv     (Leverage, Größe, Beta, Margen)
-  • data/processed/fred_oas.csv              (US OAS: IG/HY; EU OAS: ICE BofA Euro IG/HY falls vorhanden)
-  • data/processed/fx_quotes.csv             (optional: HV20 von DE/Xetra via stooq, wenn vorhanden)
-  • data/macro/ecb/ciss_ea.csv (optional), ciss_us.csv (optional) — nur als Zusatz-Risiko
-- Liefert: data/processed/cds_proxy.csv + data/reports/cds_proxy_report.json
+# scripts/build_cds_proxy_v2.py
+import os, csv, json
+from datetime import datetime
+from typing import Dict, Optional, Tuple
 
-Formel (heuristisch, robust bei Datenlücken):
-  base_oas = 
-      if country in EU → euro_ig_oas (oder ersatz: us_ig_oas * 0.9)
-      else              → us_ig_oas
-  lev_adj  = f(debt_to_equity, net_debt, ev_ebitda) → 0 … +350 bp
-  size_adj = f(market_cap via fundamentals?) not available → fallback shares_out → proxy_size
-  vol_adj  = f(beta, HV20?) → 0 … +150 bp
-  ciss_adj = small addon (0 … +50 bp), wenn CISS stark erhöht
+import pandas as pd
 
-  proxy_spread_bps = clamp(base_oas + lev_adj + size_adj + vol_adj + ciss_adj, 30, 1500)
+FRED_OAS_FILE = "data/processed/fred_oas.csv"
+OUT_CSV       = "data/processed/cds_proxy.csv"
+OUT_REPORT    = "data/reports/cds_proxy_report.json"
+MAP_FILE      = "config/oas_proxy_map.csv"   # optional
 
-Hinweis: Das ist kein echtes CDS, sondern ein Spread-Proxy für relative Risiko-Einschätzung.
-"""
+# ────────────────────────────────────────────────────────────────────
+# Hilfen
+# ────────────────────────────────────────────────────────────────────
 
-import os, json, math, pandas as pd
+def ensure_dirs():
+    os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
+    os.makedirs(os.path.dirname(OUT_REPORT), exist_ok=True)
 
-OUT = "data/processed/cds_proxy.csv"
-REP = "data/reports/cds_proxy_report.json"
-os.makedirs(os.path.dirname(OUT), exist_ok=True)
-os.makedirs(os.path.dirname(REP), exist_ok=True)
+def read_watchlist(path: str) -> pd.DataFrame:
+    """
+    Akzeptiert:
+      - einfache Textliste (eine Spalte, optional header 'symbol')
+      - CSV mit Spalte 'symbol'
+    """
+    if not path or not os.path.exists(path):
+        raise FileNotFoundError(f"watchlist not found: {path}")
 
-def read_csv(path):
-    if not os.path.exists(path) or os.path.getsize(path)==0:
-        return pd.DataFrame()
+    # Versuche CSV mit Kopf
     try:
-        return pd.read_csv(path)
+        df = pd.read_csv(path)
+        if "symbol" in df.columns:
+            symbols = df["symbol"].astype(str).str.strip()
+            symbols = symbols[symbols.ne("")].dropna().unique()
+            return pd.DataFrame({"symbol": symbols})
     except Exception:
-        return pd.DataFrame()
+        pass
 
-def latest_value(df, col_val="value"):
-    if df.empty or col_val not in df.columns:
+    # Fallback: simple Zeilenliste
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            s = line.strip()
+            if not s or s.lower() == "symbol":
+                continue
+            rows.append(s)
+    return pd.DataFrame({"symbol": pd.Series(rows).dropna().unique()})
+
+def read_oas_proxy_map(path: str) -> Tuple[Dict[str, Dict[str, Optional[str]]], Dict[str, str]]:
+    """
+    Erwartetes Format (siehe deine Vorlage):
+      regions:
+        US:
+          IG: "<FRED_SERIES_ID_US_IG>"
+          HY: "<FRED_SERIES_ID_US_HY>"
+        EU:
+          IG: "<FRED_SERIES_ID_EU_IG>"
+          HY: "<FRED_SERIES_ID_EU_HY>"
+
+      symbol,proxy
+      <SYMBOL>,<REGION_TAG>   # z.B. SAP.DE,EU_IG (überschreibt Auto-Logik)
+    Datei ist eine 'lockere' CSV/YAML-Mischung – wir parsen simple key:value Paare Zeile für Zeile.
+    """
+    region_series = {
+        "US": {"IG": "BAMLC0A0CM",   "HY": "BAMLH0A0HYM2"},
+        "EU": {"IG": None,           "HY": "BAMLHE00EHYIOAS"},
+    }
+    symbol_region_override: Dict[str, str] = {}
+
+    if not os.path.exists(path):
+        return region_series, symbol_region_override
+
+    # Lockeres Parsen
+    current = None
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            if line.lower().startswith("regions:"):
+                current = "regions"
+                continue
+
+            if current == "regions":
+                # Beispiele:
+                # US:
+                #   IG: "BAMLC0A0CM"
+                #   HY: "BAMLH0A0HYM2"
+                if line.endswith(":") and line[:-1] in ("US", "EU"):
+                    block = line[:-1]
+                    # read inner lines until next block/section
+                    continue
+
+            # minimalistische Key:Value-Erkennung
+            if ":" in line:
+                key, val = [x.strip() for x in line.split(":", 1)]
+                val = val.strip().strip('"').strip("'")
+                # Section-Style:
+                if key in ("US", "EU") and val == "":
+                    current = f"REGION_{key}"
+                    region_block = key
+                    continue
+                if key in ("IG", "HY") and current and current.startswith("REGION_"):
+                    region = current.split("_", 1)[1]
+                    region_series[region][key] = (val or None) if val != '""' else None
+                    continue
+
+            # Symbol-Liste
+            if "," in line and not line.lower().startswith("symbol"):
+                sym, prox = [x.strip() for x in line.split(",", 1)]
+                if prox:
+                    symbol_region_override[sym] = prox
+
+    return region_series, symbol_region_override
+
+def load_fred_oas(path: str) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    # Erwartete Spalten: date, series_id, value, bucket, region
+    needed = {"date", "series_id", "value"}
+    missing = needed - set(df.columns)
+    if missing:
+        raise ValueError(f"{path} missing columns: {missing}")
+
+    # Datums-Typ
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.sort_values(["series_id", "date"])
+    return df
+
+def series_last(df: pd.DataFrame, series_id: str) -> Optional[float]:
+    d = df[df["series_id"] == series_id]
+    if d.empty:
         return None
-    # versuche Spalte date oder PERIOD
-    if "date" in df.columns:
-        df = df.sort_values("date")
-    elif "DATE" in df.columns:
-        df = df.sort_values("DATE")
-    return pd.to_numeric(df[col_val], errors="coerce").dropna().tail(1).values[0] if col_val in df else None
+    # Letzter nicht-NaN-Wert
+    d = d.dropna(subset=["value"])
+    if d.empty:
+        return None
+    return float(d.iloc[-1]["value"])
 
-def clip(v, lo, hi):
-    if v is None or math.isnan(v): return None
-    return max(lo, min(hi, v))
+def infer_region(symbol: str) -> str:
+    # sehr einfache Heuristik
+    return "EU_IG" if symbol.upper().endswith(".DE") else "US_IG"
 
-def nz(v, d=0.0):
-    return d if v is None or (isinstance(v, float) and math.isnan(v)) else v
+# ────────────────────────────────────────────────────────────────────
+# Hauptlogik
+# ────────────────────────────────────────────────────────────────────
 
-def main():
-    report = {"inputs":{}, "notes":[], "rows":0}
-    f_fund = "data/processed/fundamentals_core.csv"
-    f_oas  = "data/processed/fred_oas.csv"
-    f_fx   = "data/processed/fx_quotes.csv"
-    f_ciss_ea = "data/macro/ecb/ciss_ea.csv"
-    f_ciss_us = "data/macro/ecb/ciss_us.csv"
+def main(watchlist_path: Optional[str] = None):
+    ensure_dirs()
 
-    dfF = read_csv(f_fund)
-    dfO = read_csv(f_oas)
-    dfX = read_csv(f_fx)
-    dfC_ea = read_csv(f_ciss_ea)
-    dfC_us = read_csv(f_ciss_us)
+    # Watchlist einlesen
+    wl_path = os.environ.get("WATCHLIST_STOCKS") if not watchlist_path else watchlist_path
+    if not wl_path:
+        raise RuntimeError("WATCHLIST_STOCKS env not set and no --watchlist provided")
+    watch = read_watchlist(wl_path)
 
-    report["inputs"]["fundamentals_core"] = len(dfF)
-    report["inputs"]["fred_oas"]          = len(dfO)
-    report["inputs"]["fx_quotes"]         = len(dfX)
-    report["inputs"]["ciss_ea"]           = len(dfC_ea)
-    report["inputs"]["ciss_us"]           = len(dfC_us)
+    # Mapping/Defaults lesen
+    region_series, overrides = read_oas_proxy_map(MAP_FILE)
 
-    # OAS-Level ziehen
-    # Erwartete Felder in fred_oas.csv: series, date, value
-    def series_last(series_id):
-        if dfO.empty: return None
-        d = dfO[dfO["series"]==series_id]
-        if d.empty: return None
-        d = d.sort_values("date")
-        return pd.to_numeric(d["value"], errors="coerce").dropna().tail(1).values[0] if "value" in d else None
+    # FRED OAS laden
+    fred = load_fred_oas(FRED_OAS_FILE)
 
-    us_ig = series_last("US_IG_OAS")     # deine fetch_fred_oas.py sollte diese Alias vergeben
-    us_hy = series_last("US_HY_OAS")
-    eu_ig = series_last("EU_IG_OAS")     # Euro IG (falls vorhanden)
-    eu_hy = series_last("EU_HY_OAS")
+    # Letzte Werte je Serie greifen
+    us_ig_sid = region_series["US"]["IG"]
+    us_hy_sid = region_series["US"]["HY"]
+    eu_ig_sid = region_series["EU"]["IG"]
+    eu_hy_sid = region_series["EU"]["HY"]
 
+    us_ig = series_last(fred, us_ig_sid) if us_ig_sid else None
+    us_hy = series_last(fred, us_hy_sid) if us_hy_sid else None
+    eu_ig = series_last(fred, eu_ig_sid) if eu_ig_sid else None
+    eu_hy = series_last(fred, eu_hy_sid) if eu_hy_sid else None
+
+    # Fallback-Heuristik, wenn EU_IG fehlt:
     if eu_ig is None:
-        report["notes"].append("EU_IG_OAS fehlt – fallback 0.9 * US_IG_OAS")
-        eu_ig = nz(us_ig, 150) * 0.9
-    if us_ig is None:
-        report["notes"].append("US_IG_OAS fehlt – setze 150bp als Fallback")
-        us_ig = 150.0
+        # einfache, nachvollziehbare Regel: EU_IG ≈ US_IG − 0.08 (Floor 0.40)
+        if us_ig is not None:
+            eu_ig = max(0.40, round(us_ig - 0.08, 2))
+        elif eu_hy is not None:
+            eu_ig = max(0.40, round(eu_hy * 0.35, 2))
+        else:
+            eu_ig = None
 
-    # CISS leichte Addons
-    ciss_ea_last = latest_value(dfC_ea, "OBS_VALUE") if not dfC_ea.empty else None
-    ciss_us_last = latest_value(dfC_us, "OBS_VALUE") if not dfC_us.empty else None
-    # Scale: 0..1 → 0..50bp
-    def ciss_to_bps(x):
-        if x is None: return 0.0
-        return clip(float(x), 0.0, 1.0) * 50.0
+    fred_used = {
+        "US_IG": us_ig,
+        "US_HY": us_hy,
+        "EU_IG": eu_ig,
+        "EU_HY": eu_hy,
+    }
 
     rows = []
-    if not dfF.empty:
-        for _, r in dfF.iterrows():
-            sym = str(r.get("symbol",""))
-            cn  = str(r.get("country","")).upper()
-            beta = r.get("beta")
-            dte  = r.get("debt_to_equity")
-            ndebt = r.get("net_debt")
-            ev_ebitda = r.get("ev_ebitda")
+    for sym in watch["symbol"].tolist():
+        prox_tag = overrides.get(sym)  # z.B. "EU_IG" oder "US_IG"
+        if not prox_tag:
+            prox_tag = infer_region(sym)
 
-            # Base OAS
-            if cn in ("DE","FR","NL","IT","ES","SE","FI","DK","IE","AT","BE","PT","PL","CZ","HU","NO","CH","GB"):
-                base = eu_ig
-                ciss_add = ciss_to_bps(ciss_ea_last)
-            else:
-                base = us_ig
-                ciss_add = ciss_to_bps(ciss_us_last)
+        base = None
+        if prox_tag == "US_IG":
+            base = us_ig
+        elif prox_tag == "EU_IG":
+            base = eu_ig
+        elif prox_tag == "US_HY":
+            base = us_hy
+        elif prox_tag == "EU_HY":
+            base = eu_hy
 
-            # Leverage-Adjust (sehr grob/heuristisch)
-            lev_add = 0.0
-            if pd.notna(dte):
-                if dte <= 50:    lev_add += 0
-                elif dte <= 100: lev_add += 25
-                elif dte <= 150: lev_add += 50
-                elif dte <= 250: lev_add += 100
-                else:            lev_add += 180
-            if pd.notna(ev_ebitda):
-                # EV/EBITDA hoch → eher teuer/gehebelt; invertiert adjusten
-                if ev_ebitda >= 20: lev_add += 100
-                elif ev_ebitda >= 12: lev_add += 50
+        # sehr defensiv: falls None, setze 0.70 als neutralen Fallback
+        if base is None:
+            base = 0.70
 
-            if pd.notna(ndebt) and ndebt > 0:
-                # absolutes NetDebt leicht berücksichtigen (Skalierung niedrig halten)
-                lev_add += min(100.0, math.log10(max(1.0, float(ndebt))) * 5.0)
+        rows.append({"symbol": sym, "region": prox_tag, "proxy_spread": round(float(base), 2)})
 
-            # Vol-Adjust
-            vol_add = 0.0
-            if pd.notna(beta):
-                if beta >= 1.6: vol_add += 120
-                elif beta >= 1.3: vol_add += 70
-                elif beta >= 1.1: vol_add += 40
-                elif beta <= 0.7: vol_add -= 20
+    out_df = pd.DataFrame(rows)
+    out_df.to_csv(OUT_CSV, index=False)
 
-            # Falls HV20 aus fx_quotes.csv (Close-Vol) vorhanden → Bonus/Addon
-            hv_add = 0.0
-            if not dfX.empty and "symbol" in dfX.columns and "last_close" in dfX.columns:
-                # (wir haben hier keine HV20-Spalte; wenn du später HV20 berechnest, nutze sie hier)
-                pass
+    report = {
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "rows": len(out_df),
+        "fred_oas_used": fred_used,
+        "errors": [],
+        "preview": OUT_CSV
+    }
+    with open(OUT_REPORT, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
 
-            proxy = base + lev_add + vol_add + hv_add + ciss_add
-            proxy = clip(proxy, 30.0, 1500.0)
-
-            rows.append({
-                "symbol": sym,
-                "country": cn,
-                "base_oas_bps": round(base, 2) if base is not None else None,
-                "lev_adj_bps": round(lev_add, 2),
-                "vol_adj_bps": round(vol_add, 2),
-                "ciss_adj_bps": round(ciss_add, 2),
-                "proxy_spread_bps": round(proxy, 2)
-            })
-
-    dfOut = pd.DataFrame(rows, columns=[
-        "symbol","country","base_oas_bps","lev_adj_bps","vol_adj_bps","ciss_adj_bps","proxy_spread_bps"
-    ])
-    dfOut.to_csv(OUT, index=False, encoding="utf-8")
-    report["rows"] = int(len(dfOut))
-    with open(REP, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, ensure_ascii=False)
+    # Konsole: kleine Vorschau
+    print(json.dumps(report, indent=2))
+    for _, r in out_df.head(10).iterrows():
+        print(f'{r["symbol"]},{r["region"]},{r["proxy_spread"]}')
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--watchlist", help="Pfad zu Watchlist (überschreibt env WATCHLIST_STOCKS)", default=None)
+    args = ap.parse_args()
+    main(args.watchlist)

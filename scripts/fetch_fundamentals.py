@@ -1,123 +1,182 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# scripts/fetch_fundamentals.py
+import os, sys, csv, time, json
+import argparse
+from typing import Dict, Any, Tuple, List
 
-import os, json, time, argparse
 import requests
-import pandas as pd
 import yfinance as yf
+import pandas as pd
 
-OUT_DIR = "data/fundamentals"
-OUT_CORE = "data/processed/fundamentals_core.csv"
-ERR_JSON = "data/reports/fund_errors.json"
+OUT_CSV = "data/processed/fundamentals_core.csv"
+os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
 
-FINNHUB_BASE = "https://finnhub.io/api/v1"
+# ──────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────
+def read_watchlist(p: str) -> List[str]:
+    syms = []
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            # nur Roh-Ticker verwenden (keine angehängten Kommas/Suffixe)
+            if "," in s:
+                s = s.split(",")[0].strip()
+            # absolut KEINE Proxy-/Region-Suffixe wie ",US_IG"
+            s = s.replace(" US_IG", "").replace(" EU_IG", "")
+            syms.append(s)
+    # Deduplizieren, Reihenfolge beibehalten
+    seen = set(); uniq = []
+    for s in syms:
+        if s not in seen:
+            seen.add(s); uniq.append(s)
+    return uniq
 
-FIELDS = [
-    "market_cap","beta","shares_out","pe_ttm","ps_ttm","pb_ttm",
-    "roe_ttm","gross_margin","oper_margin","net_margin","debt_to_equity",
-]
+def is_xetra(sym: str) -> bool:
+    return sym.endswith(".DE")
 
-def finnhub_fetch(symbol: str, token: str) -> dict:
-    headers = {"Accept":"application/json"}
-    # profile2
-    p = requests.get(f"{FINNHUB_BASE}/stock/profile2", params={"symbol": symbol, "token": token}, timeout=20, headers=headers)
-    if p.status_code == 403:
-        raise PermissionError("403 profile2")
-    p.raise_for_status()
-    prof = p.json() or {}
+def finnhub_get_metrics(sym: str, api_key: str) -> Dict[str, Any]:
+    """Liest Profile + Metrics (TTM) von Finnhub; wirft bei 4xx/5xx eine Exception,
+    damit der Aufrufer sauber auf yfinance fallen kann."""
+    ses = requests.Session()
+    base = "https://finnhub.io/api/v1"
+    params = {"symbol": sym, "token": api_key}
 
-    # metrics (TTM)
-    m = requests.get(f"{FINNHUB_BASE}/stock/metric", params={"symbol": symbol, "metric":"all","token": token}, timeout=25, headers=headers)
-    if m.status_code == 403:
-        raise PermissionError("403 metric")
-    m.raise_for_status()
-    met = m.json().get("metric", {}) if m.content else {}
+    # Profile2 (für shares_out, beta als Fallback)
+    r1 = ses.get(f"{base}/stock/profile2", params=params, timeout=20)
+    if r1.status_code != 200:
+        raise RuntimeError(f"profile2 {r1.status_code}")
+    prof = r1.json() or {}
 
+    # Metrics (TTM/Annual)
+    params_m = {"symbol": sym, "metric": "all", "token": api_key}
+    r2 = ses.get(f"{base}/stock/metric", params=params_m, timeout=25)
+    if r2.status_code != 200:
+        raise RuntimeError(f"metric {r2.status_code}")
+    met = (r2.json() or {}).get("metric", {})
+
+    # Map auf unser Zielschema
     out = {
-        "symbol": symbol,
-        "market_cap": prof.get("marketCapitalization"),
-        "beta": prof.get("beta"),
-        "shares_out": prof.get("shareOutstanding"),
-        "pe_ttm": met.get("peInclExtraTTM"),
-        "ps_ttm": met.get("psTTM"),
-        "pb_ttm": met.get("pbAnnual"),
-        "roe_ttm": met.get("roeTTM"),
-        "gross_margin": met.get("grossMarginTTM"),
+        "market_cap": met.get("marketCapitalization") or prof.get("marketCapitalization"),
+        "beta":        met.get("beta") or prof.get("beta"),
+        "shares_out":  prof.get("shareOutstanding"),
+        "pe_ttm":      met.get("peTTM") or met.get("peNormalizedAnnual"),
+        "ps_ttm":      met.get("psTTM"),
+        "pb_ttm":      met.get("pbAnnual") or met.get("pbTTM"),
+        "roe_ttm":     met.get("roeTTM"),
+        "gross_margin":met.get("grossMarginTTM"),
         "oper_margin": met.get("operatingMarginTTM"),
-        "net_margin": met.get("netProfitMarginTTM"),
-        "debt_to_equity": met.get("ltD2EquityAnnual"),
+        "net_margin":  met.get("netProfitMarginTTM"),
+        "debt_to_equity": met.get("totalDebtToEquityAnnual") or met.get("totalDebt/EquityAnnual"),
     }
     return out
 
-def yahoo_fallback(symbol: str) -> dict:
-    t = yf.Ticker(symbol.replace(".", "-"))
-    info = t.fast_info or {}
-    # grobe Annäherung / subset
-    return {
-        "symbol": symbol,
-        "market_cap": info.get("market_cap"),
-        "beta": None,  # Yahoo liefert Beta in .info, ist teilweise gesperrt – lassen wir NA
-        "shares_out": None,
-        "pe_ttm": None,
-        "ps_ttm": None,
-        "pb_ttm": None,
-        "roe_ttm": None,
-        "gross_margin": None,
-        "oper_margin": None,
-        "net_margin": None,
-        "debt_to_equity": None,
-    }
+def yfin_get_metrics(sym: str) -> Dict[str, Any]:
+    t = yf.Ticker(sym)
+    info = {}
+    # yfinance kann manchmal .fast_info/.info getrennt liefern
+    try:
+        info = t.info or {}
+    except Exception:
+        info = {}
+    try:
+        finfo = getattr(t, "fast_info", {}) or {}
+    except Exception:
+        finfo = {}
 
+    def pick(*keys, src=None):
+        src = src or info
+        for k in keys:
+            v = src.get(k)
+            if v is not None:
+                return v
+        return None
+
+    out = {
+        "market_cap":    pick("marketCap", src=info) or finfo.get("market_cap"),
+        "beta":          pick("beta", src=info),
+        "shares_out":    pick("sharesOutstanding", src=info),
+        "pe_ttm":        pick("trailingPE", "peTrailing", src=info),
+        "ps_ttm":        pick("priceToSalesTrailing12Months", src=info),
+        "pb_ttm":        pick("priceToBook", src=info),
+        "roe_ttm":       pick("returnOnEquity", src=info),
+        "gross_margin":  pick("grossMargins", src=info),
+        "oper_margin":   pick("operatingMargins", src=info),
+        "net_margin":    pick("profitMargins", src=info),
+        "debt_to_equity":pick("debtToEquity", src=info),
+    }
+    return out
+
+def norm_num(x):
+    try:
+        if x in (None, "", "NaN"):
+            return ""
+        # yfinance liefert oft Brüche (0.32) für Margins → auf % umrechnen?
+        return float(x)
+    except Exception:
+        return ""
+
+# ──────────────────────────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--watchlist", required=True)
-    ap.add_argument("--outdir", default=OUT_DIR)
+    ap.add_argument("--finnhub_key", default=os.getenv("FINNHUB_API_KEY", ""))
+    ap.add_argument("--sleep_ms", type=int, default=int(os.getenv("FINNHUB_SLEEP_MS", "1300")))
     args = ap.parse_args()
 
-    os.makedirs(args.outdir, exist_ok=True)
-    os.makedirs(os.path.dirname(OUT_CORE), exist_ok=True)
-    os.makedirs(os.path.dirname(ERR_JSON), exist_ok=True)
+    symbols = read_watchlist(args.watchlist)
+    rows = []
 
-    token = os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
-    if not token:
-        print("❌ FINNHUB Token fehlt")
-        return
-
-    with open(args.watchlist, "r", encoding="utf-8") as f:
-        syms = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
-
-    rows, errors = [], []
-    for sym in syms:
+    for s in symbols:
+        data: Dict[str, Any] = {}
         try:
-            rows.append(finnhub_fetch(sym, token))
-        except PermissionError as e:
-            # EU-Symbole -> Fallback Yahoo (teilweise nur market_cap)
-            try:
-                fb = yahoo_fallback(sym)
-                rows.append(fb)
-                errors.append({"symbol": sym, "reason": "403 -> yahoo_fallback"})
-            except Exception as ee:
-                errors.append({"symbol": sym, "reason": f"fallback_failed: {ee}"})
+            if not is_xetra(s) and args.finnhub_key:
+                # US (oder non-.DE) → Finnhub (Rate-Limit beachten)
+                data = finnhub_get_metrics(s, args.finnhub_key)
+                time.sleep(args.sleep_ms / 1000.0)
+            else:
+                # .DE oder kein Key → direkt yfinance
+                data = yfin_get_metrics(s)
+
         except Exception as e:
-            errors.append({"symbol": sym, "reason": str(e)})
+            # Fallback für US: yfinance
+            try:
+                data = yfin_get_metrics(s)
+            except Exception:
+                data = {}
+            # Logging ins CI-Log
+            print(f"[fundamentals] Fallback yfinance for {s}: {e}", file=sys.stderr)
 
-    if rows:
-        df = pd.DataFrame(rows)
-        df = df[["symbol"] + FIELDS]  # konsistente Reihenfolge
-        df.to_csv(OUT_CORE, index=False)
-        print(f"✅ fundamentals_core.csv rows: {len(df)}")
-    else:
-        pd.DataFrame(columns=["symbol"] + FIELDS).to_csv(OUT_CORE, index=False)
-        print("⚠️ fundamentals_core.csv leer")
+        rows.append([
+            s,
+            norm_num(data.get("market_cap")),
+            norm_num(data.get("beta")),
+            norm_num(data.get("shares_out")),
+            norm_num(data.get("pe_ttm")),
+            norm_num(data.get("ps_ttm")),
+            norm_num(data.get("pb_ttm")),
+            norm_num(data.get("roe_ttm")),
+            norm_num(data.get("gross_margin")),
+            norm_num(data.get("oper_margin")),
+            norm_num(data.get("net_margin")),
+            norm_num(data.get("debt_to_equity")),
+        ])
 
-    rep = {
-        "total": len(syms),
-        "ok": sum(1 for r in rows if r),
-        "failed": len(errors),
-        "errors": errors,
-    }
-    with open(ERR_JSON, "w", encoding="utf-8") as f:
-        json.dump(rep, f, indent=2)
+    with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "symbol","market_cap","beta","shares_out","pe_ttm","ps_ttm","pb_ttm",
+            "roe_ttm","gross_margin","oper_margin","net_margin","debt_to_equity"
+        ])
+        w.writerows(rows)
+
+    print(f"fundamentals_core.csv rows: {len(rows)}")
+    # kleine Vorschau
+    for r in rows[:10]:
+        print(",".join(str(x) for x in r))
 
 if __name__ == "__main__":
     main()

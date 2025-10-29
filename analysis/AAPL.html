@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>AAPL – Quick Analyse</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--bg:#101214;--panel:#161a1d;--muted:#8b93a1;--text:#e9eef5;--acc:#7ab7ff;--ok:#3fb983;--warn:#ffb454;--bad:#ff6565}
+  *{box-sizing:border-box} body{margin:16px;font:14px/1.45 "Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  .card{background:var(--panel);border:1px solid #22283a;border-radius:12px;padding:16px;margin:0 0 16px 0}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .kpi{flex:1 1 160px;background:#12161a;border:1px solid #212735;border-radius:10px;padding:12px}
+  .kpi h4{margin:0 0 6px 0;font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.3px;text-transform:uppercase}
+  .kpi .v{font-size:20px;font-weight:700}
+  .kpi.ok .v{color:var(--ok)} .kpi.bad .v{color:var(--bad)} .kpi.warn .v{color:var(--warn)}
+  .tag{display:inline-block;padding:3px 8px;border-radius:999px;font-size:12px;background:#232a3b;color:#c9d3e3;border:1px solid #2d3550}
+  table{width:100%;border-collapse:separate;border-spacing:0 8px}
+  td,th{padding:10px 12px} th{color:var(--muted);text-align:left;font-weight:600}
+  tr{background:#12161a;border:1px solid #212735} tr td:first-child{border-radius:8px 0 0 8px} tr td:last-child{border-radius:0 8px 8px 0}
+  .grid{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+  .btn{display:inline-block;padding:8px 12px;border:1px solid #2a334a;border-radius:8px;background:#1a1f2b;color:#cfe0ff}
+  .btn:hover{filter:brightness(1.1)}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+
+<div class="card grid">
+  <div>
+    <h2 style="margin:0 0 6px 0;">Apple Inc. <span class="tag">AAPL</span></h2>
+    <div class="muted">Schnell-Analyse • Stand: <span id="asof"></span></div>
+  </div>
+  <div>
+    <a class="btn" target="_blank" href="https://www.zacks.com/stock/quote/AAPL">Zacks</a>
+    <a class="btn" target="_blank" href="https://www.gurufocus.com/stock/AAPL/summary">GuruFocus</a>
+    <a class="btn" target="_blank" href="https://www.barchart.com/stocks/quotes/AAPL/options?view=sbs">Options</a>
+  </div>
+</div>
+
+<div class="row">
+  <div class="kpi ok">
+    <h4>Trend (20/50)</h4>
+    <div class="v">Up</div>
+    <div class="muted">Preis > SMA20 > SMA50</div>
+  </div>
+  <div class="kpi warn">
+    <h4>Volatilität</h4>
+    <div class="v">Mittel</div>
+    <div class="muted">ATR(14) ~ 2.1%</div>
+  </div>
+  <div class="kpi">
+    <h4>Marktkap.</h4>
+    <div class="v">$3.8T</div>
+    <div class="muted">Large Cap</div>
+  </div>
+  <div class="kpi bad">
+    <h4>Bewertung</h4>
+    <div class="v">KGV 31</div>
+    <div class="muted">über Sektor-Median</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 10px 0;">Earnings & Termine</h3>
+  <table>
+    <thead><tr><th>Nächster Termin</th><th>Session</th><th>Hinweis</th></tr></thead>
+    <tbody>
+      <tr><td>—</td><td>—</td><td>Wird im Tooltip-Indikator zusätzlich aus dem GitHub-Cache angezeigt.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 10px 0;">Kurzkommentar</h3>
+  <p>Primärtrend intakt. Rücksetzer bis zur letzten Konsolidierungszone wären „buy-the-dip“, solange das Risk-Regime neutral/positiv bleibt. Rund um Earnings erhöhte Schwankungen einplanen.</p>
+</div>
+
+<script>
+  document.getElementById('asof').textContent = new Date().toISOString().slice(0,10);
+</script>
+</body>
+</html>

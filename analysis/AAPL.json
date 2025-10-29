@@ -1,0 +1,16 @@
+{
+  "name": "Apple Inc.",
+  "sector": "Information Technology",
+  "industry": "Consumer Electronics",
+  "country": "USA",
+  "currency": "USD",
+  "eps_ttm": "6.41",
+  "pe": "28.3",
+  "market_cap": "3.6T",
+  "dividend_yield": "0.54%",
+  "payout_ratio": "14%",
+  "nextEarningsDate": "2026-01-28",
+  "rating": "B+",
+  "notes": "iPhone strength; Services margin ↑",
+  "asof": "2025-10-29"
+}

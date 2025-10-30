@@ -44,6 +44,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # sicherstellen, dass Parquet funktioniert
+          pip install --upgrade pyarrow fastparquet
 
       # ------------------------------------------------------------
       - name: Init cache DB
@@ -303,43 +305,126 @@ jobs:
           test -f data/reports/fetch_prices_report.json && cat data/reports/fetch_prices_report.json || true
           echo "== sample files ==" && ls -lh data/prices | head -n 20 || true
 
-      - name: Validate price CSVs
+      # ---------- Konsolidieren → Parquet + Inventar + CSV-Artifact ----------
+      - name: Consolidate price CSVs to Parquet shards (A–Z)
         run: |
           python - << 'PY'
-          import os, glob, csv
-          n = 0
-          for p in glob.glob("data/prices/*.csv"):
-              if os.path.getsize(p) > 0:
-                  with open(p, newline="", encoding="utf-8") as f:
-                      r = csv.reader(f); next(r, None)
-                      if any(True for _ in r): n += 1
-          print(f"Price CSVs with data: {n}")
+          import os, glob, pandas as pd, string, pathlib
+          in_dir = pathlib.Path("data/prices")
+          files = sorted(in_dir.glob("*.csv"))
+          if not files:
+              print("no price csvs -> skip")
+          buckets = {k:[] for k in string.ascii_uppercase}
+          for p in files:
+              k = p.stem[:1].upper()
+              if k in buckets: buckets[k].append(p)
+              else: buckets['Z'].append(p)
+          out = []
+          for k, lst in buckets.items():
+              if not lst: continue
+              parts=[]
+              for p in lst:
+                  try:
+                      sym = p.stem
+                      df = pd.read_csv(p)
+                      df.columns = [c.strip().lower() for c in df.columns]
+                      df = df[['date','close']].copy()
+                      df['symbol'] = sym
+                      parts.append(df[['symbol','date','close']])
+                  except Exception as e:
+                      print("skip", p, e)
+              if parts:
+                  big = pd.concat(parts, ignore_index=True)
+                  big['date'] = pd.to_datetime(big['date'])
+                  big.sort_values(['symbol','date'], inplace=True)
+                  outp = in_dir / f"shard_{k}.parquet"
+                  big.to_parquet(outp, index=False)
+                  print("→", outp, len(big))
+                  out.append(outp)
+          print("shards:", len(out))
           PY
+          ls -lh data/prices/*.parquet || true
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Compute ensemble forecasts (no Pine)
+      - name: Build price inventory
         run: |
-          set -e
-          mkdir -p data/processed docs
-          awk 'NF && $1 !~ /^(#|\/\/|symbol|SYMBOL)$/ {print $1}' "${WATCHLIST_ETF}" | head -n 20 | while read SYM; do
-            CSV="data/prices/${SYM}.csv"
-            [ -s "$CSV" ] || { echo "skip ${SYM} (no prices)"; continue; }
-            python scripts/compute_forecast_cli.py \
-              --symbol "$SYM" \
-              --prices "$CSV" \
-              --horizons "5,10" \
-              --iv-annual 0.22 \
-              --outdir data/processed || true
-          done
-          if ls data/processed/forecast_*.json >/dev/null 2>&1; then
-            jq -s 'map({symbol:.symbol, per_h:.per_h, meta:.meta})' data/processed/forecast_*.json > docs/forecast_dashboard.json
-            echo "Dashboard rows: $(jq length docs/forecast_dashboard.json)"
-            head -n 40 docs/forecast_dashboard.json || true
-          else
-            echo "No forecasts produced; skipping dashboard merge."
-          fi
+          python - << 'PY'
+          import glob, pandas as pd, pathlib
+          rows=[]
+          for p in sorted(glob.glob("data/prices/*.parquet")):
+              df = pd.read_parquet(p, columns=['symbol','date'])
+              tmp = df.groupby('symbol')['date'].agg(rows='count', first='min', last='max').reset_index()
+              tmp['source']=pathlib.Path(p).name
+              rows.append(tmp)
+          inv = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=['symbol','rows','first','last','source'])
+          pathlib.Path("data/processed").mkdir(parents=True, exist_ok=True)
+          inv.to_csv("data/processed/price_inventory.csv", index=False)
+          print("symbols:", len(inv))
+          PY
+          head -n 20 data/processed/price_inventory.csv || true
+
+      - name: Upload raw price CSVs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-price-csvs
+          path: data/prices/*.csv
+
+      - name: Cleanup raw price CSVs (keep repo slim)
+        run: rm -f data/prices/*.csv || true
+
+      # ---------- Forecasts direkt aus Parquet ----------
+      - name: Compute ensemble forecasts from Parquet (no CSV)
+        run: |
+          python - << 'PY'
+          import os, json, pandas as pd, glob, pathlib
+          from forecast_ensemble import ensemble, IVBandCfg
+
+          # Watchlist lesen
+          wl = os.getenv("WATCHLIST_ETF","watchlists/etf_sample.txt")
+          syms=[]
+          with open(wl,encoding="utf-8") as f:
+              for l in f:
+                  s=l.strip()
+                  if not s or s.startswith(("#","//")) or s.lower().startswith("symbol"): continue
+                  syms.append(s.split(",")[0].strip())
+
+          shards = sorted(glob.glob("data/prices/*.parquet"))
+          if not shards:
+              print("no shards -> skip forecasts"); raise SystemExit(0)
+
+          # Alle Shards in einen DF (nur benötigte Symbole filtern)
+          dfs=[]
+          for p in shards:
+              df = pd.read_parquet(p)
+              dfs.append(df[df['symbol'].isin(syms)])
+          if not dfs:
+              print("no data for watchlist"); raise SystemExit(0)
+          data = pd.concat(dfs, ignore_index=True).sort_values(['symbol','date'])
+
+          outdir = pathlib.Path("data/processed"); outdir.mkdir(parents=True, exist_ok=True)
+          made=0
+          for sym, g in data.groupby('symbol', sort=False):
+              closes = g['close'].astype(float).tolist()
+              if len(closes) < 120:  # minimale Historie
+                  continue
+              out = ensemble(closes, [5,10], IVBandCfg(iv_annual=0.22, drift_bps_per_day=0.0))
+              with open(outdir / f"forecast_{sym}.json","w",encoding="utf-8") as f:
+                  json.dump({"per_h": out.per_h, "meta": out.meta, "symbol": sym}, f, indent=2)
+              made += 1
+          print("forecasts:", made)
+
+          # kleines Dashboard
+          docs = pathlib.Path("docs"); docs.mkdir(exist_ok=True)
+          files = glob.glob(str(outdir / "forecast_*.json"))
+          if files:
+              arr=[]
+              for p in files:
+                  j=json.loads(open(p,encoding="utf-8").read())
+                  arr.append({"symbol": j["symbol"], "per_h": j["per_h"], "meta": j["meta"]})
+              open(docs/"forecast_dashboard.json","w",encoding="utf-8").write(json.dumps(arr,indent=2))
+              print("dashboard rows:", len(arr))
+          PY
+          test -f docs/forecast_dashboard.json && head -n 40 docs/forecast_dashboard.json || true
 
       # ===================== CDS-Proxy & EU Ampel ==================
       - name: Build CDS proxy per symbol

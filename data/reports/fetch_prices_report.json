@@ -1,0 +1,121 @@
+{
+  "ok": [],
+  "err": [
+    {
+      "symbol": "VGK      # Vanguard FTSE Europe ETF (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EZU      # iShares MSCI EMU (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "IEUR     # iShares Core MSCI Europe (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "FEZ      # SPDR Euro STOXX 50 (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EWU      # iShares MSCI United Kingdom (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EWG      # iShares MSCI Germany (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EWQ      # iShares MSCI France (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EWL      # iShares MSCI Switzerland (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EWI      # iShares MSCI Italy (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EWP      # iShares MSCI Spain (US)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "SXR8.DE  # iShares Core S&P 500 UCITS (Xetra) \u2013 Test f\u00fcr UCITS-Aufl\u00f6sung",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EXS1.DE  # iShares Core MSCI World UCITS (Xetra)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "VUSA.L   # Vanguard S&P 500 UCITS (LSE)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "VEVE.L   # Vanguard FTSE Dev World UCITS (LSE)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "IEMA.L   # iShares Core MSCI EM IMI UCITS (LSE)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "SPY",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "QQQ",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "IWM",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "GLD",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "HYG",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "XLF",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "XLK",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "XLE",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "SXR8.DE      # iShares Core S&P 500 UCITS",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EUNL.DE      # iShares Core MSCI World UCITS",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "EXS1.DE      # iShares Core DAX UCITS",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "VUSA.L       # Vanguard S&P 500 UCITS (GBP)",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "VUKE.L       # Vanguard FTSE 100 UCITS",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "symbol": "IMEU.L       # iShares Core MSCI Europe UCITS",
+      "error": "HTTP Error 403: Forbidden"
+    }
+  ]
+}

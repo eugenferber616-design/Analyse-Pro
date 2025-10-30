@@ -1,13 +1,13 @@
 {
-  "ts": "2025-10-29T12:49:19.453485+00:00Z",
+  "ts": "2025-10-30T15:31:05.939429+00:00Z",
   "rows": 19,
   "fred_oas_used": {
-    "US_IG": 0.76,
-    "US_HY": 2.8,
+    "US_IG": 0.75,
+    "US_HY": 2.76,
     "EU_IG": null,
     "EU_HY": null
   },
-  "eu_hy_value": 3.0,
+  "eu_hy_value": 2.96,
   "params": {
     "size_min": 5000000000.0,
     "dte_max": 150.0,

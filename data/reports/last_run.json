@@ -1,10 +1,8 @@
 {
-  "batch": 100,
-  "window_days": 30,
-  "cheap_mode": true,
+  "prices_days": 750,
   "watchlists": {
     "stocks": "watchlists/mylist.txt",
     "etf": "watchlists/etf_sample.txt"
   },
-  "timestamp": "2025-10-29 12:49:19"
+  "timestamp": "2025-10-30 15:31:06"
 }

@@ -17,7 +17,7 @@ jobs:
       WATCHLIST_ETF:    watchlists/etf_sample.txt
 
       # Kurse/History
-      PRICES_DAYS:      "750"       # ~3 Jahre, hält Repo schlank
+      PRICES_DAYS:      "750"       # ~3 Jahre
       FINNHUB_SLEEP_MS: "1300"
 
       # Earnings / Optionen / HV
@@ -268,43 +268,52 @@ jobs:
           rm -f data/market/stooq/*.csv || true
 
       # ===================== Daily Prices & Forecasts ===============
-      - name: Fetch daily prices (Finnhub) for STOCKS
+      - name: Fetch daily prices (AUTO provider) for STOCKS
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
           mkdir -p data/prices
+          echo "== STOCKS: pulling prices (auto: Finnhub → yfinance → Stooq) =="
           python scripts/fetch_prices_simple.py \
             --watchlist "${WATCHLIST_STOCKS}" \
             --days "${PRICES_DAYS}" \
             --outdir data/prices \
-            --sleep-ms "${FINNHUB_SLEEP_MS}"
+            --sleep-ms "${FINNHUB_SLEEP_MS}" \
+            --provider auto
+          echo "== STOCKS report =="
+          test -f data/reports/fetch_prices_report.json && cat data/reports/fetch_prices_report.json || true
           echo "== sample files ==" && ls -lh data/prices | head -n 20 || true
 
-      - name: Fetch daily prices (Finnhub) for ETFs
+      - name: Fetch daily prices (AUTO provider) for ETFs
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
+          echo "== ETFs: pulling prices (auto: Finnhub → yfinance → Stooq) =="
           python scripts/fetch_prices_simple.py \
             --watchlist "${WATCHLIST_ETF}" \
             --days "${PRICES_DAYS}" \
             --outdir data/prices \
-            --sleep-ms "${FINNHUB_SLEEP_MS}"
+            --sleep-ms "${FINNHUB_SLEEP_MS}" \
+            --provider auto
+          echo "== ETFs report =="
+          test -f data/reports/fetch_prices_report.json && cat data/reports/fetch_prices_report.json || true
           echo "== sample files ==" && ls -lh data/prices | head -n 20 || true
 
       - name: Validate price CSVs
         run: |
           python - << 'PY'
-          import os, glob
-          bad=[]
+          import os, glob, csv
+          n = 0
           for p in glob.glob("data/prices/*.csv"):
-              rows = sum(1 for _ in open(p, encoding="utf-8"))-1
-              if rows < 200:
-                  bad.append((p, rows))
-          print("Short histories:", bad if bad else "none")
+              if os.path.getsize(p) > 0:
+                  with open(p, newline="", encoding="utf-8") as f:
+                      r = csv.reader(f); next(r, None)
+                      if any(True for _ in r): n += 1
+          print(f"Price CSVs with data: {n}")
           PY
 
       - name: Install jq

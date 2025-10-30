@@ -100,10 +100,10 @@ jobs:
           fi
           echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
 
-      - name: Fetch Zacks Earnings Summary
+      - name: Fetch Zacks Earnings Summary (no translate)
         run: |
-          python -m pip install -r requirements.txt
-          python scripts/fetch_zacks_earnings_summary.py --watchlist watchlists/mylist.txt --translate
+          python scripts/fetch_zacks_earnings_summary.py --watchlist watchlists/mylist.txt
+
 
       # ===================== Earnings ==============================
       - name: Pull earnings CALENDAR (optional)

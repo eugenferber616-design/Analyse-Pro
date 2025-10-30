@@ -105,7 +105,6 @@ jobs:
           python -m pip install -r requirements.txt
           python scripts/fetch_zacks_earnings_summary.py --watchlist watchlists/mylist.txt --translate
 
-
       # ===================== Earnings ==============================
       - name: Pull earnings CALENDAR (optional)
         env:
@@ -470,7 +469,7 @@ jobs:
               "cds_proxy.csv":           count_rows_csv("data/processed/cds_proxy.csv"),
               "fx_quotes.csv":           count_rows_csv("data/processed/fx_quotes.csv"),
           }
-          print("\\n=== QA Summary ===")
+          print("\n=== QA Summary ===")
           for k,v in checks.items():
               print(("🟢" if v>0 else "🔴"), k, "→", v)
           os.makedirs("data/reports", exist_ok=True)
@@ -508,7 +507,6 @@ jobs:
           if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then
             echo "No non-empty files produced."
             exit 1
-          fi
 
       - name: Commit updated cache & reports
         shell: bash

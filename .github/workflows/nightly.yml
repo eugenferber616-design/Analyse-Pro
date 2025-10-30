@@ -30,7 +30,7 @@ jobs:
 
       ENABLE_FUTURES: "false"
 
-      # wichtig: lokale Module (z.B. forecast_ensemble) auffindbar
+      # lokale Module auffindbar
       PYTHONPATH: "."
 
     steps:
@@ -99,11 +99,6 @@ jobs:
             printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
           fi
           echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
-
-      - name: Fetch Zacks Earnings Summary (no translate)
-        run: |
-          python scripts/fetch_zacks_earnings_summary.py --watchlist watchlists/mylist.txt
-
 
       # ===================== Earnings ==============================
       - name: Pull earnings CALENDAR (optional)
@@ -385,10 +380,9 @@ jobs:
         run: |
           python - << 'PY'
           import os, sys, json, pandas as pd, glob, pathlib
-          sys.path.append("scripts")  # falls forecast_ensemble dort liegt
+          sys.path.append("scripts")
           from forecast_ensemble import ensemble, IVBandCfg
 
-          # Watchlist lesen
           wl = os.getenv("WATCHLIST_ETF","watchlists/etf_sample.txt")
           syms=[]
           with open(wl,encoding="utf-8") as f:
@@ -413,7 +407,7 @@ jobs:
           made=0
           for sym, g in data.groupby('symbol', sort=False):
               closes = g['close'].astype(float).tolist()
-              if len(closes) < 120:  # minimale Historie
+              if len(closes) < 120:
                   continue
               out = ensemble(closes, [5,10], IVBandCfg(iv_annual=0.22, drift_bps_per_day=0.0))
               with open(outdir / f"forecast_{sym}.json","w",encoding="utf-8") as f:
@@ -421,7 +415,6 @@ jobs:
               made += 1
           print("forecasts:", made)
 
-          # kleines Dashboard
           docs = pathlib.Path("docs"); docs.mkdir(exist_ok=True)
           files = glob.glob(str(outdir / "forecast_*.json"))
           if files:
@@ -501,14 +494,11 @@ jobs:
       - name: Fail if outputs empty
         shell: bash
         run: |
+          set -e
           cnt=$(find data -type f -size +0c | wc -l || true)
           dcnt=$(find docs -type f -size +0c | wc -l || true)
           echo "Non-empty files in data: $cnt ; in docs: $dcnt"
-          if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then
-          echo "No non-empty files produced."
-          exit 1
-          fi
-
+          if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then echo "No non-empty files produced."; exit 1; fi
 
       - name: Commit updated cache & reports
         shell: bash

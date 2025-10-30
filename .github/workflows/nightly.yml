@@ -505,8 +505,10 @@ jobs:
           dcnt=$(find docs -type f -size +0c | wc -l || true)
           echo "Non-empty files in data: $cnt ; in docs: $dcnt"
           if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then
-            echo "No non-empty files produced."
-            exit 1
+          echo "No non-empty files produced."
+          exit 1
+          fi
+
 
       - name: Commit updated cache & reports
         shell: bash

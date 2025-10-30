@@ -1,7 +1,7 @@
 # scripts/fetch_earnings.py
 import os, sys, time, csv, requests
 from datetime import datetime, timedelta
-from util import read_yaml, write_json, load_env
+from util import read_yaml, write_json, load_env  # nach Fix vorhanden
 from cache import RateLimiter, get_json, set_json
 
 CONF = read_yaml('config/config.yaml') or {}

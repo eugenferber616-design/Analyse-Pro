@@ -18,38 +18,95 @@ from bs4 import BeautifulSoup
 # ------------------------------------------------------------
 # Konfig
 # ------------------------------------------------------------
-BASE = "https://www.zacks.com/stock/research/{sym}/earnings-calendar"
-
-# realistische Browser-Header (wichtig gegen 403)
-HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "DNT": "1",
-    "Upgrade-Insecure-Requests": "1",
-    "Referer": "https://www.zacks.com/stock/quote/AAPL",
-}
-
-# 403-Fallback: read-only Renderer (kein Login/Cookie nötig)
-FALLBACK_PREFIX = "https://r.jina.ai/http/"
-
-# Rate-Limit (mild, plus Jitter)
-RATE_DELAY_SEC = 5.0
-HTTP_TIMEOUT   = 40
-
-# Passagen entfernen
-REMOVE_PATTERNS = [
-    r"\bResearch for [A-Z.\-]+\b.*",           # CTA-Zeile unterhalb
-    r"\bView Zacks.*?Calendar\b.*",            # Navigationshinweise
+BASES = [
+    "https://www.zacks.com/stock/research/{sym}/earnings-calendar",
+    "https://www.zacks.com/stock/quote/{sym}/earnings-calendar",
 ]
 
-# kleine Ersetzungen (nur kosmetisch)
-REPLACE_MAP = {
-    "earnings surprise": "Gewinnüberraschung",
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.8",
+    "Connection": "keep-alive",
 }
+
+ROBOT_HINTS = ("are you a robot", "access denied", "request blocked", "forbidden")
+RATE_LIMIT_SEC = 1.6  # langsamer + gleichmäßiger
+
+def zacks_symbol(sym: str) -> str:
+    """Konservativ auf US-Namensraum abbilden."""
+    s = sym.upper().replace(".", "-")
+    for suf in ("-DE","-F","-SW","-MI","-PA","-BR","-MC","-VI","-AS"):
+        if s.endswith(suf): s = s[:-len(suf)]
+    return s
+
+async def fetch_one(session, symbol, translate=False, translator=None, cache_dir=Path("data/cache/zacks")):
+    sym = zacks_symbol(symbol)
+    last_err = None
+    html = ""
+    used_url = ""
+
+    for base in BASES:
+        url = base.format(sym=sym)
+        used_url = url
+        cache_p = cache_dir / f"{sym}.html"
+
+        try:
+            if cache_p.exists():
+                html = cache_p.read_text(encoding="utf-8", errors="ignore")
+            else:
+                await asyncio.sleep(RATE_LIMIT_SEC + (os.urandom(1)[0] % 40)/100.0)  # 1.6–2.0s
+                async with aiohttp.ClientSession(headers=HEADERS) as s2:
+                    async with s2.get(url, headers={"Referer": f"https://www.zacks.com/stock/quote/{sym}"}) as r:
+                        if r.status == 403:
+                            last_err = "403_forbidden"
+                            continue
+                        r.raise_for_status()
+                        html = await r.text()
+                cache_p.write_text(html, encoding="utf-8")
+
+            low = html.lower()
+            if any(h in low for h in ROBOT_HINTS) or ("captcha" in low):
+                last_err = "robot_block"
+                html = ""
+                continue
+
+            break  # wir haben brauchbares HTML
+        except Exception as e:
+            last_err = f"http: {e}"
+            html = ""
+            continue
+
+    if not html:
+        return {"symbol": symbol, "url": used_url, "ok": False, "error": last_err or "no_html"}
+
+    summary_en = parse_earnings_summary(html)
+    if not summary_en:
+        return {"symbol": symbol, "url": used_url, "ok": False, "error": "no_summary"}
+
+    summary_en = text_cleanup(summary_en)
+
+    summary_de = ""
+    if translate and translator:
+        try:
+            summary_de = translator.translate(summary_en)
+            summary_de = text_cleanup(summary_de)
+        except Exception:
+            summary_de = ""
+
+    doc = {
+        "symbol": symbol,
+        "source_url": used_url,
+        "opinion_en": summary_en,
+        "opinion_de": summary_de or None,
+        "asof": time.strftime("%Y-%m-%d"),
+        "hash": compute_hash({
+            "symbol": symbol, "source_url": used_url,
+            "opinion_en": summary_en, "opinion_de": summary_de or None,
+            "asof": time.strftime("%Y-%m-%d"),
+        }),
+    }
+    return {"ok": True, **doc}
 
 # ------------------------------------------------------------
 # Utilities

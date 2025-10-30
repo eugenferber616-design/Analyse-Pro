@@ -365,12 +365,16 @@ jobs:
           PY
           head -n 20 data/processed/price_inventory.csv || true
 
-      - name: Upload raw price CSVs as artifact
+      # ---------- Parquet-Shards + Inventar hochladen ----------
+      - name: Upload price shards (Parquet) as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: raw-price-csvs
-          path: data/prices/*.csv
+          name: price-parquet
+          path: |
+            data/prices/*.parquet
+            data/processed/price_inventory.csv
+
 
       - name: Cleanup raw price CSVs (keep repo slim)
         run: rm -f data/prices/*.csv || true

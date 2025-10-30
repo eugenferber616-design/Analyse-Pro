@@ -15,11 +15,13 @@ jobs:
     env:
       WATCHLIST_STOCKS: watchlists/mylist.txt
       WATCHLIST_ETF:    watchlists/etf_sample.txt
-      WINDOW_DAYS:      30
-      CHEAP_MODE:       "true"
+
+      # Kurse/History
+      PRICES_DAYS:      "750"       # ~3 Jahre, hält Repo schlank
       FINNHUB_SLEEP_MS: "1300"
 
-      # Options-Tuning
+      # Earnings / Optionen / HV
+      WINDOW_DAYS:      "30"
       OPTIONS_MAX_EXPIRIES: "all"
       OPTIONS_TOPK:        "5"
       RISK_FREE_RATE:      "0.045"
@@ -29,6 +31,7 @@ jobs:
       ENABLE_FUTURES: "false"
 
     steps:
+      # ------------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -42,6 +45,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # ------------------------------------------------------------
       - name: Init cache DB
         run: |
           mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/processed data/reports docs watchlists
@@ -62,7 +66,6 @@ jobs:
           print("cache DB ready at", db_path)
           PY
 
-      # ── Secrets prüfen + Watchlists sichern
       - name: Prepare env and watchlists
         id: prep
         shell: bash
@@ -78,6 +81,7 @@ jobs:
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
 
+          # Aktien-Watchlist
           if [ ! -f "$WATCHLIST_STOCKS" ]; then
             echo "⚠️  $WATCHLIST_STOCKS fehlt – lege Fallback an."
             printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
@@ -85,11 +89,13 @@ jobs:
           fi
           echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
 
+          # ETF-Watchlist
           if [ ! -f "$WATCHLIST_ETF" ]; then
             printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
           fi
           echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
 
+      # ===================== Earnings ==============================
       - name: Pull earnings CALENDAR (optional)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -109,6 +115,7 @@ jobs:
           python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
+      # ===================== ETFs / Fundamentals ===================
       - name: Pull ETF basics (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -128,8 +135,9 @@ jobs:
             --watchlist "${WATCHLIST_STOCKS}" \
             --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
             --sleep_ms 150
+          head -n 20 data/processed/fundamentals_core.csv || true
 
-      # ========= COT 10y (robust) =========
+      # ===================== COT (10y & latest) ====================
       - name: Pull COT (10y, Socrata) + compress
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
@@ -156,7 +164,6 @@ jobs:
           echo "== Preview =="; head -n 5 data/processed/cot_10y.csv || true
           ls -lh data/processed/cot_10y.* || true
 
-      # ========= COT (latest) =========
       - name: Pull COT (CFTC Socrata)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
@@ -194,7 +201,7 @@ jobs:
           head -n 5 data/processed/cot.csv || true
           head -n 5 data/processed/cot_summary.csv || true
 
-      # ========= Macro (FRED) =========
+      # ===================== Macro (FRED & ECB) ====================
       - name: Pull macro (FRED)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -204,7 +211,6 @@ jobs:
           python scripts/fetch_fred.py --out data/macro/fred
           test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
 
-      # ========= FRED OAS =========
       - name: Pull FRED OAS (US & Euro)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -213,14 +219,13 @@ jobs:
           tail -n +1 data/reports/fred_errors.json || true
           head -n 5 data/processed/fred_oas.csv || true
 
-      # ========= ECB (neue API) =========
       - name: Pull ECB (new API)
         run: |
           python scripts/fetch_ecb.py || true
           test -f data/reports/ecb_errors.json && cat data/reports/ecb_errors.json || true
           ls -l data/macro/ecb || true
 
-      # ========= Stooq → HV-Summary (Rohdaten wieder löschen) =========
+      # ===================== HV aus Stooq (Rohdaten purge) =========
       - name: Pull Stooq quotes (Xetra only) → build HV summary → purge raws
         env:
           HV_WIN_SHORT: ${{ env.HV_WIN_SHORT }}
@@ -228,9 +233,7 @@ jobs:
         run: |
           set -e
           mkdir -p data/market/stooq data/processed
-          # 1) Kurse kurzzeitig ziehen
           python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" --days 365 || true
-          # 2) HV-Summary berechnen (nur Adj Close; jährliche Vol auf Basis log-returns)
           python - << 'PY'
           import os, csv, math, gzip, glob
           import pandas as pd
@@ -244,15 +247,14 @@ jobs:
                   df = pd.read_csv(p)
                   col = "Adj Close" if "Adj Close" in df.columns else "Close"
                   s = pd.to_numeric(df[col], errors="coerce").dropna()
-                  if s.size < max(win_s, win_l) + 2: 
+                  if s.size < max(win_s, win_l) + 2:
                       continue
                   r = (s.pct_change().dropna())
-                  # robust annualized vol (sqrt(252) * std of returns)
                   hv20 = float((r.tail(win_s).std() * (252**0.5)))
                   hv60 = float((r.tail(win_l).std() * (252**0.5)))
                   sym = p.stem
                   rows.append({"symbol": sym, "hv20": hv20, "hv60": hv60})
-              except Exception as e:
+              except Exception:
                   pass
           outp = Path("data/processed/hv_summary.csv.gz")
           outp.parent.mkdir(parents=True, exist_ok=True)
@@ -263,10 +265,24 @@ jobs:
                   w.writerow(r)
           print(f"HV rows: {len(rows)} -> {outp}")
           PY
-          # 3) Roh-Kursdateien wieder löschen (Repo schlank halten)
           rm -f data/market/stooq/*.csv || true
 
-      - name: Fetch daily prices (Finnhub) for forecasts
+      # ===================== Daily Prices & Forecasts ===============
+      - name: Fetch daily prices (Finnhub) for STOCKS
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
+        run: |
+          mkdir -p data/prices
+          python scripts/fetch_prices_simple.py \
+            --watchlist "${WATCHLIST_STOCKS}" \
+            --days "${PRICES_DAYS}" \
+            --outdir data/prices \
+            --sleep-ms "${FINNHUB_SLEEP_MS}"
+          echo "== sample files ==" && ls -lh data/prices | head -n 20 || true
+
+      - name: Fetch daily prices (Finnhub) for ETFs
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
@@ -274,27 +290,49 @@ jobs:
         run: |
           python scripts/fetch_prices_simple.py \
             --watchlist "${WATCHLIST_ETF}" \
-            --days 365
+            --days "${PRICES_DAYS}" \
+            --outdir data/prices \
+            --sleep-ms "${FINNHUB_SLEEP_MS}"
+          echo "== sample files ==" && ls -lh data/prices | head -n 20 || true
+
+      - name: Validate price CSVs
+        run: |
+          python - << 'PY'
+          import os, glob
+          bad=[]
+          for p in glob.glob("data/prices/*.csv"):
+              rows = sum(1 for _ in open(p, encoding="utf-8"))-1
+              if rows < 200:
+                  bad.append((p, rows))
+          print("Short histories:", bad if bad else "none")
+          PY
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Compute ensemble forecasts (no Pine)
         run: |
+          set -e
           mkdir -p data/processed docs
-          # Beispiel: für alle ETF der Watchlist (erste 15 Zeilen)
-          head -n 15 "${WATCHLIST_ETF}" | while read SYM; do
-            [ -z "$SYM" ] && continue
-            # Filter Kopfzeilen/Kommentare
-            echo "$SYM" | grep -E '^(#|//|symbol|SYMBOL)' >/dev/null && continue
+          awk 'NF && $1 !~ /^(#|\/\/|symbol|SYMBOL)$/ {print $1}' "${WATCHLIST_ETF}" | head -n 20 | while read SYM; do
+            CSV="data/prices/${SYM}.csv"
+            [ -s "$CSV" ] || { echo "skip ${SYM} (no prices)"; continue; }
             python scripts/compute_forecast_cli.py \
               --symbol "$SYM" \
+              --prices "$CSV" \
               --horizons "5,10" \
-              --iv-annual 0.22 || true
+              --iv-annual 0.22 \
+              --outdir data/processed || true
           done
-          # Kleines Indexfile
-          jq -s 'map({symbol:.symbol, per_h:.per_h, meta:.meta})' data/processed/forecast_*.json > docs/forecast_dashboard.json
-          head -n 40 docs/forecast_dashboard.json || true
+          if ls data/processed/forecast_*.json >/dev/null 2>&1; then
+            jq -s 'map({symbol:.symbol, per_h:.per_h, meta:.meta})' data/processed/forecast_*.json > docs/forecast_dashboard.json
+            echo "Dashboard rows: $(jq length docs/forecast_dashboard.json)"
+            head -n 40 docs/forecast_dashboard.json || true
+          else
+            echo "No forecasts produced; skipping dashboard merge."
+          fi
 
-
-      # ========= CDS Proxy v2 (mit HV-Datei) =========
+      # ===================== CDS-Proxy & EU Ampel ==================
       - name: Build CDS proxy per symbol
         shell: bash
         run: |
@@ -302,17 +340,17 @@ jobs:
           tail -n 10 data/processed/cds_proxy.csv || true
           test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
 
-      # ========= EU Ampel (Previews) =========
       - name: EU macro checks (Ampel)
         run: |
           python scripts/build_eu_ampel.py || true
           test -f data/reports/eu_checks/ampel_preview.json && cat data/reports/eu_checks/ampel_preview.json || true
 
+      # ===================== QA & Persist ==========================
       - name: Validate processed outputs
         shell: bash
         run: |
           python - << 'PY'
-          import os, json, gzip, csv
+          import os, json, gzip
           def count_rows_csv(p):
               return sum(1 for _ in open(p, encoding="utf-8"))-1 if os.path.exists(p) and os.path.getsize(p)>0 else 0
           def count_rows_gz(p):
@@ -325,17 +363,13 @@ jobs:
               "etf_basics.csv":          count_rows_csv("data/processed/etf_basics.csv"),
               "fred_oas.csv":            count_rows_csv("data/processed/fred_oas.csv"),
               "cot_summary.csv":         count_rows_csv("data/processed/cot_summary.csv"),
-              "options_oi_summary.csv":  count_rows_csv("data/processed/options_oi_summary.csv"),
-              "options_oi_by_expiry.csv":count_rows_csv("data/processed/options_oi_by_expiry.csv"),
-              "options_oi_totals.csv":   count_rows_csv("data/processed/options_oi_totals.csv"),
               "hv_summary.csv.gz":       count_rows_gz("data/processed/hv_summary.csv.gz"),
               "cds_proxy.csv":           count_rows_csv("data/processed/cds_proxy.csv"),
               "fx_quotes.csv":           count_rows_csv("data/processed/fx_quotes.csv"),
           }
-          lamp = lambda n: "🟢" if n>0 else "🔴"
           print("\\n=== QA Summary ===")
           for k,v in checks.items():
-              print(f"{lamp(v)} {k}: {v} rows")
+              print(("🟢" if v>0 else "🔴"), k, "→", v)
           os.makedirs("data/reports", exist_ok=True)
           json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
           PY
@@ -349,8 +383,7 @@ jobs:
           python - << 'PY'
           import json, time, os
           info = {
-              "batch": 100, "window_days": int(os.getenv("WINDOW_DAYS","30")),
-              "cheap_mode": os.getenv("CHEAP_MODE","true")=="true",
+              "prices_days": int(os.getenv("PRICES_DAYS","750")),
               "watchlists": {
                   "stocks": os.getenv("WATCHLIST_STOCKS"),
                   "etf": os.getenv("WATCHLIST_ETF"),

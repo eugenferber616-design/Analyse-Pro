@@ -20,4 +20,9 @@ cot-reports
 # --- Optional: lightweight API server for results ---
 fastapi==0.111.0
 uvicorn==0.30.1
-pip install requests beautifulsoup4 lxml python-dateutil tqdm transformers sentencepiece syntok
+aiohttp>=3.9,<4
+beautifulsoup4>=4.12,<5
+lxml>=4.9,<5
+transformers>=4.43,<5
+sentencepiece>=0.2,<0.3
+

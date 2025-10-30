@@ -30,6 +30,9 @@ jobs:
 
       ENABLE_FUTURES: "false"
 
+      # wichtig: lokale Module (z.B. forecast_ensemble) auffindbar
+      PYTHONPATH: "."
+
     steps:
       # ------------------------------------------------------------
       - name: Checkout
@@ -44,7 +47,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # sicherstellen, dass Parquet funktioniert
+          # Parquet-Engines
           pip install --upgrade pyarrow fastparquet
 
       # ------------------------------------------------------------
@@ -376,7 +379,8 @@ jobs:
       - name: Compute ensemble forecasts from Parquet (no CSV)
         run: |
           python - << 'PY'
-          import os, json, pandas as pd, glob, pathlib
+          import os, sys, json, pandas as pd, glob, pathlib
+          sys.path.append("scripts")  # falls forecast_ensemble dort liegt
           from forecast_ensemble import ensemble, IVBandCfg
 
           # Watchlist lesen
@@ -392,7 +396,6 @@ jobs:
           if not shards:
               print("no shards -> skip forecasts"); raise SystemExit(0)
 
-          # Alle Shards in einen DF (nur benötigte Symbole filtern)
           dfs=[]
           for p in shards:
               df = pd.read_parquet(p)

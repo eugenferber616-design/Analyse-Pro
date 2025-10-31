@@ -1,10 +1,9 @@
 {
-  "ts": "2025-10-31T02:19:47.610110Z",
+  "ts": "2025-10-31T02:43:14.709840Z",
   "watchlist": "watchlists/mylist.txt",
-  "symbols": 9,
-  "rejected": [],
-  "rows_summary": 197,
-  "rows_by_expiry": 197,
-  "rows_by_strike": 2374,
+  "symbols": 20,
+  "rows_summary": 20,
+  "rows_by_expiry": 0,
+  "rows_by_strike": 0,
   "errors": []
 }

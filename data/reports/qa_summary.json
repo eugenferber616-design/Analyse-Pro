@@ -7,9 +7,9 @@
   "hv_summary.csv.gz": 0,
   "cds_proxy.csv": 19,
   "fx_quotes.csv": 0,
-  "options_oi_summary.csv": 189,
-  "options_oi_by_expiry.csv": 189,
+  "options_oi_summary.csv": 197,
+  "options_oi_by_expiry.csv": 197,
   "options_oi_totals.csv": 9,
-  "options_oi_by_strike.csv": 506,
+  "options_oi_by_strike.csv": 523,
   "options_signals.csv": 9
 }

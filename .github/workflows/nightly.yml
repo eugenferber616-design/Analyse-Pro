@@ -21,12 +21,14 @@ jobs:
       FINNHUB_SLEEP_MS: "1300"
 
       # Earnings / Optionen / HV
-      WINDOW_DAYS:      "30"
-      OPTIONS_MAX_EXPIRIES: "all"
-      OPTIONS_TOPK:        "5"
-      RISK_FREE_RATE:      "0.045"
-      HV_WIN_SHORT:        "20"
-      HV_WIN_LONG:         "60"
+      WINDOW_DAYS:         "30"
+      OPTIONS_MAX_EXPIRIES: "all"   # Anzahl Verfälle: Zahl | "all"
+      OPTIONS_TOPK:         "5"     # Top-Strikes pro Seite
+      RISK_FREE_RATE:       "0.045"
+      HV_WIN_SHORT:         "20"
+      HV_WIN_LONG:          "60"
+      HV_WIN_10:            "10"
+      HV_WIN_30:            "30"
 
       ENABLE_FUTURES: "false"
 
@@ -141,6 +143,31 @@ jobs:
             --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
             --sleep_ms 150
           head -n 20 data/processed/fundamentals_core.csv || true
+
+      # ===================== OPTIONS (yfinance) =====================
+      - name: Fetch Options OI + IV/HV summary
+        env:
+          OPTIONS_MAX_EXPIRIES: ${{ env.OPTIONS_MAX_EXPIRIES }}
+          OPTIONS_TOPK:         ${{ env.OPTIONS_TOPK }}
+          HV_WIN_SHORT:         ${{ env.HV_WIN_SHORT }}
+          HV_WIN_LONG:          ${{ env.HV_WIN_LONG }}
+          HV_WIN_10:            ${{ env.HV_WIN_10 }}
+          HV_WIN_30:            ${{ env.HV_WIN_30 }}
+        run: |
+          python scripts/fetch_options_oi.py
+          head -n 40 data/processed/options_oi_summary.csv || true
+          head -n 40 data/processed/options_oi_by_expiry.csv || true
+          head -n 40 data/processed/options_oi_totals.csv || true
+
+      - name: Build options BY_STRIKE (aus Summary-TopStrikes)
+        run: |
+          python scripts/build_options_by_strike.py
+          head -n 40 data/processed/options_oi_by_strike.csv || true
+
+      - name: Build options SIGNALS (pro Symbol)
+        run: |
+          python scripts/build_options_signals.py
+          head -n 40 data/processed/options_signals.csv || true
 
       # ===================== COT (10y & latest) ====================
       - name: Pull COT (10y, Socrata) + compress
@@ -464,6 +491,11 @@ jobs:
               "hv_summary.csv.gz":       count_rows_gz("data/processed/hv_summary.csv.gz"),
               "cds_proxy.csv":           count_rows_csv("data/processed/cds_proxy.csv"),
               "fx_quotes.csv":           count_rows_csv("data/processed/fx_quotes.csv"),
+              "options_oi_summary.csv":  count_rows_csv("data/processed/options_oi_summary.csv"),
+              "options_oi_by_expiry.csv":count_rows_csv("data/processed/options_oi_by_expiry.csv"),
+              "options_oi_totals.csv":   count_rows_csv("data/processed/options_oi_totals.csv"),
+              "options_oi_by_strike.csv":count_rows_csv("data/processed/options_oi_by_strike.csv"),
+              "options_signals.csv":     count_rows_csv("data/processed/options_signals.csv"),
           }
           print("\n=== QA Summary ===")
           for k,v in checks.items():

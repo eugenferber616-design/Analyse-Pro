@@ -573,6 +573,77 @@ jobs:
           print("datasets.json geschrieben mit base =", base)
           PY
 
+      # ---------- UNIVERSAL Index (JSON/CSV/HTML) für R2 ----------
+      - name: Build UNIVERSAL indexes for all artifacts
+        env:
+          PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}   # z.B. https://pub-xxxx.r2.dev
+        run: |
+          python - << 'PY'
+          import os, csv, json, hashlib, gzip, pathlib
+          import pandas as pd
+          from datetime import datetime, timezone
+
+          base = os.getenv("PUBLIC_BASE", "https://pub-CHANGE-ME.r2.dev").rstrip("/")
+          roots = ["data/processed", "docs"]
+          rows = []
+
+          def sha256(path):
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+              for chunk in iter(lambda: f.read(1<<20), b""): h.update(chunk)
+            return h.hexdigest()
+
+          def count_rows(p):
+            try:
+              if p.endswith(".csv"):
+                with open(p, encoding="utf-8", errors="ignore") as f:
+                  return max(sum(1 for _ in f)-1, 0)
+              if p.endswith(".csv.gz"):
+                with gzip.open(p, "rt", encoding="utf-8", errors="ignore") as f:
+                  return max(sum(1 for _ in f)-1, 0)
+              if p.endswith(".parquet"):
+                return int(pd.read_parquet(p).shape[0])
+            except Exception:
+              return None
+            return None
+
+          for root in roots:
+            for path in pathlib.Path(root).rglob("*"):
+              if not path.is_file(): continue
+              rel = str(path).replace("\\","/")
+              size = path.stat().st_size
+              nrows = count_rows(rel)
+              rows.append({
+                "path": rel,
+                "size_bytes": size,
+                "size_kb": round(size/1024,2),
+                "rows": nrows,
+                "sha256": sha256(rel),
+                "updated_utc": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                "url": f"{base}/{rel}"
+              })
+
+          rows.sort(key=lambda r: r["path"])
+          pathlib.Path("docs").mkdir(exist_ok=True)
+
+          with open("docs/index.json","w",encoding="utf-8") as f:
+            json.dump({"base": base, "files": rows}, f, indent=2, ensure_ascii=False)
+
+          with open("docs/index.csv","w",newline="",encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader(); w.writerows(rows)
+
+          with open("docs/index.html","w",encoding="utf-8") as f:
+            f.write("<!doctype html><meta charset='utf-8'><title>Datasets</title>")
+            f.write("<h1>Datasets</h1><ul>")
+            for r in rows:
+              f.write(f"<li><a href='{r['url']}'>{r['path']}</a> – {r['size_kb']} KB"
+                      + (f" – rows: {r['rows']}" if r['rows'] is not None else "")
+                      + "</li>")
+            f.write("</ul>")
+          print(f"wrote docs/index.json, docs/index.csv, docs/index.html (files={len(rows)})")
+          PY
+
       # ---------- Upload nach Cloudflare R2 ----------
       - name: Sync processed & docs to R2
         env:

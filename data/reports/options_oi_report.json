@@ -1,9 +1,60 @@
 {
-  "ts": "2025-10-31T02:43:14.709840Z",
+  "ts": "2025-10-31T02:53:51.917179Z",
   "watchlist": "watchlists/mylist.txt",
-  "symbols": 20,
-  "rows_summary": 20,
-  "rows_by_expiry": 0,
-  "rows_by_strike": 0,
-  "errors": []
+  "symbols": 19,
+  "rows_summary": 189,
+  "rows_by_expiry": 189,
+  "rows_by_strike": 2316,
+  "errors": [
+    {
+      "symbol": "SAP.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "DTE.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "ALV.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "SIE.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "BAS.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "BAYN.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "BMW.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "VOW3.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "ADS.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    },
+    {
+      "symbol": "IFX.DE",
+      "stage": "options_list",
+      "msg": "no options available; skipped"
+    }
+  ]
 }

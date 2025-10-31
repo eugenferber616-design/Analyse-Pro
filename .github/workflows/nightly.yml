@@ -21,7 +21,7 @@ jobs:
       FINNHUB_SLEEP_MS: "1300"
 
       # Earnings / Optionen / HV
-      WINDOW_DAYS:         "30"
+      WINDOW_DAYS:          "30"
       OPTIONS_MAX_EXPIRIES: "all"   # Anzahl Verfälle: Zahl | "all"
       OPTIONS_TOPK:         "5"     # Top-Strikes pro Seite
       RISK_FREE_RATE:       "0.045"
@@ -540,6 +540,64 @@ jobs:
           echo "Non-empty files in data: $cnt ; in docs: $dcnt"
           if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then echo "No non-empty files produced."; exit 1; fi
 
+      # ===================== Cloudflare R2 (Smoke + Sync) ==========
+      - name: R2 smoke test (write & upload 1 file)
+        if: ${{ secrets.CF_R2_ACCESS_KEY_ID && secrets.CF_R2_SECRET_ACCESS_KEY && secrets.CF_R2_ENDPOINT && secrets.CF_R2_BUCKET }}
+        env:
+          CF_R2_ACCOUNT_ID:        ${{ secrets.CF_R2_ACCOUNT_ID }}
+          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
+          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
+        run: |
+          set -e
+          echo "smoke: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > /tmp/smoke.txt
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          cat > rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${CF_R2_ACCESS_KEY_ID}
+          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
+          endpoint = ${CF_R2_ENDPOINT}
+          acl = public-read
+          force_path_style = true
+          EOF
+          rclone mkdir r2:${CF_R2_BUCKET}/_smoke --config rclone.conf || true
+          rclone copy /tmp/smoke.txt r2:${CF_R2_BUCKET}/_smoke/ --config rclone.conf -vv
+          rclone ls r2:${CF_R2_BUCKET} --config rclone.conf | head -n 50
+
+      - name: Sync processed & docs to R2
+        if: ${{ success() && secrets.CF_R2_ACCESS_KEY_ID && secrets.CF_R2_SECRET_ACCESS_KEY && secrets.CF_R2_ENDPOINT && secrets.CF_R2_BUCKET }}
+        env:
+          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
+          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
+        run: |
+          set -e
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          cat > rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${CF_R2_ACCESS_KEY_ID}
+          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
+          endpoint = ${CF_R2_ENDPOINT}
+          acl = public-read
+          force_path_style = true
+          EOF
+
+          echo "→ sync processed"
+          rclone sync data/processed r2:${CF_R2_BUCKET}/data/processed --config rclone.conf --fast-list --checksum --update
+
+          echo "→ sync docs"
+          rclone sync docs r2:${CF_R2_BUCKET}/docs --config rclone.conf --fast-list --checksum --update
+
+          echo "→ list remote (top 100)"
+          rclone ls r2:${CF_R2_BUCKET}/data/processed --config rclone.conf | head -n 100
+
+      # ===================== Commit & Artifacts ====================
       - name: Commit updated cache & reports
         shell: bash
         run: |

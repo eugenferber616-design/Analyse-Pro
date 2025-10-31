@@ -1,5 +1,6 @@
 name: Nightly Data Pull and Cache (No LLM)
 
+
 on:
   schedule:
     - cron: "30 0 * * *"   # täglich 00:30 UTC

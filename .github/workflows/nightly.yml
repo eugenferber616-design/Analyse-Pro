@@ -375,7 +375,6 @@ jobs:
             data/prices/*.parquet
             data/processed/price_inventory.csv
 
-
       - name: Cleanup raw price CSVs (keep repo slim)
         run: rm -f data/prices/*.csv || true
 

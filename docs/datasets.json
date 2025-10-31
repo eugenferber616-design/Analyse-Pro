@@ -1,11 +1,11 @@
 {
-  "base": "https://pub-c5e8c78162df45f4bed6224f0ebacab6.r2.dev/",
+  "base": "",
   "datasets": {
     "options_by_expiry": "/data/processed/options_oi_by_expiry.csv",
-    "options_totals":    "/data/processed/options_oi_totals.csv",
+    "options_totals": "/data/processed/options_oi_totals.csv",
     "options_by_strike": "/data/processed/options_oi_by_strike.csv",
-    "options_strike_max":"/data/processed/options_oi_strike_max.csv",
-    "cot_summary":       "/data/processed/cot_summary.csv",
-    "fred_oas":          "/data/processed/fred_oas.csv"
+    "options_strike_max": "/data/processed/options_oi_strike_max.csv",
+    "cot_summary": "/data/processed/cot_summary.csv",
+    "fred_oas": "/data/processed/fred_oas.csv"
   }
 }

@@ -1,6 +1,5 @@
 name: Nightly Data Pull and Cache (No LLM)
 
-
 on:
   schedule:
     - cron: "30 0 * * *"   # täglich 00:30 UTC
@@ -541,6 +540,32 @@ jobs:
           echo "Non-empty files in data: $cnt ; in docs: $dcnt"
           if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then echo "No non-empty files produced."; exit 1; fi
 
+      # ---------- Manifest für zentrale URLs ----------
+      - name: Build datasets manifest (docs/datasets.json)
+        env:
+          PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}  # z.B. https://pub-<hash>.r2.dev
+        run: |
+          mkdir -p docs
+          python - << 'PY'
+          import json, os, pathlib
+          base = os.getenv("PUBLIC_BASE", "https://pub-CHANGE-ME.r2.dev")
+          manifest = {
+            "base": base,
+            "datasets": {
+              "options_by_expiry": "/data/processed/options_oi_by_expiry.csv",
+              "options_totals":    "/data/processed/options_oi_totals.csv",
+              "options_by_strike": "/data/processed/options_oi_by_strike.csv",
+              "options_strike_max":"/data/processed/options_oi_strike_max.csv",
+              "cot_summary":       "/data/processed/cot_summary.csv",
+              "fred_oas":          "/data/processed/fred_oas.csv"
+            }
+          }
+          pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
+          with open("docs/datasets.json","w",encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+          print("datasets.json geschrieben mit base =", base)
+          PY
+
       # ---------- Upload nach Cloudflare R2 ----------
       - name: Sync processed & docs to R2
         env:
@@ -579,7 +604,6 @@ jobs:
 
           echo "→ list remote (top 50)"
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50
-
 
       # ===================== Commit & Artifacts ====================
       - name: Commit updated cache & reports

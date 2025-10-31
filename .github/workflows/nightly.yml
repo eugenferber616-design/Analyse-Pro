@@ -145,7 +145,8 @@ jobs:
           head -n 20 data/processed/fundamentals_core.csv || true
 
       # ===================== OPTIONS (yfinance) =====================
-      - name: Fetch Options OI + IV/HV summary
+      - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
+        shell: bash
         env:
           OPTIONS_MAX_EXPIRIES: ${{ env.OPTIONS_MAX_EXPIRIES }}
           OPTIONS_TOPK:         ${{ env.OPTIONS_TOPK }}
@@ -154,7 +155,13 @@ jobs:
           HV_WIN_10:            ${{ env.HV_WIN_10 }}
           HV_WIN_30:            ${{ env.HV_WIN_30 }}
         run: |
-          python scripts/fetch_options_oi.py
+          # Watchlists zusammenführen (Header nur einmal)
+          awk 'NR==1 || FNR>1' watchlists/mylist.txt watchlists/etf_sample.txt > /tmp/options_watchlist.txt
+
+          # Optionsdaten ziehen
+          python scripts/fetch_options_oi.py --watchlist /tmp/options_watchlist.txt
+
+          # Vorschau
           head -n 40 data/processed/options_oi_summary.csv || true
           head -n 40 data/processed/options_oi_by_expiry.csv || true
           head -n 40 data/processed/options_oi_totals.csv || true

@@ -1,4 +1,4 @@
-name: Nightly Data Pull & Cache (No LLM)
+name: Nightly Data Pull and Cache (No LLM)
 
 on:
   schedule:

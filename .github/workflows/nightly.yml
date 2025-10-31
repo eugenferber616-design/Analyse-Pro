@@ -543,7 +543,6 @@ jobs:
 
       # ---------- Upload nach Cloudflare R2 ----------
       - name: Sync processed & docs to R2
-        if: ${{ success() && secrets.CF_R2_ACCESS_KEY_ID != '' && secrets.CF_R2_SECRET_ACCESS_KEY != '' && secrets.CF_R2_ENDPOINT != '' && secrets.CF_R2_BUCKET != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -551,6 +550,15 @@ jobs:
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
         run: |
           set -e
+
+          # Secrets vorhanden?
+          if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
+             [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
+            echo "R2 nicht konfiguriert (Secrets fehlen) – Upload wird übersprungen."
+            exit 0
+          fi
+
+          # rclone installieren & konfigurieren
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
           [r2]
@@ -562,12 +570,16 @@ jobs:
           acl = private
           force_path_style = true
           EOF
+
           echo "→ sync processed"
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --fast-list --checksum --update
+
           echo "→ sync docs"
           rclone sync docs "r2:${CF_R2_BUCKET}/docs" --config rclone.conf --fast-list --checksum --update
+
           echo "→ list remote (top 50)"
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50
+
 
       # ===================== Commit & Artifacts ====================
       - name: Commit updated cache & reports

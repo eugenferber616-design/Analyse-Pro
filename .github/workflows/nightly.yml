@@ -164,7 +164,6 @@ jobs:
           python scripts/post_build_strike_max.py
           head -n 20 data/processed/options_oi_strike_max.csv || true
 
-
       - name: Build options BY_STRIKE (aus Summary-TopStrikes)
         run: |
           python scripts/build_options_by_strike.py

@@ -159,6 +159,12 @@ jobs:
           head -n 40 data/processed/options_oi_by_expiry.csv || true
           head -n 40 data/processed/options_oi_totals.csv || true
 
+      - name: Build max OI strike per symbol
+        run: |
+          python scripts/post_build_strike_max.py
+          head -n 20 data/processed/options_oi_strike_max.csv || true
+
+
       - name: Build options BY_STRIKE (aus Summary-TopStrikes)
         run: |
           python scripts/build_options_by_strike.py

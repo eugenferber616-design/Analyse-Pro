@@ -2,6 +2,7 @@
   "base": "",
   "datasets": {
     "cot_20y": "/data/processed/cot_20y.csv.gz",
+    "tff_20y": "/data/processed/tff_20y.csv.gz",
     "options_by_expiry": "/data/processed/options_oi_by_expiry.csv.gz",
     "options_totals": "/data/processed/options_oi_totals.csv.gz",
     "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",

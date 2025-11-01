@@ -7,7 +7,7 @@
       "size_kb": 0.36,
       "rows": 19,
       "sha256": "c2fa6191fa0a5cababf0f62d6250ded9e70d5331edee6bc9bd7e191c3bb8e974",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/cds_proxy.csv"
     },
     {
@@ -16,7 +16,7 @@
       "size_kb": 45.3,
       "rows": 77,
       "sha256": "d0d81da3dbf198b26b2941f0492981af0cc46bc34d38bf2dd3eb1d799ea6efcb",
-      "updated_utc": "2025-11-01 17:07:26",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/data/processed/cot.csv"
     },
     {
@@ -25,7 +25,7 @@
       "size_kb": 14791.17,
       "rows": 25679,
       "sha256": "f69741b83e822117da8914657752137382cc37fb8301c5ecbc5c5761e4a5f102",
-      "updated_utc": "2025-11-01 17:07:26",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/data/processed/cot_10y.csv"
     },
     {
@@ -33,8 +33,8 @@
       "size_bytes": 34769187,
       "size_kb": 33954.28,
       "rows": 176966,
-      "sha256": "ad46418111246c4d44266da11bbaa8571ec4259cfc39a243070c50e3ce496e73",
-      "updated_utc": "2025-11-01 17:12:17",
+      "sha256": "6b73ede39df34a2312306459dfb727d170849986095675662baa957f56dd1953",
+      "updated_utc": "2025-11-01 17:30:08",
       "url": "/data/processed/cot_20y.csv.gz"
     },
     {
@@ -43,7 +43,7 @@
       "size_kb": 45.3,
       "rows": 77,
       "sha256": "0810d48858aef9e2180a9c9c503cc8d66c647566ea13372052f72e52855454c2",
-      "updated_utc": "2025-11-01 17:07:26",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/data/processed/cot_latest_raw.csv"
     },
     {
@@ -52,7 +52,7 @@
       "size_kb": 3.65,
       "rows": 77,
       "sha256": "7759a47abe26141da3d574e8c85cb54f711945c90c772d0c0811b22bd6bd94ae",
-      "updated_utc": "2025-11-01 17:07:26",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/data/processed/cot_summary.csv"
     },
     {
@@ -61,7 +61,7 @@
       "size_kb": 0.0,
       "rows": null,
       "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "updated_utc": "2025-11-01 17:08:28",
+      "updated_utc": "2025-11-01 17:23:59",
       "url": "/data/processed/earnings_next.json"
     },
     {
@@ -70,7 +70,7 @@
       "size_kb": 0.58,
       "rows": 12,
       "sha256": "79f99cde327ba634fc6d5f40ff73e9fa9ed01d2eef9cc50af53d55b4aa9a1178",
-      "updated_utc": "2025-11-01 17:08:55",
+      "updated_utc": "2025-11-01 17:24:27",
       "url": "/data/processed/earnings_results.csv"
     },
     {
@@ -79,7 +79,7 @@
       "size_kb": 3.03,
       "rows": 29,
       "sha256": "aef787c5a2f2d57f4f0fdc30fc2006075558f54e9e6c58dc831fd3a676f3d9ed",
-      "updated_utc": "2025-11-01 17:09:07",
+      "updated_utc": "2025-11-01 17:24:43",
       "url": "/data/processed/etf_basics.csv"
     },
     {
@@ -88,7 +88,7 @@
       "size_kb": 0.93,
       "rows": null,
       "sha256": "5c56e00a85678833fc3fe52d690c90436fcb71c5a2a90204cfea25669fba2cac",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/forecast_GLD.json"
     },
     {
@@ -97,7 +97,7 @@
       "size_kb": 0.97,
       "rows": null,
       "sha256": "426bf614bfbfd8c00f2902890cd96624687c07fece00f742f2d6bcd98a7ea8dc",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/forecast_HYG.json"
     },
     {
@@ -106,7 +106,7 @@
       "size_kb": 0.96,
       "rows": null,
       "sha256": "c46b480bd87a2877b808e875ec820591789a109b0b1ce46dad2780d0a3191743",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/forecast_IWM.json"
     },
     {
@@ -115,7 +115,7 @@
       "size_kb": 0.96,
       "rows": null,
       "sha256": "018f252647e96eb96d2735ba19e1bf62c77fd8419327223e94f8652ff558f87b",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/forecast_QQQ.json"
     },
     {
@@ -124,7 +124,7 @@
       "size_kb": 0.96,
       "rows": null,
       "sha256": "3d13a8ce83d8b217cc6df60bf3d67ff2a163183d1f054aca33da38c92416de92",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/forecast_SPY.json"
     },
     {
@@ -133,7 +133,7 @@
       "size_kb": 0.96,
       "rows": null,
       "sha256": "eb782953cc0d5640ad176e4528b9579d3ecb39d56735c26cc7805e3060a76285",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/forecast_XLE.json"
     },
     {
@@ -142,7 +142,7 @@
       "size_kb": 0.96,
       "rows": null,
       "sha256": "cbf0c68874f80635be1e91a3b980153518027b15dcb12b767f1ea1d46a7d0de3",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/forecast_XLF.json"
     },
     {
@@ -151,7 +151,7 @@
       "size_kb": 0.96,
       "rows": null,
       "sha256": "7ed6a26cd403ad184c4223a3c9ad1124a06fffdc18119cad5d6c5a0e51ce4705",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/data/processed/forecast_XLK.json"
     },
     {
@@ -160,7 +160,7 @@
       "size_kb": 481.68,
       "rows": 14539,
       "sha256": "2ed9ee72ad999813a23f8ddce20afdb9ce085650cf7c54241537f357ecb083ce",
-      "updated_utc": "2025-11-01 17:12:22",
+      "updated_utc": "2025-11-01 17:30:14",
       "url": "/data/processed/fred_oas.csv"
     },
     {
@@ -169,7 +169,7 @@
       "size_kb": 0.92,
       "rows": 19,
       "sha256": "f804dc57c03a6893ae8100cd068ab970ecd37791158d8a0a0cb4d15616dd1235",
-      "updated_utc": "2025-11-01 17:09:14",
+      "updated_utc": "2025-11-01 17:24:53",
       "url": "/data/processed/fundamentals_core.csv"
     },
     {
@@ -178,7 +178,7 @@
       "size_kb": 2.08,
       "rows": 14,
       "sha256": "5ca819a6769d1b9a802d8b45f81ecd9080779e6120e62e69fe471c13b91e6af3",
-      "updated_utc": "2025-11-01 17:07:26",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/data/processed/futures_quotes.csv"
     },
     {
@@ -187,7 +187,7 @@
       "size_kb": 0.03,
       "rows": 0,
       "sha256": "9acf4e5b71146434efa1a35946a9429fc7945d5d5b078c552b1924df557e68cd",
-      "updated_utc": "2025-11-01 17:12:24",
+      "updated_utc": "2025-11-01 17:30:16",
       "url": "/data/processed/fx_quotes.csv"
     },
     {
@@ -195,8 +195,8 @@
       "size_bytes": 58,
       "size_kb": 0.06,
       "rows": 0,
-      "sha256": "965283ca18547a93fac97f4e303db050ab5040b7c28d104774d10348bf2a0149",
-      "updated_utc": "2025-11-01 17:12:24",
+      "sha256": "abe0f0a809deb5e5cad753f0d56831dc643dcab188b86521d1859814df916bbf",
+      "updated_utc": "2025-11-01 17:30:16",
       "url": "/data/processed/hv_summary.csv.gz"
     },
     {
@@ -205,7 +205,7 @@
       "size_kb": 9.93,
       "rows": 180,
       "sha256": "4f32e01f8f0f61ca05cece4d98d5eced019d99947ce748d7dca3aa19ee770dc8",
-      "updated_utc": "2025-11-01 17:09:32",
+      "updated_utc": "2025-11-01 17:25:17",
       "url": "/data/processed/options_oi_by_expiry.csv"
     },
     {
@@ -214,7 +214,7 @@
       "size_kb": 7.54,
       "rows": 491,
       "sha256": "94177db5096193db179dc8517e2134b071a5471c4fec9aeec8d84a45175de5e6",
-      "updated_utc": "2025-11-01 17:09:33",
+      "updated_utc": "2025-11-01 17:25:18",
       "url": "/data/processed/options_oi_by_strike.csv"
     },
     {
@@ -223,7 +223,7 @@
       "size_kb": 0.2,
       "rows": 9,
       "sha256": "38f22b21ecc8575401a6af693888a6c17be4ca78c0003a344bb00117564f0df8",
-      "updated_utc": "2025-11-01 17:09:33",
+      "updated_utc": "2025-11-01 17:25:17",
       "url": "/data/processed/options_oi_strike_max.csv"
     },
     {
@@ -232,7 +232,7 @@
       "size_kb": 39.94,
       "rows": 180,
       "sha256": "ddd812db7906ce04d45875243a1df38099d4ef54c8d3c9d5c888893fba9b2348",
-      "updated_utc": "2025-11-01 17:09:32",
+      "updated_utc": "2025-11-01 17:25:17",
       "url": "/data/processed/options_oi_summary.csv"
     },
     {
@@ -241,7 +241,7 @@
       "size_kb": 0.32,
       "rows": 9,
       "sha256": "f76132ca0d9eb9a8f886484c4f3d8501898bbaeff0b31d899fd21c790cef38ef",
-      "updated_utc": "2025-11-01 17:09:32",
+      "updated_utc": "2025-11-01 17:25:17",
       "url": "/data/processed/options_oi_totals.csv"
     },
     {
@@ -250,7 +250,7 @@
       "size_kb": 0.93,
       "rows": 9,
       "sha256": "2121d595ee3f3a4221f87e738d5ee7634c73d7e314685f70064fb8d8e7d8e891",
-      "updated_utc": "2025-11-01 17:09:34",
+      "updated_utc": "2025-11-01 17:25:18",
       "url": "/data/processed/options_signals.csv"
     },
     {
@@ -259,7 +259,7 @@
       "size_kb": 1.19,
       "rows": 25,
       "sha256": "18999bf70b2e3c5f8b8834913a85f1314e20e1c46571d750b93b897c104d0036",
-      "updated_utc": "2025-11-01 17:12:25",
+      "updated_utc": "2025-11-01 17:30:17",
       "url": "/data/processed/price_inventory.csv"
     },
     {
@@ -268,7 +268,7 @@
       "size_kb": 0.0,
       "rows": 0,
       "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
-      "updated_utc": "2025-11-01 17:07:26",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/data/processed/scanner_basics.csv"
     },
     {
@@ -277,7 +277,7 @@
       "size_kb": 0.05,
       "rows": 0,
       "sha256": "4164b1eb2613701c4ed700f643f64d006562b94155e3bcf042424aa0acfc7ea9",
-      "updated_utc": "2025-11-01 17:07:26",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/data/processed/zacks_earnings_summary.csv"
     },
     {
@@ -286,7 +286,7 @@
       "size_kb": 0.0,
       "rows": null,
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "updated_utc": "2025-11-01 17:07:26",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/data/processed/zacks_earnings_summary.jsonl"
     },
     {
@@ -295,7 +295,7 @@
       "size_kb": 0.4,
       "rows": null,
       "sha256": "b52288a373efb65e2fc2f5bf3cf5010bb0031f1a67dfd1d60d2c0e0a3eb931d7",
-      "updated_utc": "2025-11-01 17:12:28",
+      "updated_utc": "2025-11-01 17:30:21",
       "url": "/docs/datasets.json"
     },
     {
@@ -304,7 +304,7 @@
       "size_kb": 0.0,
       "rows": null,
       "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-      "updated_utc": "2025-11-01 17:08:28",
+      "updated_utc": "2025-11-01 17:23:59",
       "url": "/docs/earnings_next.json"
     },
     {
@@ -313,34 +313,34 @@
       "size_kb": 8.25,
       "rows": null,
       "sha256": "ca985a2ff6e05e4fe987948211e4076aedcc560708d6cf3d0d2961e516b43473",
-      "updated_utc": "2025-11-01 17:12:27",
+      "updated_utc": "2025-11-01 17:30:19",
       "url": "/docs/forecast_dashboard.json"
     },
     {
       "path": "docs/index.csv",
-      "size_bytes": 6222,
+      "size_bytes": 6225,
       "size_kb": 6.08,
       "rows": 38,
-      "sha256": "e794f9a8002dcad063f340852f61c284923e5f47b78cbe48ab8c60f42cf45c22",
-      "updated_utc": "2025-11-01 17:07:26",
+      "sha256": "a4a3da183072acbb7de17d505771f9cff946d9dabced0c1bb1c2e0fe96b8fde3",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/docs/index.csv"
     },
     {
       "path": "docs/index.html",
-      "size_bytes": 4133,
+      "size_bytes": 4135,
       "size_kb": 4.04,
       "rows": null,
-      "sha256": "ebd854f089b536d78607ed373a8292e7f5b3dbe966ad1e43120f41473f999197",
-      "updated_utc": "2025-11-01 17:07:26",
+      "sha256": "d715c589c0765f3014209bdf15a6f6eb81b6493f3b46fed01347acb128469dcf",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/docs/index.html"
     },
     {
       "path": "docs/index.json",
-      "size_bytes": 11620,
+      "size_bytes": 11623,
       "size_kb": 11.35,
       "rows": null,
-      "sha256": "1e62fa092ab30f53929de4f807daf3bf8dffd7f6cdb281e81680f053e0c1e491",
-      "updated_utc": "2025-11-01 17:07:26",
+      "sha256": "94bdc01b51ce4b60cfce19e79201864e7bae40514836bb79871382771362c51c",
+      "updated_utc": "2025-11-01 17:22:53",
       "url": "/docs/index.json"
     }
   ]

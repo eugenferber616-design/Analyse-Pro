@@ -33,11 +33,9 @@ jobs:
       ENABLE_FUTURES: "false"
 
       # COT – Socrata Basis
-      CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
-      # Disaggregated — Futures+Options (Combined)
-      COT_DISAGG_DATASET_ID: "kh3c-gbw2"
-      # TFF — Futures+Options (Combined)
-      COT_TFF_DATASET_ID:    "yw9f-hn96"
+      CFTC_API_BASE:         "https://publicreporting.cftc.gov/resource"
+      COT_DISAGG_DATASET_ID: "kh3c-gbw2"   # Disaggregated (F+O Combined)
+      COT_TFF_DATASET_ID:    "yw9f-hn96"   # TFF (F+O Combined)
       COT_YEARS:             "20"
       COT_MARKETS_MODE:      "FILE"        # "ALL" | "FILE" | "LIST"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
@@ -185,40 +183,45 @@ jobs:
       - name: Pull COT 20y – Disaggregated (F+O Combined)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID:  ${{ env.COT_DISAGG_DATASET_ID }}
         shell: bash
         run: |
           set -euo pipefail
           echo "== Socrata Probe (Disaggregated) =="
-          curl -fsS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
+          curl -fsS -G "${CFTC_API_BASE}/${COT_DISAGG_DATASET_ID}.json" \
             --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
             --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
             --data-urlencode '$limit=1' \
             -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq . || true
+
           echo "== Pull 20y Disaggregated =="
-          python -u scripts/fetch_cot_20y.py
-          head -n 2 data/processed/cot_20y.csv || true
-          ls -lh data/processed/cot_20y.* || true
+          python -u scripts/fetch_cot_20y.py \
+            --dataset "${COT_DISAGG_DATASET_ID}" \
+            --out "data/processed/cot_20y_disagg.csv.gz"
+
+          ls -lh data/processed/cot_20y_disagg.csv.gz
+          zcat data/processed/cot_20y_disagg.csv.gz | head -n 2 || true
 
       # -------------------- COT 20y: TFF (Combined) --------------------------
       - name: Pull COT 20y – TFF (F+O Combined)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID:  ${{ env.COT_TFF_DATASET_ID }}
         shell: bash
         run: |
           set -euo pipefail
           echo "== Socrata Probe (TFF) =="
-          curl -fsS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
+          curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
             --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
             --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
             --data-urlencode '$limit=1' \
             -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq . || true
+
           echo "== Pull 20y TFF =="
-          # Das Script liest COT_DATASET_ID aus der Umgebung -> Output: data/processed/tff_20y.csv
-          python -u scripts/fetch_cot_20y.py --out data/processed/tff_20y.csv
-          head -n 2 data/processed/tff_20y.csv || true
-          ls -lh data/processed/tff_20y.* || true
+          python -u scripts/fetch_cot_20y.py \
+            --dataset "${COT_TFF_DATASET_ID}" \
+            --out "data/processed/cot_20y_tff.csv.gz"
+
+          ls -lh data/processed/cot_20y_tff.csv.gz
+          zcat data/processed/cot_20y_tff.csv.gz | head -n 2 || true
 
       # -------------------- Stooq HV (klein & gz) ---------------------------
       - name: Pull Stooq quotes (Xetra only) → build HV summary → purge raws
@@ -318,8 +321,8 @@ jobs:
           manifest = {
             "base": base,
             "datasets": {
-              "cot_20y":           "/data/processed/cot_20y.csv.gz",
-              "tff_20y":           "/data/processed/tff_20y.csv.gz",
+              "cot_20y_disagg": "/data/processed/cot_20y_disagg.csv.gz",
+              "cot_20y_tff":    "/data/processed/cot_20y_tff.csv.gz",
               "options_by_expiry": "/data/processed/options_oi_by_expiry.csv.gz",
               "options_totals":    "/data/processed/options_oi_totals.csv.gz",
               "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
@@ -340,7 +343,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (no LLM, COT Disagg + TFF, gz to R2)" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (no LLM, COT Disagg+TFF, gz to R2)" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

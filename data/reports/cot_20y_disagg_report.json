@@ -1,0 +1,14 @@
+{
+  "ts": "2025-11-01T23:47:35Z",
+  "datasets": [
+    "kh3c-gbw2"
+  ],
+  "years": 20,
+  "mode": "FILE",
+  "rows": 17010,
+  "date_from": "2005-10-27",
+  "date_to": "2025-11-01",
+  "files": {
+    "out": "data/processed/cot_20y_disagg.csv.gz"
+  }
+}

@@ -379,7 +379,6 @@ jobs:
           PY
           head -n 20 data/processed/price_inventory.csv || true
 
-      # ---------- Parquet-Shards + Inventar hochladen ----------
       - name: Upload price shards (Parquet) as artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -392,7 +391,6 @@ jobs:
       - name: Cleanup raw price CSVs (keep repo slim)
         run: rm -f data/prices/*.csv || true
 
-      # ---------- Forecasts direkt aus Parquet ----------
       - name: Compute ensemble forecasts from Parquet (no CSV)
         run: |
           python - << 'PY'
@@ -444,7 +442,6 @@ jobs:
           PY
           test -f docs/forecast_dashboard.json && head -n 40 docs/forecast_dashboard.json || true
 
-      # ===================== CDS-Proxy & EU Ampel ==================
       - name: Build CDS proxy per symbol
         shell: bash
         run: |
@@ -522,7 +519,6 @@ jobs:
           echo "Non-empty files in data: $cnt ; in docs: $dcnt"
           if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then echo "No non-empty files produced."; exit 1; fi
 
-      # ---------- Manifest für zentrale URLs ----------
       - name: Build datasets manifest (docs/datasets.json)
         env:
           PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}  # z.B. https://pub-<hash>.r2.dev
@@ -548,7 +544,6 @@ jobs:
           print("datasets.json geschrieben mit base =", base)
           PY
 
-      # ---------- UNIVERSAL Index (JSON/CSV/HTML) für R2 ----------
       - name: Build UNIVERSAL indexes for all artifacts
         env:
           PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}   # z.B. https://pub-xxxx.r2.dev
@@ -619,7 +614,6 @@ jobs:
           print(f"wrote docs/index.json, docs/index.csv, docs/index.html (files={len(rows)})")
           PY
 
-      # ---------- Upload nach Cloudflare R2 ----------
       - name: Sync processed & docs to R2
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
@@ -628,15 +622,11 @@ jobs:
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
         run: |
           set -e
-
-          # Secrets vorhanden?
           if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
              [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
             echo "R2 nicht konfiguriert (Secrets fehlen) – Upload wird übersprungen."
             exit 0
           fi
-
-          # rclone installieren & konfigurieren
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
           [r2]
@@ -648,17 +638,13 @@ jobs:
           acl = private
           force_path_style = true
           EOF
-
           echo "→ sync processed"
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --fast-list --checksum --update
-
           echo "→ sync docs"
           rclone sync docs "r2:${CF_R2_BUCKET}/docs" --config rclone.conf --fast-list --checksum --update
-
           echo "→ list remote (top 50)"
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50
 
-      # ===================== Commit & Artifacts ====================
       - name: Commit updated cache & reports
         shell: bash
         run: |

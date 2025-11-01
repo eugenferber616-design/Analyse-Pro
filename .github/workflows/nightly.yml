@@ -185,7 +185,7 @@ jobs:
       - name: Pull COT (10y, Socrata) + compress
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID:  gpe5-46if
+          COT_DATASET_ID:  kh3c-gbw2
           CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
           COT_YEARS:       "10"
           COT_MARKETS_MODE: "ALL"

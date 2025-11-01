@@ -17,13 +17,13 @@ jobs:
       WATCHLIST_ETF:    watchlists/etf_sample.txt
 
       # Kurse/History
-      PRICES_DAYS:      "750"       # ~3 Jahre
+      PRICES_DAYS:      "750"
       FINNHUB_SLEEP_MS: "1300"
 
       # Earnings / Optionen / HV
       WINDOW_DAYS:          "30"
-      OPTIONS_MAX_EXPIRIES: "all"   # Anzahl Verfälle: Zahl | "all"
-      OPTIONS_TOPK:         "5"     # Top-Strikes pro Seite
+      OPTIONS_MAX_EXPIRIES: "all"
+      OPTIONS_TOPK:         "5"
       RISK_FREE_RATE:       "0.045"
       HV_WIN_SHORT:         "20"
       HV_WIN_LONG:          "60"
@@ -32,16 +32,21 @@ jobs:
 
       ENABLE_FUTURES: "false"
 
-      # COT – Standard: Disaggregated Combined, 20y
-      COT_DATASET_ID:  kh3c-gbw2     # Disaggregated – Futures+Options (Combined)
+      # COT – Disaggregated Combined, 20y
+      CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
+      COT_DATASET_ID:  kh3c-gbw2     # Disaggregated — Futures+Options (Combined)
       COT_YEARS:       "20"
       COT_MARKETS_MODE: "ALL"        # "ALL" | "FILE" | "LIST"
+      COT_MARKETS_FILE: watchlists/cot_markets.txt
+      SOC_TIMEOUT: "120"
+      SOC_RETRIES: "6"
+      SOC_BACKOFF: "1.6"
+      SOC_LIMIT:   "25000"
 
       # lokale Module auffindbar
       PYTHONPATH: "."
 
     steps:
-      # ------------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -54,10 +59,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Parquet-Engines
           pip install --upgrade pyarrow fastparquet
 
-      # ------------------------------------------------------------
       - name: Init cache DB
         run: |
           mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/processed data/reports docs watchlists
@@ -93,21 +96,18 @@ jobs:
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
 
-          # Aktien-Watchlist
           if [ ! -f "$WATCHLIST_STOCKS" ]; then
-            echo "⚠️  $WATCHLIST_STOCKS fehlt – lege Fallback an."
             printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
             echo "WATCHLIST_STOCKS=watchlists/mylist.csv" >> "$GITHUB_ENV"
           fi
           echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
 
-          # ETF-Watchlist
           if [ ! -f "$WATCHLIST_ETF" ]; then
             printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
           fi
           echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
 
-      # ===================== Earnings ==============================
+      # ---------------- Earnings / Fundamentals / Options (unverändert) -----
       - name: Pull earnings CALENDAR (optional)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
@@ -127,14 +127,12 @@ jobs:
           python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
-      # ===================== ETFs / Fundamentals ===================
       - name: Pull ETF basics (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
-          python scripts/fetch_etf_basics.py \
-            --watchlist "${WATCHLIST_ETF}" \
+          python scripts/fetch_etf_basics.py --watchlist "${WATCHLIST_ETF}" \
             --out data/processed/etf_basics.csv \
             --errors data/reports/etf_errors.json || true
           head -n 30 data/processed/etf_basics.csv || true
@@ -149,7 +147,6 @@ jobs:
             --sleep_ms 150
           head -n 20 data/processed/fundamentals_core.csv || true
 
-      # ===================== OPTIONS (yfinance) =====================
       - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
         shell: bash
         env:
@@ -160,13 +157,8 @@ jobs:
           HV_WIN_10:            ${{ env.HV_WIN_10 }}
           HV_WIN_30:            ${{ env.HV_WIN_30 }}
         run: |
-          # Watchlists zusammenführen (Header nur einmal)
           awk 'NR==1 || FNR>1' watchlists/mylist.txt watchlists/etf_sample.txt > /tmp/options_watchlist.txt
-
-          # Optionsdaten ziehen
           python scripts/fetch_options_oi.py --watchlist /tmp/options_watchlist.txt
-
-          # Vorschau
           head -n 40 data/processed/options_oi_summary.csv || true
           head -n 40 data/processed/options_oi_by_expiry.csv || true
           head -n 40 data/processed/options_oi_totals.csv || true
@@ -186,65 +178,25 @@ jobs:
           python scripts/build_options_signals.py
           head -n 40 data/processed/options_signals.csv || true
 
-      # ===================== COT (20y .gz only) ====================
-      - name: Pull COT 20y (.gz only)
+      # -------------------- COT 20y (nur diese Variante) ---------------------
+      - name: Pull COT 20y (Disaggregated Combined)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID:  ${{ env.COT_DATASET_ID }}
-          COT_YEARS:       ${{ env.COT_YEARS }}
-          COT_MARKETS_MODE: ${{ env.COT_MARKETS_MODE }}
-          COT_MARKETS_FILE: watchlists/cot_markets.txt
-          CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
-          SOC_TIMEOUT: "120"
-          SOC_RETRIES: "6"
-          SOC_BACKOFF: "1.6"
-          SOC_LIMIT:   "25000"
         shell: bash
         run: |
           set -euo pipefail
-          echo "== Socrata Smoke-Test (Crude Oil) =="
-          curl -fsS -G "$CFTC_API_BASE/$COT_DATASET_ID.json" \
-            --data-urlencode "$where=market_and_exchange_names='CRUDE OIL, LIGHT SWEET - NEW YORK MERCANTILE EXCHANGE'" \
-            --data-urlencode '$select=report_date_as_yyyy_mm_dd,market_and_exchange_names,open_interest_all' \
+          echo "== Socrata Probe =="
+          curl -fsS -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
+            --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
             --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
-            --data-urlencode '$limit=3' \
-            -H "X-App-Token: $CFTC_APP_TOKEN" | jq . | head -n 20 || true
-
+            --data-urlencode '$limit=1' \
+            -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq . || true
           echo "== Pull 20y =="
           python -u scripts/fetch_cot_20y.py
+          head -n 2 data/processed/cot_20y.csv || true
+          ls -lh data/processed/cot_20y.* || true
 
-          echo "== Size =="
-          python - << 'PY'
-          import os
-          p="data/processed/cot_20y.csv.gz"
-          print(p, "→", f"{os.path.getsize(p)/1024/1024:.2f} MB" if os.path.exists(p) else "missing")
-          PY
-
-      # ===================== Macro (FRED & ECB) ====================
-      - name: Pull macro (FRED)
-        env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        shell: bash
-        run: |
-          mkdir -p data/macro/fred
-          python scripts/fetch_fred.py --out data/macro/fred
-          test -f data/reports/fred_errors.json && cat data/reports/fred_errors.json || true
-
-      - name: Pull FRED OAS (US & Euro)
-        env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        run: |
-          python scripts/fetch_fred_oas.py || true
-          tail -n +1 data/reports/fred_errors.json || true
-          head -n 5 data/processed/fred_oas.csv || true
-
-      - name: Pull ECB (new API)
-        run: |
-          python scripts/fetch_ecb.py || true
-          test -f data/reports/ecb_errors.json && cat data/reports/ecb_errors.json || true
-          ls -l data/macro/ecb || true
-
-      # ===================== HV aus Stooq (Rohdaten purge) =========
+      # -------------------- Stooq HV (klein & gz) ---------------------------
       - name: Pull Stooq quotes (Xetra only) → build HV summary → purge raws
         env:
           HV_WIN_SHORT: ${{ env.HV_WIN_SHORT }}
@@ -254,378 +206,56 @@ jobs:
           mkdir -p data/market/stooq data/processed
           python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" --days 365 || true
           python - << 'PY'
-          import os, csv, math, gzip, glob
-          import pandas as pd
+          import os, csv, gzip, pandas as pd
           from pathlib import Path
           in_dir = Path("data/market/stooq")
-          rows = []
-          win_s = int(os.getenv("HV_WIN_SHORT","20"))
-          win_l = int(os.getenv("HV_WIN_LONG","60"))
+          rows=[]
+          w20=int(os.getenv("HV_WIN_SHORT","20")); w60=int(os.getenv("HV_WIN_LONG","60"))
           for p in sorted(in_dir.glob("*.csv")):
               try:
-                  df = pd.read_csv(p)
-                  col = "Adj Close" if "Adj Close" in df.columns else "Close"
-                  s = pd.to_numeric(df[col], errors="coerce").dropna()
-                  if s.size < max(win_s, win_l) + 2:
-                      continue
-                  r = (s.pct_change().dropna())
-                  hv20 = float((r.tail(win_s).std() * (252**0.5)))
-                  hv60 = float((r.tail(win_l).std() * (252**0.5)))
-                  sym = p.stem
-                  rows.append({"symbol": sym, "hv20": hv20, "hv60": hv60})
-              except Exception:
-                  pass
-          outp = Path("data/processed/hv_summary.csv.gz")
+                  df=pd.read_csv(p)
+                  col="Adj Close" if "Adj Close" in df.columns else "Close"
+                  s=pd.to_numeric(df[col], errors="coerce").dropna()
+                  if s.size < max(w20,w60)+2: continue
+                  r=s.pct_change().dropna()
+                  hv20=float(r.tail(w20).std()*(252**0.5)); hv60=float(r.tail(w60).std()*(252**0.5))
+                  rows.append({"symbol":p.stem,"hv20":hv20,"hv60":hv60})
+              except: pass
+          outp=Path("data/processed/hv_summary.csv.gz")
           outp.parent.mkdir(parents=True, exist_ok=True)
-          with gzip.open(outp, "wt", encoding="utf-8", newline="") as f:
-              w = csv.DictWriter(f, fieldnames=["symbol","hv20","hv60"])
-              w.writeheader()
-              for r in rows:
-                  w.writerow(r)
-          print(f"HV rows: {len(rows)} -> {outp}")
+          with gzip.open(outp,"wt",encoding="utf-8",newline="") as f:
+              w=csv.DictWriter(f, fieldnames=["symbol","hv20","hv60"]); w.writeheader(); [w.writerow(r) for r in rows]
+          print("HV rows:", len(rows))
           PY
           rm -f data/market/stooq/*.csv || true
 
-      # ===================== Daily Prices & Forecasts ===============
-      - name: Fetch daily prices (AUTO provider) for STOCKS
+      # ===================== ALLES KOMPRIMIEREN ====================
+      - name: Compress processed outputs to .gz
+        shell: bash
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
-        run: |
-          mkdir -p data/prices
-          echo "== STOCKS: pulling prices (auto: Finnhub → yfinance → Stooq) =="
-          python scripts/fetch_prices_simple.py \
-            --watchlist "${WATCHLIST_STOCKS}" \
-            --days "${PRICES_DAYS}" \
-            --outdir data/prices \
-            --sleep-ms "${FINNHUB_SLEEP_MS}" \
-            --provider auto
-          echo "== STOCKS report =="
-          test -f data/reports/fetch_prices_report.json && cat data/reports/fetch_prices_report.json || true
-          echo "== sample files ==" && ls -lh data/prices | head -n 20 || true
-
-      - name: Fetch daily prices (AUTO provider) for ETFs
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
-        run: |
-          echo "== ETFs: pulling prices (auto: Finnhub → yfinance → Stooq) =="
-          python scripts/fetch_prices_simple.py \
-            --watchlist "${WATCHLIST_ETF}" \
-            --days "${PRICES_DAYS}" \
-            --outdir data/prices \
-            --sleep-ms "${FINNHUB_SLEEP_MS}" \
-            --provider auto
-          echo "== ETFs report =="
-          test -f data/reports/fetch_prices_report.json && cat data/reports/fetch_prices_report.json || true
-          echo "== sample files ==" && ls -lh data/prices | head -n 20 || true
-
-      # ---------- Konsolidieren → Parquet + Inventar + CSV-Artifact ----------
-      - name: Consolidate price CSVs to Parquet shards (A–Z)
-        run: |
-          python - << 'PY'
-          import os, glob, pandas as pd, string, pathlib
-          in_dir = pathlib.Path("data/prices")
-          files = sorted(in_dir.glob("*.csv"))
-          if not files:
-              print("no price csvs -> skip")
-          buckets = {k:[] for k in string.ascii_uppercase}
-          for p in files:
-              k = p.stem[:1].upper()
-              if k in buckets: buckets[k].append(p)
-              else: buckets['Z'].append(p)
-          out = []
-          for k, lst in buckets.items():
-              if not lst: continue
-              parts=[]
-              for p in lst:
-                  try:
-                      sym = p.stem
-                      df = pd.read_csv(p)
-                      df.columns = [c.strip().lower() for c in df.columns]
-                      df = df[['date','close']].copy()
-                      df['symbol'] = sym
-                      parts.append(df[['symbol','date','close']])
-                  except Exception as e:
-                      print("skip", p, e)
-              if parts:
-                  big = pd.concat(parts, ignore_index=True)
-                  big['date'] = pd.to_datetime(big['date'])
-                  big.sort_values(['symbol','date'], inplace=True)
-                  outp = in_dir / f"shard_{k}.parquet"
-                  big.to_parquet(outp, index=False)
-                  print("→", outp, len(big))
-                  out.append(outp)
-          print("shards:", len(out))
-          PY
-          ls -lh data/prices/*.parquet || true
-
-      - name: Build price inventory
-        run: |
-          python - << 'PY'
-          import glob, pandas as pd, pathlib
-          rows=[]
-          for p in sorted(glob.glob("data/prices/*.parquet")):
-              df = pd.read_parquet(p, columns=['symbol','date'])
-              tmp = df.groupby('symbol')['date'].agg(rows='count', first='min', last='max').reset_index()
-              tmp['source']=pathlib.Path(p).name
-              rows.append(tmp)
-          inv = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=['symbol','rows','first','last','source'])
-          pathlib.Path("data/processed").mkdir(parents=True, exist_ok=True)
-          inv.to_csv("data/processed/price_inventory.csv", index=False)
-          print("symbols:", len(inv))
-          PY
-          head -n 20 data/processed/price_inventory.csv || true
-
-      - name: Upload price shards (Parquet) as artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: price-parquet
-          path: |
-            data/prices/*.parquet
-            data/processed/price_inventory.csv
-
-      - name: Cleanup raw price CSVs (keep repo slim)
-        run: rm -f data/prices/*.csv || true
-
-      - name: Compute ensemble forecasts from Parquet (no CSV)
-        run: |
-          python - << 'PY'
-          import os, sys, json, pandas as pd, glob, pathlib
-          sys.path.append("scripts")
-          from forecast_ensemble import ensemble, IVBandCfg
-
-          wl = os.getenv("WATCHLIST_ETF","watchlists/etf_sample.txt")
-          syms=[]
-          with open(wl,encoding="utf-8") as f:
-              for l in f:
-                  s=l.strip()
-                  if not s or s.startswith(("#","//")) or s.lower().startswith("symbol"): continue
-                  syms.append(s.split(",")[0].strip())
-
-          shards = sorted(glob.glob("data/prices/*.parquet"))
-          if not shards:
-              print("no shards -> skip forecasts"); raise SystemExit(0)
-
-          dfs=[]
-          for p in shards:
-              df = pd.read_parquet(p)
-              dfs.append(df[df['symbol'].isin(syms)])
-          if not dfs:
-              print("no data for watchlist"); raise SystemExit(0)
-          data = pd.concat(dfs, ignore_index=True).sort_values(['symbol','date'])
-
-          outdir = pathlib.Path("data/processed"); outdir.mkdir(parents=True, exist_ok=True)
-          made=0
-          for sym, g in data.groupby('symbol', sort=False):
-              closes = g['close'].astype(float).tolist()
-              if len(closes) < 120:
-                  continue
-              out = ensemble(closes, [5,10], IVBandCfg(iv_annual=0.22, drift_bps_per_day=0.0))
-              with open(outdir / f"forecast_{sym}.json","w",encoding="utf-8") as f:
-                  json.dump({"per_h": out.per_h, "meta": out.meta, "symbol": sym}, f, indent=2)
-              made += 1
-          print("forecasts:", made)
-
-          docs = pathlib.Path("docs"); docs.mkdir(exist_ok=True)
-          files = glob.glob(str(outdir / "forecast_*.json"))
-          if files:
-              arr=[]
-              for p in files:
-                  j=json.loads(open(p,encoding="utf-8").read())
-                  arr.append({"symbol": j["symbol"], "per_h": j["per_h"], "meta": j["meta"]})
-              open(docs/"forecast_dashboard.json","w",encoding="utf-8").write(json.dumps(arr,indent=2))
-              print("dashboard rows:", len(arr))
-          PY
-          test -f docs/forecast_dashboard.json && head -n 40 docs/forecast_dashboard.json || true
-
-      - name: Build CDS proxy per symbol
-        shell: bash
-        run: |
-          python scripts/build_cds_proxy_v2.py --watchlist "${WATCHLIST_STOCKS}" --hv data/processed/hv_summary.csv.gz
-          tail -n 10 data/processed/cds_proxy.csv || true
-          test -f data/reports/cds_proxy_report.json && cat data/reports/cds_proxy_report.json || true
-
-      - name: EU macro checks (Ampel)
-        run: |
-          python scripts/build_eu_ampel.py || true
-          test -f data/reports/eu_checks/ampel_preview.json && cat data/reports/eu_checks/ampel_preview.json || true
-
-      # ===================== QA & Persist ==========================
-      - name: Validate processed outputs
-        shell: bash
-        run: |
-          python - << 'PY'
-          import os, json, gzip
-          def count_rows_csv(p):
-              return sum(1 for _ in open(p, encoding="utf-8"))-1 if os.path.exists(p) and os.path.getsize(p)>0 else 0
-          def count_rows_gz(p):
-              if not os.path.exists(p) or os.path.getsize(p)==0: return 0
-              with gzip.open(p, "rt", encoding="utf-8") as f:
-                  return sum(1 for _ in f)-1
-          checks = {
-              "fundamentals_core.csv":   count_rows_csv("data/processed/fundamentals_core.csv"),
-              "earnings_results.csv":    count_rows_csv("data/processed/earnings_results.csv"),
-              "etf_basics.csv":          count_rows_csv("data/processed/etf_basics.csv"),
-              "fred_oas.csv":            count_rows_csv("data/processed/fred_oas.csv"),
-              "cot_20y.csv.gz":          count_rows_gz("data/processed/cot_20y.csv.gz"),
-              "hv_summary.csv.gz":       count_rows_gz("data/processed/hv_summary.csv.gz"),
-              "cds_proxy.csv":           count_rows_csv("data/processed/cds_proxy.csv"),
-              "fx_quotes.csv":           count_rows_csv("data/processed/fx_quotes.csv"),
-              "options_oi_summary.csv":  count_rows_csv("data/processed/options_oi_summary.csv"),
-              "options_oi_by_expiry.csv":count_rows_csv("data/processed/options_oi_by_expiry.csv"),
-              "options_oi_totals.csv":   count_rows_csv("data/processed/options_oi_totals.csv"),
-              "options_oi_by_strike.csv":count_rows_csv("data/processed/options_oi_by_strike.csv"),
-              "options_signals.csv":     count_rows_csv("data/processed/options_signals.csv"),
-          }
-          print("\n=== QA Summary ===")
-          for k,v in checks.items():
-              print(("🟢" if v>0 else "🔴"), k, "→", v)
-          os.makedirs("data/reports", exist_ok=True)
-          json.dump(checks, open("data/reports/qa_summary.json","w"), indent=2)
-          PY
-          cat data/reports/qa_summary.json || true
-
-      - name: List written files (sizes)
-        shell: bash
-        run: |
-          echo "== data tree =="; find data -type f -printf "%p\t%k KB\n" | sort || true
-          echo "== docs tree =="; find docs -type f -printf "%p\t%k KB\n" | sort || true
-          python - << 'PY'
-          import json, time, os
-          info = {
-              "prices_days": int(os.getenv("PRICES_DAYS","750")),
-              "watchlists": {
-                  "stocks": os.getenv("WATCHLIST_STOCKS"),
-                  "etf": os.getenv("WATCHLIST_ETF"),
-              },
-              "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-          }
-          os.makedirs("data/reports", exist_ok=True)
-          json.dump(info, open("data/reports/last_run.json","w"), indent=2)
-          print(json.dumps(info, indent=2))
-          PY
-          echo "== last_run.json ==" && cat data/reports/last_run.json
-
-      - name: Fail if outputs empty
-        shell: bash
+          COMPRESS_MIN_KB: "50"
         run: |
           set -e
-          cnt=$(find data -type f -size +0c | wc -l || true)
-          dcnt=$(find docs -type f -size +0c | wc -l || true)
-          echo "Non-empty files in data: $cnt ; in docs: $dcnt"
-          if [ "$cnt" -eq 0 ] && [ "$dcnt" -eq 0 ]; then echo "No non-empty files produced."; exit 1; fi
+          find data/processed -type f \( -name "*.csv" -o -name "*.json" -o -name "*.ndjson" \) \
+               -size +${COMPRESS_MIN_KB}k -print0 | xargs -0 -I{} gzip -f "{}" || true
+          if [ -d docs ]; then
+            find docs -type f -name "*.json" -size +${COMPRESS_MIN_KB}k -print0 | xargs -0 -I{} gzip -f "{}" || true
+          fi
+          echo "== processed after gzip =="; find data/processed -maxdepth 1 -type f -printf "%p\t%k KB\n" | sort || true
 
-      - name: Build datasets manifest (docs/datasets.json)
-        env:
-          PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}  # z.B. https://pub-<hash>.r2.dev
-        run: |
-          mkdir -p docs
-          python - << 'PY'
-          import json, os, pathlib
-          base = os.getenv("PUBLIC_BASE", "https://pub-CHANGE-ME.r2.dev")
-          manifest = {
-            "base": base,
-            "datasets": {
-              "options_by_expiry": "/data/processed/options_oi_by_expiry.csv",
-              "options_totals":    "/data/processed/options_oi_totals.csv",
-              "options_by_strike": "/data/processed/options_oi_by_strike.csv",
-              "options_strike_max":"/data/processed/options_oi_strike_max.csv",
-              "cot_20y":           "/data/processed/cot_20y.csv.gz",
-              "fred_oas":          "/data/processed/fred_oas.csv"
-            }
-          }
-          pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
-          with open("docs/datasets.json","w",encoding="utf-8") as f:
-            json.dump(manifest, f, indent=2, ensure_ascii=False)
-          print("datasets.json geschrieben mit base =", base)
-          PY
-
-      - name: Build UNIVERSAL indexes for all artifacts
-        env:
-          PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}   # z.B. https://pub-xxxx.r2.dev
-        run: |
-          python - << 'PY'
-          import os, csv, json, hashlib, gzip, pathlib
-          import pandas as pd
-          from datetime import datetime, timezone
-
-          base = os.getenv("PUBLIC_BASE", "https://pub-CHANGE-ME.r2.dev").rstrip("/")
-          roots = ["data/processed", "docs"]
-          rows = []
-
-          def sha256(path):
-            h = hashlib.sha256()
-            with open(path, "rb") as f:
-              for chunk in iter(lambda: f.read(1<<20), b""): h.update(chunk)
-            return h.hexdigest()
-
-          def count_rows(p):
-            try:
-              if p.endswith(".csv"):
-                with open(p, encoding="utf-8", errors="ignore") as f:
-                  return max(sum(1 for _ in f)-1, 0)
-              if p.endswith(".csv.gz"):
-                with gzip.open(p, "rt", encoding="utf-8", errors="ignore") as f:
-                  return max(sum(1 for _ in f)-1, 0)
-              if p.endswith(".parquet"):
-                return int(pd.read_parquet(p).shape[0])
-            except Exception:
-              return None
-            return None
-
-          for root in roots:
-            for path in pathlib.Path(root).rglob("*"):
-              if not path.is_file(): continue
-              rel = str(path).replace("\\","/")
-              size = path.stat().st_size
-              nrows = count_rows(rel)
-              rows.append({
-                "path": rel,
-                "size_bytes": size,
-                "size_kb": round(size/1024,2),
-                "rows": nrows,
-                "sha256": sha256(rel),
-                "updated_utc": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                "url": f"{base}/{rel}"
-              })
-
-          rows.sort(key=lambda r: r["path"])
-          pathlib.Path("docs").mkdir(exist_ok=True)
-
-          with open("docs/index.json","w",encoding="utf-8") as f:
-            json.dump({"base": base, "files": rows}, f, indent=2, ensure_ascii=False)
-
-          with open("docs/index.csv","w",newline="",encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            w.writeheader(); w.writerows(rows)
-
-          with open("docs/index.html","w",encoding="utf-8") as f:
-            f.write("<!doctype html><meta charset='utf-8'><title>Datasets</title>")
-            f.write("<h1>Datasets</h1><ul>")
-            for r in rows:
-              f.write(f"<li><a href='{r['url']}'>{r['path']}</a> – {r['size_kb']} KB"
-                      + (f" – rows: {r['rows']}" if r['rows'] is not None else "")
-                      + "</li>")
-            f.write("</ul>")
-          print(f"wrote docs/index.json, docs/index.csv, docs/index.html (files={len(rows)})")
-          PY
-
-      - name: Sync processed & docs to R2
+      # ===================== R2 UPLOAD (nur .gz + docs) ==============
+      - name: Sync .gz (and docs) to R2
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
           CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
+        shell: bash
         run: |
           set -e
           if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
              [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
-            echo "R2 nicht konfiguriert (Secrets fehlen) – Upload wird übersprungen."
-            exit 0
+            echo "R2 nicht konfiguriert – Step übersprungen."; exit 0
           fi
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
@@ -638,28 +268,57 @@ jobs:
           acl = private
           force_path_style = true
           EOF
-          echo "→ sync processed"
-          rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --fast-list --checksum --update
-          echo "→ sync docs"
-          rclone sync docs "r2:${CF_R2_BUCKET}/docs" --config rclone.conf --fast-list --checksum --update
-          echo "→ list remote (top 50)"
-          rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50
+          rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" \
+            --config rclone.conf --fast-list --checksum --update \
+            --include "*.csv.gz" --include "*.json.gz" --exclude "*"
+          rclone sync docs "r2:${CF_R2_BUCKET}/docs" \
+            --config rclone.conf --fast-list --checksum --update
+          rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50 || true
 
-      - name: Commit updated cache & reports
+      # ===================== REPO AUFRÄUMEN (schlank halten) =========
+      - name: Purge heavy local files before commit
+        shell: bash
+        run: |
+          set -e
+          find data/processed -type f ! -name ".gitkeep" -delete || true
+
+      # ===================== QA / Manifeste / Commit =================
+      - name: Build datasets manifest (docs/datasets.json)
+        env:
+          PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}
+        run: |
+          mkdir -p docs
+          python - << 'PY'
+          import json, os, pathlib
+          base = os.getenv("PUBLIC_BASE", "https://pub-CHANGE-ME.r2.dev")
+          manifest = {
+            "base": base,
+            "datasets": {
+              "cot_20y":           "/data/processed/cot_20y.csv.gz",
+              "options_by_expiry": "/data/processed/options_oi_by_expiry.csv.gz",
+              "options_totals":    "/data/processed/options_oi_totals.csv.gz",
+              "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
+              "options_strike_max":"/data/processed/options_oi_strike_max.csv.gz",
+              "fred_oas":          "/data/processed/fred_oas.csv.gz"
+            }
+          }
+          pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
+          open("docs/datasets.json","w",encoding="utf-8").write(json.dumps(manifest,indent=2,ensure_ascii=False))
+          print("datasets.json base =", base)
+          PY
+
+      - name: Commit updated cache & reports (no big files)
         shell: bash
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # große Dateien NICHT ins Repo: CSV/CSV.GZ/Parquet/Zip
           git add data/ docs/ \
-            ':!data/processed/*.csv' \
-            ':!data/processed/*.csv.gz' \
-            ':!data/processed/*.parquet' \
-            ':!data/processed/*.zip' || true
-          git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
+            ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
+            ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
+          git commit -m "Nightly cache update (no LLM, gz to R2)" || echo "Nothing to commit"
           git push
 
-      - name: Upload reports (small)
+      - name: Upload reports & docs (artifact)
         if: always()
         uses: actions/upload-artifact@v4
         with:

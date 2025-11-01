@@ -1,11 +1,11 @@
 {
   "base": "",
   "datasets": {
-    "options_by_expiry": "/data/processed/options_oi_by_expiry.csv",
-    "options_totals": "/data/processed/options_oi_totals.csv",
-    "options_by_strike": "/data/processed/options_oi_by_strike.csv",
-    "options_strike_max": "/data/processed/options_oi_strike_max.csv",
     "cot_20y": "/data/processed/cot_20y.csv.gz",
-    "fred_oas": "/data/processed/fred_oas.csv"
+    "options_by_expiry": "/data/processed/options_oi_by_expiry.csv.gz",
+    "options_totals": "/data/processed/options_oi_totals.csv.gz",
+    "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
+    "options_strike_max": "/data/processed/options_oi_strike_max.csv.gz",
+    "fred_oas": "/data/processed/fred_oas.csv.gz"
   }
 }

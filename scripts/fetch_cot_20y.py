@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-Pull 10y COT (Futures+Options Combined) from CFTC Socrata (gpe5-46if)
+fetch_cot_20y.py
+Pull 20y COT von CFTC Socrata (Dataset per ENV, z.B. Disaggregated-Combined: kh3c-gbw2)
 - ohne $select-Liste (vermeidet Spalten-Mismatch)
-- WHERE: Datumsbereich + optionales Market-IN-Filter (mit literal quotes)
-- robust (Retry/Timeout/kleinere Pages)
-- schreibt:
-    data/processed/cot_10y.csv
-    data/processed/cot_10y.csv.gz
-    data/reports/cot_10y_report.json
+- WHERE: Datumsbereich + optionales Market-IN-Filter (literal gequotet)
+- robust (Retry/Timeout/Paging)
+- schreibt NUR:
+    data/processed/cot_20y.csv.gz
+    data/reports/cot_20y_report.json
 """
 
 import os, json, time, datetime as dt
@@ -18,16 +18,16 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# robuste Netz-Settings
+# ── Netz / Socrata Settings (ENV overridebar) ─────────────────────
 SOC_TIMEOUT  = int(os.getenv("SOC_TIMEOUT", 120))
 SOC_RETRIES  = int(os.getenv("SOC_RETRIES", 6))
 SOC_BACKOFF  = float(os.getenv("SOC_BACKOFF", 1.6))
 SOC_LIMIT    = int(os.getenv("SOC_LIMIT", 25000))
 
 API_BASE     = os.getenv("CFTC_API_BASE", "https://publicreporting.cftc.gov/resource")
-DATASET_ID   = os.getenv("COT_DATASET_ID", "gpe5-46if")
+DATASET_ID   = os.getenv("COT_DATASET_ID", "kh3c-gbw2")  # ⚠️ Default: Disaggregated – Combined (Fut+Opt)
 APP_TOKEN    = os.getenv("CFTC_APP_TOKEN", "")
-YEARS        = int(os.getenv("COT_YEARS", "10"))
+YEARS        = int(os.getenv("COT_YEARS", "20"))         # ⚠️ Default: 20 Jahre
 MODE         = os.getenv("COT_MARKETS_MODE", "ALL").upper()   # "ALL" | "FILE" | "LIST"
 MARKETS_FILE = os.getenv("COT_MARKETS_FILE", "watchlists/cot_markets.txt")
 
@@ -36,6 +36,7 @@ REP_DIR = "data/reports"
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(REP_DIR, exist_ok=True)
 
+# ── HTTP Session mit Retry ─────────────────────────────────────────
 def make_session():
     s = requests.Session()
     retry = Retry(
@@ -66,6 +67,7 @@ def sget(path, params):
         raise RuntimeError(f"HTTP {r.status_code} for {url} ; body={r.text[:500]}") from e
     return r.json()
 
+# ── Helfer ─────────────────────────────────────────────────────────
 def read_markets(path):
     if not os.path.exists(path):
         return []
@@ -73,7 +75,7 @@ def read_markets(path):
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             s = line.strip()
-            if s:
+            if s and not s.startswith(("#","//")):
                 out.append(s)
     return out
 
@@ -81,13 +83,12 @@ def soql_quote(s: str) -> str:
     """SOQL-sicheres String-Literal (einzelne Quotes verdoppeln)."""
     return "'" + s.replace("'", "''") + "'"
 
-def fetch_range(date_from, date_to, markets=None):
+def fetch_range(date_from, date_to, markets=None, dataset_id=None):
     rows_all, offset = [], 0
+    dataset_id = dataset_id or DATASET_ID
 
-    # ⚠️ KEINE @f/@t Parameter – wir quoten die Literale direkt
     base_where = f"report_date_as_yyyy_mm_dd between '{date_from}' and '{date_to}'"
     where = base_where
-
     if markets:
         quoted = ",".join(soql_quote(m) for m in markets)
         where = f"{base_where} AND market_and_exchange_names in ({quoted})"
@@ -101,7 +102,7 @@ def fetch_range(date_from, date_to, markets=None):
     while True:
         params = dict(params_base)
         params["$offset"] = offset
-        chunk = sget(f"{DATASET_ID}.json", params)
+        chunk = sget(f"{dataset_id}.json", params)
         if not chunk:
             break
         rows_all.extend(chunk)
@@ -111,9 +112,11 @@ def fetch_range(date_from, date_to, markets=None):
         time.sleep(0.2)
     return pd.DataFrame(rows_all)
 
+# ── Main ───────────────────────────────────────────────────────────
 def main():
     today = dt.date.today()
     date_to = today.strftime("%Y-%m-%d")
+    # +10 Tage Puffer gegen Zeitzonen/Kalender-Kanten
     date_from = (today - dt.timedelta(days=365 * YEARS + 10)).strftime("%Y-%m-%d")
 
     report = {
@@ -136,23 +139,22 @@ def main():
         df = fetch_range(date_from, date_to, markets=markets)
     except Exception as e:
         report["errors"].append({"stage": "fetch", "msg": str(e)})
-        json.dump(report, open(os.path.join(REP_DIR, "cot_10y_report.json"), "w"), indent=2)
+        json.dump(report, open(os.path.join(REP_DIR, "cot_20y_report.json"), "w"), indent=2)
         raise SystemExit(1)
 
-    out_csv = os.path.join(OUT_DIR, "cot_10y.csv")
-    df.to_csv(out_csv, index=False)
-
-    # zusätzlich gepackt
-    out_gz = out_csv + ".gz"
+    # Nur .gz schreiben (Repo schlank halten)
+    out_gz = os.path.join(OUT_DIR, "cot_20y.csv.gz")
     try:
         df.to_csv(out_gz, index=False, compression="gzip")
-        report["files"]["cot_10y_csv_gz"] = out_gz
+        report["files"]["cot_20y_csv_gz"] = out_gz
+        report["rows"] = int(len(df))
     except Exception as e:
         report["errors"].append({"stage": "compress", "msg": str(e)})
 
-    report["rows"] = int(len(df))
-    report["files"]["cot_10y_csv"] = out_csv
-    json.dump(report, open(os.path.join(REP_DIR, "cot_10y_report.json"), "w"), indent=2)
+    # Kleiner Abschlussreport
+    json.dump(report, open(os.path.join(REP_DIR, "cot_20y_report.json"), "w"), indent=2)
+    print(f"wrote {out_gz} rows={report['rows']}")
 
 if __name__ == "__main__":
     main()
+

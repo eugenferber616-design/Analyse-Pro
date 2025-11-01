@@ -1,6 +1,8 @@
 {
-  "ts": "2025-11-01T22:44:54Z",
-  "dataset": "yw9f-hn96",
+  "ts": "2025-11-01T23:09:38Z",
+  "datasets": [
+    "yw9f-hn96"
+  ],
   "years": 20,
   "mode": "FILE",
   "rows": 8548,
@@ -9,5 +11,8 @@
   "errors": [],
   "files": {
     "cot_20y_csv_gz": "data/processed/cot_20y.csv.gz"
+  },
+  "by_dataset_rows": {
+    "yw9f-hn96": 8548
   }
 }

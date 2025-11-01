@@ -32,6 +32,11 @@ jobs:
 
       ENABLE_FUTURES: "false"
 
+      # COT – Standard: Disaggregated Combined, 20y
+      COT_DATASET_ID:  kh3c-gbw2     # Disaggregated – Futures+Options (Combined)
+      COT_YEARS:       "20"
+      COT_MARKETS_MODE: "ALL"        # "ALL" | "FILE" | "LIST"
+
       # lokale Module auffindbar
       PYTHONPATH: "."
 
@@ -181,15 +186,15 @@ jobs:
           python scripts/build_options_signals.py
           head -n 40 data/processed/options_signals.csv || true
 
-      # ===================== COT (10y & latest) ====================
-      - name: Pull COT (10y, Socrata) + compress
+      # ===================== COT (20y .gz only) ====================
+      - name: Pull COT 20y (.gz only)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID:  kh3c-gbw2
-          CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
-          COT_YEARS:       "10"
-          COT_MARKETS_MODE: "ALL"
+          COT_DATASET_ID:  ${{ env.COT_DATASET_ID }}
+          COT_YEARS:       ${{ env.COT_YEARS }}
+          COT_MARKETS_MODE: ${{ env.COT_MARKETS_MODE }}
           COT_MARKETS_FILE: watchlists/cot_markets.txt
+          CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
           SOC_TIMEOUT: "120"
           SOC_RETRIES: "6"
           SOC_BACKOFF: "1.6"
@@ -197,53 +202,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "== Socrata Smoke-Test =="
-          curl -fsS --max-time 40 -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
-            --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
+          echo "== Socrata Smoke-Test (Crude Oil) =="
+          curl -fsS -G "$CFTC_API_BASE/$COT_DATASET_ID.json" \
+            --data-urlencode "$where=market_and_exchange_names='CRUDE OIL, LIGHT SWEET - NEW YORK MERCANTILE EXCHANGE'" \
+            --data-urlencode '$select=report_date_as_yyyy_mm_dd,market_and_exchange_names,open_interest_all' \
             --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
-            --data-urlencode '$limit=1' \
-            -H "X-App-Token: ${CFTC_APP_TOKEN}" | tee /tmp/cftc_smoke_10y.json
-          echo
-          echo "== Pull 10y =="; python -u scripts/fetch_cot_10y.py || true
-          echo "== Preview =="; head -n 5 data/processed/cot_10y.csv || true
-          ls -lh data/processed/cot_10y.* || true
+            --data-urlencode '$limit=3' \
+            -H "X-App-Token: $CFTC_APP_TOKEN" | jq . | head -n 20 || true
 
-      - name: Pull COT (CFTC Socrata)
-        env:
-          CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-          COT_DATASET_ID:  gpe5-46if
-          COT_WEEKS:       "260"
-          COT_MARKETS_MODE: "ALL"
-          COT_MARKETS_FILE: watchlists/cot_markets.txt
-          CFTC_API_BASE:   "https://publicreporting.cftc.gov/resource"
-          SOC_TIMEOUT: "120"
-          SOC_RETRIES: "6"
-          SOC_BACKOFF: "1.6"
-          SOC_LIMIT:   "25000"
-        shell: bash
-        run: |
-          set -e
-          if [ -z "${CFTC_APP_TOKEN}" ]; then
-            echo "❌ CFTC_APP_TOKEN fehlt. Bitte Secrets setzen."
-            exit 1
-          fi
-          ok=0
-          for i in 1 2 3; do
-            if curl -fsS --max-time 40 -G "${CFTC_API_BASE}/${COT_DATASET_ID}.json" \
-                 --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
-                 --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
-                 --data-urlencode '$limit=1' \
-                 -H "X-App-Token: ${CFTC_APP_TOKEN}" \
-              | tee /tmp/cftc_smoke.json ; then
-              ok=1; break
-            fi
-            echo "…Retry $i/3 …"; sleep 2
-          done
-          [ "$ok" -eq 1 ] || { echo "❌ Socrata nicht erreichbar"; exit 1; }
-          ! grep -q '"permission_denied"' /tmp/cftc_smoke.json || { echo "❌ Token ungültig"; cat /tmp/cftc_smoke.json; exit 1; }
-          python -u scripts/fetch_cot_socrata.py || true
-          head -n 5 data/processed/cot.csv || true
-          head -n 5 data/processed/cot_summary.csv || true
+          echo "== Pull 20y =="
+          python -u scripts/fetch_cot_20y.py
+
+          echo "== Size =="
+          python - << 'PY'
+          import os
+          p="data/processed/cot_20y.csv.gz"
+          print(p, "→", f"{os.path.getsize(p)/1024/1024:.2f} MB" if os.path.exists(p) else "missing")
+          PY
 
       # ===================== Macro (FRED & ECB) ====================
       - name: Pull macro (FRED)
@@ -499,7 +474,7 @@ jobs:
               "earnings_results.csv":    count_rows_csv("data/processed/earnings_results.csv"),
               "etf_basics.csv":          count_rows_csv("data/processed/etf_basics.csv"),
               "fred_oas.csv":            count_rows_csv("data/processed/fred_oas.csv"),
-              "cot_summary.csv":         count_rows_csv("data/processed/cot_summary.csv"),
+              "cot_20y.csv.gz":          count_rows_gz("data/processed/cot_20y.csv.gz"),
               "hv_summary.csv.gz":       count_rows_gz("data/processed/hv_summary.csv.gz"),
               "cds_proxy.csv":           count_rows_csv("data/processed/cds_proxy.csv"),
               "fx_quotes.csv":           count_rows_csv("data/processed/fx_quotes.csv"),
@@ -563,7 +538,7 @@ jobs:
               "options_totals":    "/data/processed/options_oi_totals.csv",
               "options_by_strike": "/data/processed/options_oi_by_strike.csv",
               "options_strike_max":"/data/processed/options_oi_strike_max.csv",
-              "cot_summary":       "/data/processed/cot_summary.csv",
+              "cot_20y":           "/data/processed/cot_20y.csv.gz",
               "fred_oas":          "/data/processed/fred_oas.csv"
             }
           }
@@ -689,15 +664,20 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/ docs/ ':!data/processed/*.gz' ':!data/processed/*.zip' || true
+          # große Dateien NICHT ins Repo: CSV/CSV.GZ/Parquet/Zip
+          git add data/ docs/ \
+            ':!data/processed/*.csv' \
+            ':!data/processed/*.csv.gz' \
+            ':!data/processed/*.parquet' \
+            ':!data/processed/*.zip' || true
           git commit -m "Nightly cache update (no LLM)" || echo "Nothing to commit"
           git push
 
-      - name: Upload data artifact
+      - name: Upload reports (small)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: data-bundle
+          name: reports-and-docs
           path: |
-            data/**
+            data/reports/**
             docs/**

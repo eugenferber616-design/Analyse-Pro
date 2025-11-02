@@ -1,18 +1,10 @@
 {
-  "ts": "2025-11-01T23:09:38Z",
-  "datasets": [
-    "yw9f-hn96"
-  ],
+  "ts": "2025-11-02T11:57:08Z",
+  "dataset": "yw9f-hn96",
   "years": 20,
-  "mode": "FILE",
-  "rows": 8548,
-  "date_from": "2005-10-27",
-  "date_to": "2025-11-01",
-  "errors": [],
-  "files": {
-    "cot_20y_csv_gz": "data/processed/cot_20y.csv.gz"
-  },
-  "by_dataset_rows": {
-    "yw9f-hn96": 8548
-  }
+  "mode": "SMART",
+  "rows": 14669,
+  "date_from": "2005-10-28",
+  "date_to": "2025-11-02",
+  "watchlist": 49
 }

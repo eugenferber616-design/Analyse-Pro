@@ -179,7 +179,7 @@ jobs:
           python scripts/build_options_signals.py
           head -n 40 data/processed/options_signals.csv || true
 
-      # ---- NEU: Standardisierte CSVs für AgenaTrader-Scanner ----
+      # ---- Standardisierte CSVs für AgenaTrader-Scanner ----
       - name: Build BY_EXPIRY standard CSV
         run: |
           python scripts/build_by_expiry.py
@@ -268,21 +268,26 @@ jobs:
           rm -f data/market/stooq/*.csv || true
 
       # ===================== ALLES KOMPRIMIEREN ====================
-      - name: Compress processed outputs to .gz
+      - name: Compress ALL processed & docs to .gz
         shell: bash
-        env:
-          COMPRESS_MIN_KB: "50"
         run: |
           set -e
-          find data/processed -type f \( -name "*.csv" -o -name "*.json" -o -name "*.ndjson" \) \
-               -size +${COMPRESS_MIN_KB}k -print0 | xargs -0 -I{} gzip -f "{}" || true
-          if [ -d docs ]; then
-            find docs -type f -name "*.json" -size +${COMPRESS_MIN_KB}k -print0 | xargs -0 -I{} gzip -f "{}" || true
-          fi
-          echo "== processed after gzip =="; find data/processed -maxdepth 1 -type f -printf "%p\t%k KB\n" | sort || true
+          shopt -s nullglob
+          # processed
+          for f in data/processed/*.{csv,json,ndjson,parquet}; do
+            [ -f "$f" ] || continue
+            gzip -f -9 "$f"
+          done
+          # docs (JSONs)
+          for f in docs/*.json; do
+            [ -f "$f" ] || continue
+            gzip -f -9 "$f"
+          done
+          echo "== processed after gzip =="; ls -lh data/processed || true
+          echo "== docs after gzip =="; ls -lh docs || true
 
-      # ===================== R2 UPLOAD (nur .gz + docs) ==============
-      - name: Sync .gz (and docs) to R2
+      # ===================== R2 UPLOAD (nur .gz) ====================
+      - name: Sync .gz (processed & docs) to R2
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -308,9 +313,10 @@ jobs:
           EOF
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" \
             --config rclone.conf --fast-list --checksum --update \
-            --include "*.csv.gz" --include "*.json.gz" --exclude "*"
+            --include "*.gz" --exclude "*"
           rclone sync docs "r2:${CF_R2_BUCKET}/docs" \
-            --config rclone.conf --fast-list --checksum --update
+            --config rclone.conf --fast-list --checksum --update \
+            --include "*.gz" --exclude "*"
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50 || true
 
       # ===================== REPO AUFRÄUMEN (schlank halten) =========
@@ -338,6 +344,7 @@ jobs:
               "options_totals":    "/data/processed/options_oi_totals.csv.gz",
               "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
               "options_strike_max":"/data/processed/options_oi_strike_max.csv.gz",
+              "options_signals":   "/data/processed/options_signals.csv.gz",
               "fred_oas":          "/data/processed/fred_oas.csv.gz"
             }
           }
@@ -354,7 +361,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (no LLM, COT Disagg+TFF, gz to R2)" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (no LLM, all .gz to R2)" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

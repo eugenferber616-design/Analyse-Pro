@@ -2,7 +2,7 @@ name: Nightly Data Pull and Cache (No LLM)
 
 on:
   schedule:
-    - cron: "30 0 * * *"   # täglich 00:30 UTC
+    - cron: "30 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -11,16 +11,13 @@ permissions:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-
     env:
       WATCHLIST_STOCKS: watchlists/mylist.txt
       WATCHLIST_ETF:    watchlists/etf_sample.txt
 
-      # Kurse/History
       PRICES_DAYS:      "750"
       FINNHUB_SLEEP_MS: "1300"
 
-      # Earnings / Optionen / HV
       WINDOW_DAYS:          "30"
       OPTIONS_MAX_EXPIRIES: "all"
       OPTIONS_TOPK:         "5"
@@ -32,19 +29,17 @@ jobs:
 
       ENABLE_FUTURES: "false"
 
-      # COT – Socrata Basis
       CFTC_API_BASE:         "https://publicreporting.cftc.gov/resource"
-      COT_DISAGG_DATASET_ID: "kh3c-gbw2"   # Disaggregated (F+O Combined)
-      COT_TFF_DATASET_ID:    "yw9f-hn96"   # TFF (F+O Combined)
+      COT_DISAGG_DATASET_ID: "kh3c-gbw2"
+      COT_TFF_DATASET_ID:    "yw9f-hn96"
       COT_YEARS:             "20"
-      COT_MARKETS_MODE:      "SMART"        # "ALL" | "FILE" | "LIST"
+      COT_MARKETS_MODE:      "SMART"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
       SOC_TIMEOUT:           "120"
       SOC_RETRIES:           "6"
       SOC_BACKOFF:           "1.6"
       SOC_LIMIT:             "25000"
 
-      # lokale Module auffindbar
       PYTHONPATH: "."
 
     steps:
@@ -59,112 +54,77 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install --upgrade pyarrow fastparquet
+          sudo apt-get update -y && sudo apt-get install -y jq
 
-      - name: Init cache DB
+      - name: Ensure folders + init cache DB
         run: |
-          mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/processed data/reports docs watchlists
+          mkdir -p data/{cache,earnings,fundamentals,macro,prices,processed,reports} docs watchlists
           python - << 'PY'
           import os, sqlite3
-          db_path = os.path.join('data','cache','cache.db')
-          os.makedirs(os.path.dirname(db_path), exist_ok=True)
-          con = sqlite3.connect(db_path)
-          cur = con.cursor()
-          cur.execute("""
-          CREATE TABLE IF NOT EXISTS kv (
-            k  TEXT PRIMARY KEY,
-            v  TEXT NOT NULL,
-            ts INTEGER DEFAULT (strftime('%s','now'))
+          p = os.path.join('data','cache','cache.db')
+          os.makedirs(os.path.dirname(p), exist_ok=True)
+          con=sqlite3.connect(p); cur=con.cursor()
+          cur.execute("""CREATE TABLE IF NOT EXISTS kv (
+            k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER DEFAULT (strftime('%s','now'))
           )""")
           cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
           con.commit(); con.close()
-          print("cache DB ready at", db_path)
           PY
 
-      - name: Prepare env and watchlists
-        id: prep
-        shell: bash
+      - name: Prepare env + watchlists
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
           set -e
-          TOKEN="${FINNHUB_TOKEN:-$FINNHUB_API_KEY}"
-          if [ -z "$TOKEN" ]; then
-            echo "❌ FINNHUB_TOKEN/FINNHUB_API_KEY fehlt."
-            exit 1
-          fi
-          echo "token_present=true" >> "$GITHUB_OUTPUT"
+          FINN="${FINNHUB_TOKEN:-$FINNHUB_API_KEY}"
+          if [ -z "$FINN" ]; then echo "FINNHUB key fehlt"; exit 1; fi
+          echo "FINNHUB_KEY=$FINN" >> "$GITHUB_ENV"
+          test -f "$WATCHLIST_STOCKS" || printf "AAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.txt
+          test -f "$WATCHLIST_ETF"    || printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
+          cat "$WATCHLIST_STOCKS" "$WATCHLIST_ETF" | sed 's/\r$//' | sed '/^\s*$/d' | sort -u > /tmp/options_watchlist.txt
 
-          if [ ! -f "$WATCHLIST_STOCKS" ]; then
-            printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
-            echo "WATCHLIST_STOCKS=watchlists/mylist.csv" >> "$GITHUB_ENV"
-          fi
-          echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
-
-          if [ ! -f "$WATCHLIST_ETF" ]; then
-            printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
-          fi
-          echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
-
-      # ---------------- Earnings / Fundamentals / Optionen -------------------
-      - name: Pull earnings CALENDAR (optional)
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      # ---------- Earnings ----------
+      - name: Pull earnings CALENDAR
         run: |
           mkdir -p data/earnings docs
-          python scripts/fetch_earnings.py --watchlist "${WATCHLIST_STOCKS}" --window-days "${WINDOW_DAYS}"
+          python scripts/fetch_earnings.py --watchlist "${WATCHLIST_STOCKS}" --window-days "${WINDOW_DAYS}" --key "${FINNHUB_KEY}"
           test -f docs/earnings_next.json && head -n 50 docs/earnings_next.json || true
 
-      - name: Pull earnings RESULTS (EPS/Revenue)
+      - name: Pull earnings RESULTS
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
           mkdir -p data/earnings/results
-          python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12
+          python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12 --key "${FINNHUB_KEY}" --sleep-ms "${FINNHUB_SLEEP_MS}"
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
-      - name: Pull ETF basics (Finnhub)
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      # ---------- ETF Basics / Fundamentals ----------
+      - name: Pull ETF basics
         run: |
-          python scripts/fetch_etf_basics.py --watchlist "${WATCHLIST_ETF}" \
+          python config/fetch_etf_basics.py --watchlist "${WATCHLIST_ETF}" \
             --out data/processed/etf_basics.csv \
-            --errors data/reports/etf_errors.json || true
+            --errors data/reports/etf_errors.json --key "${FINNHUB_KEY}" || true
           head -n 30 data/processed/etf_basics.csv || true
           test -f data/reports/etf_errors.json && cat data/reports/etf_errors.json || true
 
       - name: Pull FUNDAMENTALS (profile2 + metrics)
         run: |
           mkdir -p data/fundamentals
-          python scripts/fetch_fundamentals.py \
-            --watchlist "${WATCHLIST_STOCKS}" \
-            --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
-            --sleep_ms 150
+          python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --finnhub_key "${FINNHUB_KEY}" --sleep_ms 150
           head -n 20 data/processed/fundamentals_core.csv || true
 
-      - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
-        shell: bash
-        env:
-          OPTIONS_MAX_EXPIRIES: ${{ env.OPTIONS_MAX_EXPIRIES }}
-          OPTIONS_TOPK:         ${{ env.OPTIONS_TOPK }}
-          HV_WIN_SHORT:         ${{ env.HV_WIN_SHORT }}
-          HV_WIN_LONG:          ${{ env.HV_WIN_LONG }}
-          HV_WIN_10:            ${{ env.HV_WIN_10 }}
-          HV_WIN_30:            ${{ env.HV_WIN_30 }}
+      # ---------- Options OI ----------
+      - name: Fetch Options OI + IV/HV summary
         run: |
-          awk 'NR==1 || FNR>1' watchlists/mylist.txt watchlists/etf_sample.txt > /tmp/options_watchlist.txt
           python scripts/fetch_options_oi.py --watchlist /tmp/options_watchlist.txt
           head -n 40 data/processed/options_oi_summary.csv || true
           head -n 40 data/processed/options_oi_by_expiry.csv || true
           head -n 40 data/processed/options_oi_totals.csv || true
 
-      - name: Build max OI strike per symbol
+      - name: Post-build: max OI strike per symbol
         run: |
           python scripts/post_build_strike_max.py
           head -n 20 data/processed/options_oi_strike_max.csv || true
@@ -179,52 +139,33 @@ jobs:
           python scripts/build_options_signals.py
           head -n 40 data/processed/options_signals.csv || true
 
-      # -------------------- COT 20y: Disaggregated (Combined) ----------------
-      - name: Pull COT 20y – Disaggregated (F+O Combined)
+      # ---------- COT 20y ----------
+      - name: Pull COT 20y – Disaggregated
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-        shell: bash
         run: |
-          set -euo pipefail
-          echo "== Socrata Probe (Disaggregated) =="
           curl -fsS -G "${CFTC_API_BASE}/${COT_DISAGG_DATASET_ID}.json" \
             --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
             --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
             --data-urlencode '$limit=1' \
             -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq . || true
-
-          echo "== Pull 20y Disaggregated =="
-          python -u scripts/fetch_cot_20y.py \
-            --dataset "${COT_DISAGG_DATASET_ID}" \
-            --out "data/processed/cot_20y_disagg.csv.gz"
-
-          ls -lh data/processed/cot_20y_disagg.csv.gz
+          python -u scripts/fetch_cot_20y.py --dataset "${COT_DISAGG_DATASET_ID}" --out "data/processed/cot_20y_disagg.csv.gz"
           zcat data/processed/cot_20y_disagg.csv.gz | head -n 2 || true
 
-      # -------------------- COT 20y: TFF (Combined) --------------------------
-      - name: Pull COT 20y – TFF (F+O Combined)
+      - name: Pull COT 20y – TFF
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-        shell: bash
         run: |
-          set -euo pipefail
-          echo "== Socrata Probe (TFF) =="
           curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
             --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
             --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
             --data-urlencode '$limit=1' \
             -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq . || true
-
-          echo "== Pull 20y TFF =="
-          python -u scripts/fetch_cot_20y.py \
-            --dataset "${COT_TFF_DATASET_ID}" \
-            --out "data/processed/cot_20y_tff.csv.gz"
-
-          ls -lh data/processed/cot_20y_tff.csv.gz
+          python -u scripts/fetch_cot_20y.py --dataset "${COT_TFF_DATASET_ID}" --out "data/processed/cot_20y_tff.csv.gz"
           zcat data/processed/cot_20y_tff.csv.gz | head -n 2 || true
 
-      # -------------------- Stooq HV (klein & gz) ---------------------------
-      - name: Pull Stooq quotes (Xetra only) → build HV summary → purge raws
+      # ---------- Stooq HV ----------
+      - name: Pull Stooq quotes → HV summary → purge raws
         env:
           HV_WIN_SHORT: ${{ env.HV_WIN_SHORT }}
           HV_WIN_LONG:  ${{ env.HV_WIN_LONG }}
@@ -232,33 +173,11 @@ jobs:
           set -e
           mkdir -p data/market/stooq data/processed
           python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" --days 365 || true
-          python - << 'PY'
-          import os, csv, gzip, pandas as pd
-          from pathlib import Path
-          in_dir = Path("data/market/stooq")
-          rows=[]
-          w20=int(os.getenv("HV_WIN_SHORT","20")); w60=int(os.getenv("HV_WIN_LONG","60"))
-          for p in sorted(in_dir.glob("*.csv")):
-              try:
-                  df=pd.read_csv(p)
-                  col="Adj Close" if "Adj Close" in df.columns else "Close"
-                  s=pd.to_numeric(df[col], errors="coerce").dropna()
-                  if s.size < max(w20,w60)+2: continue
-                  r=s.pct_change().dropna()
-                  hv20=float(r.tail(w20).std()*(252**0.5)); hv60=float(r.tail(w60).std()*(252**0.5))
-                  rows.append({"symbol":p.stem,"hv20":hv20,"hv60":hv60})
-              except: pass
-          outp=Path("data/processed/hv_summary.csv.gz")
-          outp.parent.mkdir(parents=True, exist_ok=True)
-          with gzip.open(outp,"wt",encoding="utf-8",newline="") as f:
-              w=csv.DictWriter(f, fieldnames=["symbol","hv20","hv60"]); w.writeheader(); [w.writerow(r) for r in rows]
-          print("HV rows:", len(rows))
-          PY
+          python scripts/build_hv_summary.py || python scripts/build_hv_summary.py || true
           rm -f data/market/stooq/*.csv || true
 
-      # ===================== ALLES KOMPRIMIEREN ====================
+      # ---------- Komprimieren ----------
       - name: Compress processed outputs to .gz
-        shell: bash
         env:
           COMPRESS_MIN_KB: "50"
         run: |
@@ -270,14 +189,13 @@ jobs:
           fi
           echo "== processed after gzip =="; find data/processed -maxdepth 1 -type f -printf "%p\t%k KB\n" | sort || true
 
-      # ===================== R2 UPLOAD (nur .gz + docs) ==============
+      # ---------- R2 Upload ----------
       - name: Sync .gz (and docs) to R2
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
           CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
-        shell: bash
         run: |
           set -e
           if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
@@ -302,14 +220,13 @@ jobs:
             --config rclone.conf --fast-list --checksum --update
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50 || true
 
-      # ===================== REPO AUFRÄUMEN (schlank halten) =========
+      # ---------- Repo schlank halten ----------
       - name: Purge heavy local files before commit
-        shell: bash
         run: |
           set -e
           find data/processed -type f ! -name ".gitkeep" -delete || true
 
-      # ===================== QA / Manifeste / Commit =================
+      # ---------- Manifest + Commit ----------
       - name: Build datasets manifest (docs/datasets.json)
         env:
           PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}
@@ -326,8 +243,7 @@ jobs:
               "options_by_expiry": "/data/processed/options_oi_by_expiry.csv.gz",
               "options_totals":    "/data/processed/options_oi_totals.csv.gz",
               "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
-              "options_strike_max":"/data/processed/options_oi_strike_max.csv.gz",
-              "fred_oas":          "/data/processed/fred_oas.csv.gz"
+              "options_strike_max":"/data/processed/options_oi_strike_max.csv.gz"
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
@@ -336,7 +252,6 @@ jobs:
           PY
 
       - name: Commit updated cache & reports (no big files)
-        shell: bash
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

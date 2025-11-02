@@ -25,4 +25,7 @@ beautifulsoup4>=4.12,<5
 lxml>=4.9,<5
 transformers>=4.43,<5
 async-timeout>=4.0,<5
+pandas
+requests
+python-dateutil
 

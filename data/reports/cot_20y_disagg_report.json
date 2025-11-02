@@ -1,14 +1,230 @@
 {
-  "ts": "2025-11-02T02:24:43Z",
-  "datasets": [
-    "kh3c-gbw2"
-  ],
+  "ts": "2025-11-02T11:18:32Z",
+  "dataset": "kh3c-gbw2",
   "years": 20,
   "mode": "FILE",
-  "rows": 17010,
+  "rows_total": 22104,
   "date_from": "2005-10-28",
   "date_to": "2025-11-02",
-  "files": {
-    "out": "data/processed/cot_20y_disagg.csv.gz"
-  }
+  "markets_used": [
+    "CRUDE OIL, LIGHT SWEET - NEW YORK MERCANTILE EXCHANGE",
+    "BRENT CRUDE OIL LAST DAY - ICE FUTURES EUROPE",
+    "NATURAL GAS - NEW YORK MERCANTILE EXCHANGE",
+    "GOLD - COMMODITY EXCHANGE INC.",
+    "SILVER - COMMODITY EXCHANGE INC.",
+    "PLATINUM - NEW YORK MERCANTILE EXCHANGE",
+    "PALLADIUM - NEW YORK MERCANTILE EXCHANGE",
+    "CORN - CHICAGO BOARD OF TRADE",
+    "SOYBEANS - CHICAGO BOARD OF TRADE",
+    "SOYBEAN MEAL - CHICAGO BOARD OF TRADE",
+    "SOYBEAN OIL - CHICAGO BOARD OF TRADE",
+    "WHEAT - CHICAGO BOARD OF TRADE",
+    "HARD RED WINTER WHEAT - KANSAS CITY BOARD OF TRADE",
+    "HARD RED SPRING WHEAT - MINNEAPOLIS GRAIN EXCHANGE",
+    "COFFEE C - ICE FUTURES U.S.",
+    "COCOA - ICE FUTURES U.S.",
+    "SUGAR NO. 11 - ICE FUTURES U.S.",
+    "COTTON NO. 2 - ICE FUTURES U.S.",
+    "ORANGE JUICE - ICE FUTURES U.S.",
+    "LIVE CATTLE - CHICAGO MERCANTILE EXCHANGE",
+    "LEAN HOGS - CHICAGO MERCANTILE EXCHANGE",
+    "FEEDER CATTLE - CHICAGO MERCANTILE EXCHANGE",
+    "LUMBER - CHICAGO MERCANTILE EXCHANGE",
+    "MILK CLASS III - CHICAGO MERCANTILE EXCHANGE",
+    "E-MINI S&P 500 - CHICAGO MERCANTILE EXCHANGE",
+    "E-MINI NASDAQ-100 - CHICAGO MERCANTILE EXCHANGE",
+    "E-MINI RUSSELL 2000 - CHICAGO MERCANTILE EXCHANGE",
+    "BITCOIN - CHICAGO MERCANTILE EXCHANGE",
+    "EURODOLLAR - CHICAGO MERCANTILE EXCHANGE",
+    "THREE-MONTH SOFR - CHICAGO MERCANTILE EXCHANGE",
+    "EURO FX - CHICAGO MERCANTILE EXCHANGE",
+    "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE",
+    "BRITISH POUND STERLING - CHICAGO MERCANTILE EXCHANGE",
+    "SWISS FRANC - CHICAGO MERCANTILE EXCHANGE",
+    "AUSTRALIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE",
+    "CANADIAN DOLLAR - CHICAGO MERCANTILE EXCHANGE",
+    "NEW ZEALAND DOLLAR - CHICAGO MERCANTILE EXCHANGE",
+    "MEXICAN PESO - CHICAGO MERCANTILE EXCHANGE"
+  ],
+  "markets_missing": [
+    "RBOB GASOLINE - NEW YORK MERCANTILE EXCHANGE",
+    "HEATING OIL - NEW YORK MERCANTILE EXCHANGE",
+    "COPPER - COMMODITY EXCHANGE INC.",
+    "E-MINI DOW ($5) - CHICAGO BOARD OF TRADE",
+    "CBOE VOLATILITY INDEX (VIX) - CBOE FUTURES EXCHANGE",
+    "ULTRA U.S. TREASURY BONDS - CHICAGO BOARD OF TRADE",
+    "ULTRA 10-YEAR U.S. TREASURY NOTE - CHICAGO BOARD OF TRADE",
+    "30-YEAR U.S. TREASURY BONDS - CHICAGO BOARD OF TRADE",
+    "10-YEAR U.S. TREASURY NOTE - CHICAGO BOARD OF TRADE",
+    "5-YEAR U.S. TREASURY NOTE - CHICAGO BOARD OF TRADE",
+    "2-YEAR U.S. TREASURY NOTE - CHICAGO BOARD OF TRADE"
+  ],
+  "per_market": {
+    "- CHICAGO MERCANTILE EXCHANGE": {
+      "rows": 1,
+      "first": "2022-05-17",
+      "last": "2022-05-17"
+    },
+    "BRENT CRUDE OIL LAST DAY - NEW YORK MERCANTILE EXCHANGE": {
+      "rows": 564,
+      "first": "2011-03-08",
+      "last": "2022-02-01"
+    },
+    "COCOA - ICE FUTURES U.S.": {
+      "rows": 943,
+      "first": "2007-09-04",
+      "last": "2025-09-23"
+    },
+    "COFFEE C - ICE FUTURES U.S.": {
+      "rows": 943,
+      "first": "2007-09-04",
+      "last": "2025-09-23"
+    },
+    "CORN - CHICAGO BOARD OF TRADE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "COTTON NO. 2 - ICE FUTURES U.S.": {
+      "rows": 943,
+      "first": "2007-09-04",
+      "last": "2025-09-23"
+    },
+    "CRUDE OIL, LIGHT SWEET - ICE EUROPE": {
+      "rows": 9,
+      "first": "2009-07-28",
+      "last": "2009-09-22"
+    },
+    "CRUDE OIL, LIGHT SWEET - ICE FUTURES EUROPE": {
+      "rows": 235,
+      "first": "2009-09-29",
+      "last": "2014-03-25"
+    },
+    "CRUDE OIL, LIGHT SWEET - NEW YORK MERCANTILE EXCHANGE": {
+      "rows": 817,
+      "first": "2006-06-13",
+      "last": "2022-02-01"
+    },
+    "E-MINI CRUDE OIL, LIGHT SWEET - NEW YORK MERCANTILE EXCHANGE": {
+      "rows": 23,
+      "first": "2006-06-13",
+      "last": "2007-01-16"
+    },
+    "E-MINI NATURAL GAS - NEW YORK MERCANTILE EXCHANGE": {
+      "rows": 10,
+      "first": "2006-08-15",
+      "last": "2024-08-27"
+    },
+    "FEEDER CATTLE - CHICAGO MERCANTILE EXCHANGE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "FRZN CONCENTRATED ORANGE JUICE - ICE FUTURES U.S.": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "GOLD - COMMODITY EXCHANGE INC.": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "LEAN HOGS - CHICAGO MERCANTILE EXCHANGE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "LIVE CATTLE - CHICAGO MERCANTILE EXCHANGE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "LUMBER - CHICAGO MERCANTILE EXCHANGE": {
+      "rows": 135,
+      "first": "2023-02-07",
+      "last": "2025-09-23"
+    },
+    "MICRO GOLD - COMMODITY EXCHANGE INC.": {
+      "rows": 112,
+      "first": "2020-12-01",
+      "last": "2025-09-23"
+    },
+    "MILK, Class III - CHICAGO MERCANTILE EXCHANGE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "MINI CORN - CHICAGO BOARD OF TRADE": {
+      "rows": 1,
+      "first": "2011-05-31",
+      "last": "2011-05-31"
+    },
+    "MINI SOYBEANS - CHICAGO BOARD OF TRADE": {
+      "rows": 447,
+      "first": "2006-06-13",
+      "last": "2024-10-15"
+    },
+    "NATURAL GAS - NEW YORK MERCANTILE EXCHANGE": {
+      "rows": 817,
+      "first": "2006-06-13",
+      "last": "2022-02-01"
+    },
+    "PALLADIUM - NEW YORK MERCANTILE EXCHANGE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "PLATINUM - NEW YORK MERCANTILE EXCHANGE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "RANDOM LENGTH LUMBER - CHICAGO MERCANTILE EXCHANGE": {
+      "rows": 880,
+      "first": "2006-06-13",
+      "last": "2023-04-18"
+    },
+    "SILVER - COMMODITY EXCHANGE INC.": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "SOYBEAN MEAL - CHICAGO BOARD OF TRADE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "SOYBEAN OIL - CHICAGO BOARD OF TRADE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "SOYBEANS - CHICAGO BOARD OF TRADE": {
+      "rows": 1007,
+      "first": "2006-06-13",
+      "last": "2025-09-23"
+    },
+    "SUGAR NO. 11 - ICE FUTURES U.S.": {
+      "rows": 943,
+      "first": "2007-09-04",
+      "last": "2025-09-23"
+    },
+    "WHEAT - CHICAGO BOARD OF TRADE": {
+      "rows": 392,
+      "first": "2006-06-13",
+      "last": "2013-12-10"
+    },
+    "WHEAT - KANSAS CITY BOARD OF TRADE": {
+      "rows": 392,
+      "first": "2006-06-13",
+      "last": "2013-12-10"
+    },
+    "WHEAT - MINNEAPOLIS GRAIN EXCHANGE": {
+      "rows": 406,
+      "first": "2006-06-13",
+      "last": "2014-03-18"
+    }
+  },
+  "out": "data/processed/cot_20y_disagg.csv.gz"
 }

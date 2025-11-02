@@ -1,0 +1,42 @@
+# ── Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.ipynb_checkpoints/
+
+# ── IDE/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Umgebungen
+.venv/
+venv/
+.env
+.env.*
+
+# ── Daten (raw/cache/temp ignorieren, processed behalten)
+data/raw/
+data/cache/
+data/tmp/
+data/private/
+!data/processed/
+# Falls du Unterordner in processed erlauben willst:
+# !data/processed/**
+
+# ── Logs
+logs/
+*.log
+
+# ── Config/Secrets (Beispiel: echte Secrets ignorieren, Beispiel-Dateien tracken)
+config/*secret*.yml
+config/*secret*.yaml
+config/local*.yaml
+!config/config.yaml           # deine Beispiel/Default-Config bleibt im Repo
+
+# ── Exporte
+analysis/outputs/
+docs/_build/

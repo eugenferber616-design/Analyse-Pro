@@ -116,7 +116,6 @@ jobs:
           python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --finnhub_key "${FINNHUB_KEY}" --sleep_ms 150
           head -n 20 data/processed/fundamentals_core.csv || true
 
-      # ---------- Options OI ----------
       - name: Fetch Options OI + IV/HV summary
         run: |
           python scripts/fetch_options_oi.py --watchlist /tmp/options_watchlist.txt
@@ -124,7 +123,7 @@ jobs:
           head -n 40 data/processed/options_oi_by_expiry.csv || true
           head -n 40 data/processed/options_oi_totals.csv || true
 
-      - name: Post-build: max OI strike per symbol
+      - name: "Post-build: max OI strike per symbol"
         run: |
           python scripts/post_build_strike_max.py
           head -n 20 data/processed/options_oi_strike_max.csv || true
@@ -138,6 +137,7 @@ jobs:
         run: |
           python scripts/build_options_signals.py
           head -n 40 data/processed/options_signals.csv || true
+
 
       # ---------- COT 20y ----------
       - name: Pull COT 20y – Disaggregated

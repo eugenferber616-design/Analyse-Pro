@@ -34,8 +34,8 @@ jobs:
 
       # COT – Socrata Basis
       CFTC_API_BASE:         "https://publicreporting.cftc.gov/resource"
-      COT_DISAGG_DATASET_ID: "kh3c-gbw2"   # Disaggregated (F+O Combined)
-      COT_TFF_DATASET_ID:    "yw9f-hn96"   # TFF (F+O Combined)
+      COT_DISAGG_DATASET_ID: "kh3c-gbw2"
+      COT_TFF_DATASET_ID:    "yw9f-hn96"
       COT_YEARS:             "20"
       COT_MARKETS_MODE:      "SMART"        # "ALL" | "FILE" | "LIST"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
@@ -44,7 +44,6 @@ jobs:
       SOC_BACKOFF:           "1.6"
       SOC_LIMIT:             "25000"
 
-      # lokale Module auffindbar
       PYTHONPATH: "."
 
     steps:
@@ -158,13 +157,27 @@ jobs:
           HV_WIN_10:            ${{ env.HV_WIN_10 }}
           HV_WIN_30:            ${{ env.HV_WIN_30 }}
         run: |
-          awk 'NR==1 || FNR>1' watchlists/mylist.txt watchlists/etf_sample.txt > /tmp/options_watchlist.txt
-          python scripts/fetch_options_oi.py --watchlist /tmp/options_watchlist.txt
+          set -e
+          tmp=/tmp/options_watchlist.txt
+          {
+            if [ -f "${WATCHLIST_STOCKS}" ]; then
+              tail -n +2 "${WATCHLIST_STOCKS}" | tr -d '\r'
+            fi
+            if [ -f "${WATCHLIST_ETF}" ]; then
+              if head -n1 "${WATCHLIST_ETF}" | grep -qi '^symbol'; then
+                tail -n +2 "${WATCHLIST_ETF}" | tr -d '\r'
+              else
+                cat "${WATCHLIST_ETF}" | tr -d '\r'
+              fi
+            fi
+          } | awk 'NF>0' | sort -u > "$tmp"
+
+          python scripts/fetch_options_oi.py --watchlist "$tmp"
           head -n 40 data/processed/options_oi_summary.csv || true
           head -n 40 data/processed/options_oi_by_expiry.csv || true
           head -n 40 data/processed/options_oi_totals.csv || true
 
-      - name: "Build max OI strike per symbol"
+      - name: Build max OI strike per symbol
         run: |
           python scripts/post_build_strike_max.py
           head -n 20 data/processed/options_oi_strike_max.csv || true
@@ -178,6 +191,12 @@ jobs:
         run: |
           python scripts/build_options_signals.py
           head -n 40 data/processed/options_signals.csv || true
+
+      # ---------- NEU: Direction-Signal (erweitert) ----------
+      - name: Build DIRECTION signals (new)
+        run: |
+          python scripts/build_direction_signal.py
+          head -n 40 data/processed/direction_signal.csv || true
 
       # ---- Standardisierte CSVs für AgenaTrader-Scanner ----
       - name: Build BY_EXPIRY standard CSV
@@ -273,12 +292,10 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
-          # processed
           for f in data/processed/*.{csv,json,ndjson,parquet}; do
             [ -f "$f" ] || continue
             gzip -f -9 "$f"
           done
-          # docs (JSONs)
           for f in docs/*.json; do
             [ -f "$f" ] || continue
             gzip -f -9 "$f"
@@ -319,14 +336,14 @@ jobs:
             --include "*.gz" --exclude "*"
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50 || true
 
-      # ===================== REPO AUFRÄUMEN (schlank halten) =========
+      # ===================== REPO AUFRÄUMEN ========================
       - name: Purge heavy local files before commit
         shell: bash
         run: |
           set -e
           find data/processed -type f ! -name ".gitkeep" -delete || true
 
-      # ===================== QA / Manifeste / Commit =================
+      # ===================== QA / Manifest / Commit ================
       - name: Build datasets manifest (docs/datasets.json)
         env:
           PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}
@@ -345,6 +362,7 @@ jobs:
               "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
               "options_strike_max":"/data/processed/options_oi_strike_max.csv.gz",
               "options_signals":   "/data/processed/options_signals.csv.gz",
+              "direction_signal":  "/data/processed/direction_signal.csv.gz",
               "fred_oas":          "/data/processed/fred_oas.csv.gz"
             }
           }
@@ -361,7 +379,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (no LLM, all .gz to R2)" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (no LLM, add direction_signal, all .gz to R2)" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

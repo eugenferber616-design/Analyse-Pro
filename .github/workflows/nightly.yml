@@ -37,7 +37,7 @@ jobs:
       COT_DISAGG_DATASET_ID: "kh3c-gbw2"   # Disaggregated (F+O Combined)
       COT_TFF_DATASET_ID:    "yw9f-hn96"   # TFF (F+O Combined)
       COT_YEARS:             "20"
-      COT_MARKETS_MODE:      "FILE"        # "ALL" | "FILE" | "LIST"
+      COT_MARKETS_MODE:      "ALL"        # "ALL" | "FILE" | "LIST"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
       SOC_TIMEOUT:           "120"
       SOC_RETRIES:           "6"

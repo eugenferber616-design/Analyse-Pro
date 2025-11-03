@@ -2,19 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 build_direction_signal.py
-Erzeugt data/processed/direction_signal.csv(.gz) aus:
+Erzeugt data/processed/direction_signal.csv.gz aus:
 - data/processed/options_signals.csv(.gz)
 - data/processed/options_oi_by_strike.csv(.gz)
 
-Ausgabe-Spalten (pro Symbol):
-  symbol, dir, strength, next_expiry, nearest_dte,
-  focus_strike_7, focus_strike_30, focus_strike_60
+Robust: erkennt alternative Spaltennamen für dir/strength automatisch.
 """
 
-import os
-import gzip
+import os, gzip
 import pandas as pd
 from pathlib import Path
+from math import copysign
 
 IN_SIGNALS = [
     "data/processed/options_signals.csv.gz",
@@ -29,6 +27,7 @@ IN_BY_STRIKE = [
 OUT_PATH = "data/processed/direction_signal.csv.gz"
 
 
+# ---------- Helpers ----------
 def read_csv_auto(candidates, **kwargs):
     for p in candidates:
         if not Path(p).exists():
@@ -41,34 +40,84 @@ def read_csv_auto(candidates, **kwargs):
     return None
 
 
+def pick_first_existing(df, candidates):
+    cols = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        if cand.lower() in cols:
+            return cols[cand.lower()]
+    return None
+
+
+def to_int64_nullable(s):
+    return pd.to_numeric(s, errors="coerce").astype("Int64")
+
+
+def to_float_nullable(s):
+    return pd.to_numeric(s, errors="coerce")
+
+
+# ---------- Main ----------
 def main():
     os.makedirs("data/processed", exist_ok=True)
 
-    # ---- 1) Grundsignal laden
+    # 1) options_signals
     sig = read_csv_auto(IN_SIGNALS)
     if sig is None or sig.empty:
         raise SystemExit("options_signals.csv(.gz) nicht gefunden oder leer")
 
-    # normalisieren
-    sig.columns = [c.strip().lower() for c in sig.columns]
-    for col in ("symbol", "dir", "strength"):
-        if col not in sig.columns:
-            raise SystemExit(f"Spalte '{col}' fehlt in options_signals")
+    # lower header nur zum Suchen; Originalnamen behalten
+    sig.columns = [c.strip() for c in sig.columns]
 
-    # nur relevante Spalten
-    sig = sig[["symbol", "dir", "strength"]].copy()
-    sig["symbol"] = sig["symbol"].astype(str)
+    # symbol
+    col_symbol = pick_first_existing(sig, ["symbol", "ticker", "underlying"])
+    if not col_symbol:
+        raise SystemExit(f"Spalte 'symbol' (oder ticker/underlying) fehlt in options_signals. Vorhanden: {list(sig.columns)}")
+    sig[col_symbol] = sig[col_symbol].astype(str)
 
-    # robustes Numeric-Parsing
-    sig["dir"] = pd.to_numeric(sig["dir"], errors="coerce").astype("Int64")
-    sig["strength"] = pd.to_numeric(sig["strength"], errors="coerce").astype("Int64")
+    # dir – akzeptiere alternative Namen
+    col_dir = pick_first_existing(
+        sig,
+        ["dir", "direction", "signal_dir", "signed_dir", "bias", "sign", "direction_bin"],
+    )
 
-    # ---- 2) By-Strike für 7/30/60 Tage
+    # strength – akzeptiere alternative Namen
+    col_strength = pick_first_existing(
+        sig,
+        ["strength", "score", "strength_pct", "signal_strength", "confidence", "weight"],
+    )
+
+    if not col_dir and not col_strength:
+        raise SystemExit(
+            "Weder 'dir' noch eine alternative noch 'strength/score' gefunden. "
+            f"Spalten sind: {list(sig.columns)}"
+        )
+
+    out_sig = pd.DataFrame({"symbol": sig[col_symbol].astype(str)})
+
+    # Stärke zuerst parsen (kann für Ableitung von dir gebraucht werden)
+    if col_strength:
+        out_sig["strength"] = to_int64_nullable(sig[col_strength])
+    else:
+        out_sig["strength"] = pd.Series([pd.NA] * len(out_sig), dtype="Int64")
+
+    # dir parsen/ableiten
+    if col_dir:
+        d = to_int64_nullable(sig[col_dir])
+        # Falls dir nur -1/0/1 sein soll -> clamp
+        d = d.clip(lower=-1, upper=1)
+        out_sig["dir"] = d
+    else:
+        # Ableitung: dir = sign(strength) (NaN -> 0)
+        s = pd.to_numeric(sig[col_strength], errors="coerce")
+        d = s.fillna(0.0).apply(lambda x: 0 if x == 0 else int(copysign(1, x)))
+        out_sig["dir"] = to_int64_nullable(d)
+
+    # 2) by_strike (7/30/60 + nächster Verfall)
     bs = read_csv_auto(IN_BY_STRIKE)
     if bs is None or bs.empty:
-        # Falls nichts da ist, geben wir nur dir/strength zurück
-        out = sig.copy()
-        out["next_expiry"] = pd.NaT
+        # nur Grundsignal ausgeben
+        out = out_sig.copy()
+        out["next_expiry"] = pd.NA
         out["nearest_dte"] = pd.Series([pd.NA] * len(out), dtype="Int64")
         out["focus_strike_7"] = pd.NA
         out["focus_strike_30"] = pd.NA
@@ -76,46 +125,55 @@ def main():
         write_out(out)
         return
 
-    bs.columns = [c.strip().lower() for c in bs.columns]
+    bs.columns = [c.strip() for c in bs.columns]
 
-    # Erwartete Spalten prüfen (tolerant bei zusätzlich vorhandenen)
-    needed = {"symbol", "expiry", "dte"}
-    if not needed.issubset(set(bs.columns)):
-        raise SystemExit(f"Spalten fehlen in options_oi_by_strike: {needed - set(bs.columns)}")
+    # flexible Spaltenfindung
+    col_sym_bs = pick_first_existing(bs, ["symbol", "ticker", "underlying"])
+    col_exp = pick_first_existing(bs, ["expiry", "expiration", "next_expiry"])
+    col_dte = pick_first_existing(bs, ["dte", "days_to_expiry", "nearest_dte"])
+    if not (col_sym_bs and col_exp and col_dte):
+        raise SystemExit(
+            "Benötigte Spalten in options_oi_by_strike fehlen. "
+            f"Gefunden: symbol={col_sym_bs}, expiry={col_exp}, dte={col_dte}. "
+            f"Vorhandene Spalten: {list(bs.columns)}"
+        )
 
-    # Numerik & Datum konvertieren (ohne leere Strings!)
-    bs["dte"] = pd.to_numeric(bs["dte"], errors="coerce").astype("Int64")
-    for col in ("focus_strike_7", "focus_strike_30", "focus_strike_60", "focus_strike"):
-        if col in bs.columns:
-            bs[col] = pd.to_numeric(bs[col], errors="coerce")
+    # ggf. fehlen 7/30/60 – dann sind sie eben NaN
+    col_fs7 = pick_first_existing(bs, ["focus_strike_7", "fs_7", "strike7"])
+    col_fs30 = pick_first_existing(bs, ["focus_strike_30", "fs_30", "strike30"])
+    col_fs60 = pick_first_existing(bs, ["focus_strike_60", "fs_60", "strike60"])
 
-    bs["expiry"] = pd.to_datetime(bs["expiry"], errors="coerce").dt.date
+    # numerics / dates
+    bs[col_dte] = to_int64_nullable(bs[col_dte])
+    for c in [col_fs7, col_fs30, col_fs60]:
+        if c:
+            bs[c] = to_float_nullable(bs[c])
 
-    # Wir aggregieren je Symbol den **nächsten** Eintrag (kleinste DTE >= 0)
-    bs_valid = bs.loc[bs["dte"].notna() & (bs["dte"] >= 0)].copy()
+    bs[col_exp] = pd.to_datetime(bs[col_exp], errors="coerce").dt.date
 
-    # Falls Datei keine getrennten 7/30/60-Spalten hat, aus fallback "focus_strike" ziehen
-    for tgt in ("focus_strike_7", "focus_strike_30", "focus_strike_60"):
-        if tgt not in bs_valid.columns:
-            bs_valid[tgt] = pd.NA
+    # nächstes Ablaufdatum je Symbol (kleinste DTE >=0)
+    bs_valid = bs.loc[bs[col_dte].notna() & (bs[col_dte] >= 0)].copy()
+    idx = bs_valid.groupby(col_sym_bs)[col_dte].idxmin()
+    sel_cols = [col_sym_bs, col_exp, col_dte]
+    rename_map = {col_sym_bs: "symbol", col_exp: "next_expiry", col_dte: "nearest_dte"}
 
-    # je Symbol den kleinsten DTE-Record finden
-    idx = bs_valid.groupby("symbol")["dte"].idxmin()
-    bs_next = bs_valid.loc[idx, ["symbol", "expiry", "dte", "focus_strike_7", "focus_strike_30", "focus_strike_60"]].copy()
-    bs_next = bs_next.rename(columns={"expiry": "next_expiry", "dte": "nearest_dte"})
+    if col_fs7:  sel_cols.append(col_fs7);  rename_map[col_fs7]  = "focus_strike_7"
+    if col_fs30: sel_cols.append(col_fs30); rename_map[col_fs30] = "focus_strike_30"
+    if col_fs60: sel_cols.append(col_fs60); rename_map[col_fs60] = "focus_strike_60"
 
-    # Datentypen final setzen
-    bs_next["nearest_dte"] = pd.to_numeric(bs_next["nearest_dte"], errors="coerce").astype("Int64")
-    for col in ("focus_strike_7", "focus_strike_30", "focus_strike_60"):
-        bs_next[col] = pd.to_numeric(bs_next[col], errors="coerce")
+    bs_next = bs_valid.loc[idx, sel_cols].rename(columns=rename_map)
+    # falls eine der Strike-Spalten fehlt, als NaN anlegen
+    for c in ("focus_strike_7", "focus_strike_30", "focus_strike_60"):
+        if c not in bs_next.columns:
+            bs_next[c] = pd.NA
 
-    # next_expiry wieder als ISO-String (yyyy-mm-dd) schreiben (Agena liest leichter)
+    bs_next["nearest_dte"] = to_int64_nullable(bs_next["nearest_dte"])
+    for c in ("focus_strike_7", "focus_strike_30", "focus_strike_60"):
+        bs_next[c] = to_float_nullable(bs_next[c])
     bs_next["next_expiry"] = pd.to_datetime(bs_next["next_expiry"], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    # ---- 3) Join
-    out = sig.merge(bs_next, on="symbol", how="left")
-
-    # Finalreihenfolge
+    # 3) Join & Reihenfolge
+    out = out_sig.merge(bs_next, on="symbol", how="left")
     out = out[
         [
             "symbol",
@@ -133,7 +191,6 @@ def main():
 
 
 def write_out(df: pd.DataFrame):
-    # .gz schreiben (UTF-8, Zeilenende = \n)
     with gzip.open(OUT_PATH, "wt", encoding="utf-8", newline="") as gz:
         df.to_csv(gz, index=False)
     print(f"wrote {OUT_PATH} rows={len(df)}")

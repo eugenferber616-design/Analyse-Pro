@@ -34,16 +34,17 @@ jobs:
 
       # COT – Socrata Basis
       CFTC_API_BASE:         "https://publicreporting.cftc.gov/resource"
-      COT_DISAGG_DATASET_ID: "kh3c-gbw2"
-      COT_TFF_DATASET_ID:    "yw9f-hn96"
+      COT_DISAGG_DATASET_ID: "kh3c-gbw2"   # Disaggregated (F+O Combined)
+      COT_TFF_DATASET_ID:    "yw9f-hn96"   # TFF (F+O Combined)
       COT_YEARS:             "20"
       COT_MARKETS_MODE:      "SMART"        # "ALL" | "FILE" | "LIST"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
       SOC_TIMEOUT:           "120"
-      SOC_RETRIES:           "6"
-      SOC_BACKOFF:           "1.6"
-      SOC_LIMIT:             "25000"
+      SOC_RETRIES:           "8"
+      SOC_BACKOFF:           "2.0"
+      SOC_LIMIT:             "20000"
 
+      # lokale Module auffindbar
       PYTHONPATH: "."
 
     steps:
@@ -192,12 +193,11 @@ jobs:
           python scripts/build_options_signals.py
           head -n 40 data/processed/options_signals.csv || true
 
-      # ---------- NEU: Direction-Signal (erweitert) ----------
+      # ---------- NEU: Direction-Signal (7/30/60 + Focus-Strike je Horizont) ----------
       - name: Build DIRECTION SIGNAL (7/30/60 strikes)
         run: |
           python scripts/build_direction_signal.py
           zcat data/processed/direction_signal.csv.gz | head -n 20 || true
-
 
       # ---- Standardisierte CSVs für AgenaTrader-Scanner ----
       - name: Build BY_EXPIRY standard CSV
@@ -218,18 +218,26 @@ jobs:
         run: |
           set -euo pipefail
           echo "== Socrata Probe (Disaggregated) =="
-          curl -fsS -G "${CFTC_API_BASE}/${COT_DISAGG_DATASET_ID}.json" \
-            --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
-            --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
-            --data-urlencode '$limit=1' \
-            -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq . || true
+          for i in 1 2 3; do
+            if curl -fsS -G "${CFTC_API_BASE}/${COT_DISAGG_DATASET_ID}.json" \
+                 --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
+                 --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
+                 --data-urlencode '$limit=1' \
+                 -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then
+              break
+            fi
+            echo "probe failed (try $i) – sleep 10s"; sleep 10
+          done
 
           echo "== Pull 20y Disaggregated =="
-          python -u scripts/fetch_cot_20y.py \
-            --dataset "${COT_DISAGG_DATASET_ID}" \
-            --out "data/processed/cot_20y_disagg.csv.gz"
+          if ! python -u scripts/fetch_cot_20y.py \
+                --dataset "${COT_DISAGG_DATASET_ID}" \
+                --out "data/processed/cot_20y_disagg.csv.gz" \
+                --chunk-years 4 --batch-markets 8; then
+            echo "WARN: disagg pull failed (server 503?) – keep going"
+          fi
 
-          ls -lh data/processed/cot_20y_disagg.csv.gz
+          ls -lh data/processed/cot_20y_disagg.csv.gz || true
           zcat data/processed/cot_20y_disagg.csv.gz | head -n 2 || true
 
       # -------------------- COT 20y: TFF (Combined) --------------------------
@@ -240,18 +248,26 @@ jobs:
         run: |
           set -euo pipefail
           echo "== Socrata Probe (TFF) =="
-          curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
-            --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
-            --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
-            --data-urlencode '$limit=1' \
-            -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq . || true
+          for i in 1 2 3; do
+            if curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
+                 --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
+                 --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
+                 --data-urlencode '$limit=1' \
+                 -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then
+              break
+            fi
+            echo "probe failed (try $i) – sleep 10s"; sleep 10
+          done
 
           echo "== Pull 20y TFF =="
-          python -u scripts/fetch_cot_20y.py \
-            --dataset "${COT_TFF_DATASET_ID}" \
-            --out "data/processed/cot_20y_tff.csv.gz"
+          if ! python -u scripts/fetch_cot_20y.py \
+                --dataset "${COT_TFF_DATASET_ID}" \
+                --out "data/processed/cot_20y_tff.csv.gz" \
+                --chunk-years 4 --batch-markets 8; then
+            echo "WARN: tff pull failed (server 503?) – keep going"
+          fi
 
-          ls -lh data/processed/cot_20y_tff.csv.gz
+          ls -lh data/processed/cot_20y_tff.csv.gz || true
           zcat data/processed/cot_20y_tff.csv.gz | head -n 2 || true
 
       # -------------------- Stooq HV (klein & gz) ---------------------------
@@ -293,10 +309,12 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
+          # processed
           for f in data/processed/*.{csv,json,ndjson,parquet}; do
             [ -f "$f" ] || continue
             gzip -f -9 "$f"
           done
+          # docs (JSONs)
           for f in docs/*.json; do
             [ -f "$f" ] || continue
             gzip -f -9 "$f"
@@ -362,7 +380,7 @@ jobs:
               "options_totals":    "/data/processed/options_oi_totals.csv.gz",
               "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
               "options_strike_max":"/data/processed/options_oi_strike_max.csv.gz",
-              "direction_signal": "/data/processed/direction_signal.csv.gz",
+              "options_signals":   "/data/processed/options_signals.csv.gz",
               "direction_signal":  "/data/processed/direction_signal.csv.gz",
               "fred_oas":          "/data/processed/fred_oas.csv.gz"
             }

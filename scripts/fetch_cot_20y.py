@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fetch_cot_20y.py — robust (SMART) CFTC Socrata Pull mit Alias/Token-Matching
+fetch_cot_20y.py — robuster (SMART) CFTC Socrata Pull mit Alias/Token-Matching,
+Datumschunking (–-chunk-years) und Markt-Batching (–-batch-markets).
+
 Beispiele:
   python scripts/fetch_cot_20y.py --dataset kh3c-gbw2 --out data/processed/cot_20y_disagg.csv.gz --mode SMART
   python scripts/fetch_cot_20y.py --dataset yw9f-hn96   --out data/processed/cot_20y_tff.csv.gz    --mode SMART
-Env/Args:
-  MODE: ALL | FILE | LIST | SMART   (SMART = FILE + Alias/LIKE-Expansion)
 """
 
-import os, io, json, time, argparse, datetime as dt, gzip
+import os, io, json, time, argparse, datetime as dt, gzip, math
 import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Defaults via ENV
+# -------- Defaults via ENV --------
 API_BASE     = os.getenv("CFTC_API_BASE", "https://publicreporting.cftc.gov/resource")
 APP_TOKEN    = os.getenv("CFTC_APP_TOKEN", "")
 YEARS        = int(os.getenv("COT_YEARS", "20"))
-MODE_DEFAULT = os.getenv("COT_MARKETS_MODE", "ALL").upper()     # + SMART
+MODE_DEFAULT = os.getenv("COT_MARKETS_MODE", "ALL").upper()   # + SMART
 MARKETS_FILE = os.getenv("COT_MARKETS_FILE", "watchlists/cot_markets.txt")
 SOC_TIMEOUT  = int(os.getenv("SOC_TIMEOUT", 120))
 SOC_RETRIES  = int(os.getenv("SOC_RETRIES", 6))
 SOC_BACKOFF  = float(os.getenv("SOC_BACKOFF", 1.6))
 SOC_LIMIT    = int(os.getenv("SOC_LIMIT", 25000))
 
+# -------- Alias-Tabellen (erweiterbar) --------
 ALIASES = {
     # Börsen / Schreibweisen
     "COMEX": ["COMEX", "COMMODITY EXCHANGE INC"],
@@ -43,6 +44,7 @@ ALIASES = {
     "COPPER":    ["COPPER", "COPPER, HIGH GRADE"],
 }
 
+# -------- Argumente --------
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", required=True, help="Socrata Dataset ID (kh3c-gbw2 / yw9f-hn96)")
@@ -50,13 +52,18 @@ def parse_args():
     p.add_argument("--mode", default=MODE_DEFAULT, choices=["ALL","FILE","LIST","SMART"])
     p.add_argument("--years", type=int, default=YEARS)
     p.add_argument("--markets-file", default=MARKETS_FILE)
+    p.add_argument("--chunk-years", type=int, default=4, help="Jahresschritt pro Abruf (Default 4)")
+    p.add_argument("--batch-markets", type=int, default=10, help="Anzahl Märkte pro Subrequest bei FILE/LIST/SMART")
     return p.parse_args()
 
+# -------- HTTP Session (Retries) --------
 def make_session():
     s = requests.Session()
-    retry = Retry(total=SOC_RETRIES, connect=SOC_RETRIES, read=SOC_RETRIES, status=SOC_RETRIES,
-                  backoff_factor=SOC_BACKOFF, status_forcelist=[429,500,502,503,504],
-                  allowed_methods=["GET"], raise_on_status=False)
+    retry = Retry(
+        total=SOC_RETRIES, connect=SOC_RETRIES, read=SOC_RETRIES, status=SOC_RETRIES,
+        backoff_factor=SOC_BACKOFF, status_forcelist=[429,500,502,503,504],
+        allowed_methods=["GET"], raise_on_status=False
+    )
     s.mount("https://", HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10))
     headers = {"Accept":"application/json"}
     if APP_TOKEN: headers["X-App-Token"] = APP_TOKEN
@@ -66,9 +73,11 @@ def make_session():
 SESSION = make_session()
 
 def sget(url, params):
-    r = SESSION.get(url, params=params, timeout=SOC_TIMEOUT); r.raise_for_status()
+    r = SESSION.get(url, params=params, timeout=SOC_TIMEOUT)
+    r.raise_for_status()
     return r.json()
 
+# -------- Helfer --------
 def read_lines(path):
     if not os.path.exists(path): return []
     with open(path, "r", encoding="utf-8") as f:
@@ -77,23 +86,20 @@ def read_lines(path):
 def soql_quote(s): return "'" + s.replace("'", "''") + "'"
 
 def like_expr(token):
-    # UPPER(name) LIKE %TOKEN%
     t = token.upper()
     return f"upper(market_and_exchange_names) like '%{t.replace('%','%%')}%'"
 
 def expand_aliases(raw_line):
     """
-    Nimmt z.B. 'COPPER - COMMODITY EXCHANGE INC.' und baut eine Liste
-    von (required_tokens_any_of_exchange_variants, required_tokens_material).
+    Nimmt z.B. 'COPPER - COMMODITY EXCHANGE INC.' und baut Variantenlisten.
+    -> Rückgabe: Liste von Tokenlisten; jede Tokenliste wird mit AND verknüpft.
     """
     line = raw_line.upper()
-    # Material (erste Wortgruppe bis ' - '), Börsen-Anteil danach
     parts = [p.strip() for p in line.split(" - ", 1)]
     material = parts[0]
     exch = parts[1] if len(parts) > 1 else ""
 
     # Material-Varianten
-    mats = []
     if "WHEAT" in material:
         if "HARD RED WINTER" in material: mats = ALIASES["WHEAT_HRW"]
         elif "HARD RED SPRING" in material: mats = ALIASES["WHEAT_HRS"]
@@ -106,15 +112,13 @@ def expand_aliases(raw_line):
     # Exchange-Varianten
     exchs = []
     for key in ("COMEX","NYMEX","CBOT","KCBT","MGEX","CFE","CME"):
-        if key in exch or key in material or any(x in exch for x in ALIASES[key]):
+        if key in exch or any(x in exch for x in ALIASES[key]):
             exchs = ALIASES[key]; break
     if not exchs and exch:
         exchs = [exch]
     if not exchs:
-        # Fallback: keine Exchange-Bindung
-        exchs = [""]
+        exchs = [""]  # keine Exchange-Bindung
 
-    # Kombi aller Varianten (Material × Exchange)
     combos = []
     for m in mats:
         for e in exchs:
@@ -123,31 +127,53 @@ def expand_aliases(raw_line):
     return combos
 
 def build_where_any_of(combos):
-    # OR über alle Varianten; jede Variante wird zu AND von LIKEs
+    # OR über alle Varianten; jede Variante: AND der LIKEs
     variants = []
     for tokens in combos:
         conds = [like_expr(t) for t in tokens]
         variants.append("(" + " AND ".join(conds) + ")")
-    return " OR ".join(variants)
+    return " OR ".join(variants) if variants else "1=1"
 
-def fetch_range(dataset_id, date_from, date_to, mode, markets):
+def chunk_date_ranges(start_date, end_date, chunk_years):
+    """Erzeugt [ (from,to), ... ] in Jahr-Blöcken."""
+    out = []
+    cur_from = start_date
+    while cur_from < end_date:
+        nxt = cur_from.replace(year=cur_from.year + chunk_years)
+        if nxt > end_date: nxt = end_date
+        out.append((cur_from, nxt))
+        cur_from = nxt
+    return out
+
+def batched(seq, n):
+    for i in range(0, len(seq), n):
+        yield seq[i:i+n]
+
+# -------- Kernpull --------
+def fetch_range(dataset_id, date_from, date_to, mode, markets, chunk_years, batch_markets):
     rows_all = []
-    base = f"report_date_as_yyyy_mm_dd between '{date_from}' and '{date_to}'"
-
-    if mode == "ALL":
-        where = base
-        rows_all += _paged_pull(dataset_id, where)
-    elif mode in ("FILE","LIST"):
-        # exakte IN-Menge (wie bisher)
-        in_list = ",".join(soql_quote(m) for m in markets)
-        where = f"{base} AND market_and_exchange_names in ({in_list})"
-        rows_all += _paged_pull(dataset_id, where)
-    else:  # SMART
-        for line in markets:
-            combos = expand_aliases(line)
-            where = base + " AND (" + build_where_any_of(combos) + ")"
+    # Datumschunks (500s/503s vermeiden)
+    for d_from, d_to in chunk_date_ranges(date_from, date_to, chunk_years):
+        base = f"report_date_as_yyyy_mm_dd between '{d_from}' and '{d_to}'"
+        if mode == "ALL":
+            where = base
             rows_all += _paged_pull(dataset_id, where)
-
+        elif mode in ("FILE","LIST"):
+            for group in batched(markets, batch_markets):
+                in_list = ",".join(soql_quote(m) for m in group)
+                where = f"{base} AND market_and_exchange_names in ({in_list})"
+                rows_all += _paged_pull(dataset_id, where)
+        else:  # SMART
+            for group in batched(markets, batch_markets):
+                # pro Zeile Aliaskombis; alles mit OR verbinden
+                or_parts = []
+                for line in group:
+                    combos = expand_aliases(line)
+                    or_parts.append("(" + build_where_any_of(combos) + ")")
+                where = base + " AND (" + " OR ".join(or_parts) + ")"
+                rows_all += _paged_pull(dataset_id, where)
+        # kleine Pause zwischen Datums-Blöcken
+        time.sleep(0.25)
     return pd.DataFrame(rows_all)
 
 def _paged_pull(dataset_id, where):
@@ -159,19 +185,34 @@ def _paged_pull(dataset_id, where):
         acc += chunk
         if len(chunk) < SOC_LIMIT: break
         offset += SOC_LIMIT
-        time.sleep(0.15)
+        time.sleep(0.12)  # höflich bleiben
     return acc
 
+# -------- Main --------
 def main():
     args = parse_args()
     today = dt.date.today()
     date_to   = today.strftime("%Y-%m-%d")
     date_from = (today - dt.timedelta(days=365*args.years + 10)).strftime("%Y-%m-%d")
+
     markets = None
     if args.mode in ("FILE","LIST","SMART"):
         markets = read_lines(args.markets_file)
+        if not markets:
+            print(f"INFO: {args.markets_file} leer – es werden keine marktgebundenen Abfragen erzeugt.")
 
-    df = fetch_range(args.dataset, date_from, date_to, args.mode, markets)
+    print(f"[COT] dataset={args.dataset} years={args.years} mode={args.mode} "
+          f"chunks={args.chunk_years}y batch={args.batch_markets} limit={SOC_LIMIT}")
+
+    df = fetch_range(
+        dataset_id=args.dataset,
+        date_from=date_from,
+        date_to=date_to,
+        mode=args.mode,
+        markets=markets or [],
+        chunk_years=max(1, int(args.chunk_years)),
+        batch_markets=max(1, int(args.batch_markets)),
+    )
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     if args.out.endswith(".gz"):
@@ -184,10 +225,12 @@ def main():
         "ts": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "dataset": args.dataset, "years": args.years, "mode": args.mode,
         "rows": int(len(df)), "date_from": date_from, "date_to": date_to,
-        "watchlist": (len(markets or []))
+        "watchlist": (len(markets or [])), "chunk_years": args.chunk_years,
+        "batch_markets": args.batch_markets
     }
     os.makedirs("data/reports", exist_ok=True)
-    with open("data/reports/cot_20y_report.json","w",encoding="utf-8") as f: json.dump(rep,f,indent=2)
+    with open("data/reports/cot_20y_report.json","w",encoding="utf-8") as f:
+        json.dump(rep,f,indent=2)
     print("wrote", args.out, "rows=", rep["rows"], "mode=", args.mode)
 
 if __name__ == "__main__":

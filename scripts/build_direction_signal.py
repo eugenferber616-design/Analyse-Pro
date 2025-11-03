@@ -1,172 +1,199 @@
-# scripts/build_direction_signal.py
-# Erstellt: data/processed/direction_signal.csv.gz
-# Quellen:  data/processed/options_oi_summary.csv(.gz)
-#           data/processed/options_oi_by_strike.csv(.gz)
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+build_direction_signal.py
+Ziel: Erzeuge
+  data/processed/direction_signal.csv.gz
+mit folgendem, stabilen Schema:
+  symbol,dir,strength,next_expiry,nearest_dte,
+  focus_strike,focus_strike_7,focus_strike_30,focus_strike_60
 
-import os, io, csv, gzip, math
-import numpy as np
+Datenquellen (Priorität):
+1) options_signals.csv(.gz)      → dir/strength und ggf. focus_strike_* / expiry / dte
+2) options_oi_by_strike.csv(.gz) → Fallback: focus_strike + nearest expiry/dte
+3) options_oi_by_expiry.csv(.gz) → Fallback: nearest expiry/dte
+4) Minimal-Heuristik, falls kein dir/strength vorhanden (dir=0, strength=0)
+
+Alle Reader sind robust gg. alternative Spaltennamen (…7 / …7d, next_expiry / nearest_expiry etc.)
+"""
+
+import os, io, gzip, sys
 import pandas as pd
 from pathlib import Path
-from datetime import datetime
 
-BASE = Path("data/processed")
-OUTP = BASE / "direction_signal.csv.gz"
-BASE.mkdir(parents=True, exist_ok=True)
+PROC = Path("data/processed")
 
-def read_csv_auto(path_no_gz: Path) -> pd.DataFrame:
-    p = Path(path_no_gz)
-    gz = Path(str(path_no_gz) + ".gz")
+def _read_any(base: Path):
+    """Liest .csv oder .csv.gz; gibt DataFrame oder None zurück."""
+    csv = base.with_suffix(".csv")
+    gz  = base.with_suffix(".csv.gz")
+    if csv.exists():
+        return pd.read_csv(csv)
     if gz.exists():
-        return pd.read_csv(gz, compression="gzip")
-    if p.exists():
-        return pd.read_csv(p)
-    return pd.DataFrame()
+        with gzip.open(gz, "rt", encoding="utf-8") as f:
+            return pd.read_csv(f)
+    return None
 
-def coerce_num(s):
-    return pd.to_numeric(s, errors="coerce")
+def _pick_first_col(df, names, default=None):
+    for c in names:
+        if c in df.columns:
+            return c
+    return default
 
-# ---- Laden
-sumo = read_csv_auto(BASE / "options_oi_summary.csv")
-bystr = read_csv_auto(BASE / "options_oi_by_strike.csv")
-
-# defensive Defaults
-for c in ["call_oi","put_oi","total_oi","call_iv_w","put_iv_w"]:
-    if c in sumo.columns:
-        sumo[c] = coerce_num(sumo[c])
-
-if "expiry" in sumo.columns:
-    sumo["expiry"] = pd.to_datetime(sumo["expiry"], errors="coerce")
-
-need_cols = ["symbol","expiry","dte","strike","call_oi","put_oi","total_oi"]
-for c in need_cols:
-    if c not in bystr.columns:
-        bystr[c] = np.nan
-
-bystr["dte"]    = coerce_num(bystr["dte"]).astype("Int64")
-bystr["strike"] = coerce_num(bystr["strike"])
-for c in ["call_oi","put_oi","total_oi"]:
-    bystr[c] = coerce_num(bystr[c])
-if "expiry" in bystr.columns:
-    bystr["expiry"] = pd.to_datetime(bystr["expiry"], errors="coerce")
-
-# ---- einfache, robuste Richtungs-Heuristik (wie besprochen)
-def compute_dir_strength(gsum: pd.DataFrame) -> tuple[int,int]:
-    # Put/Call OI Ratio über alle Verfälle
-    put_sum  = coerce_num(gsum.get("put_oi", pd.Series(dtype=float))).fillna(0).sum()
-    call_sum = coerce_num(gsum.get("call_oi", pd.Series(dtype=float))).fillna(0).sum()
-    pc = float(put_sum / max(1.0, call_sum))
-
-    # IV-Skew (put - call), über Verfälle gemittelt
-    iv_put  = coerce_num(gsum.get("put_iv_w", pd.Series(dtype=float))).dropna()
-    iv_call = coerce_num(gsum.get("call_iv_w", pd.Series(dtype=float))).dropna()
-    iv_skew = float((iv_put - iv_call).mean()) if len(iv_put) and len(iv_call) else np.nan
-
-    # grober Trendfilter via nächster Preis-HV (wenn vorhanden in separatem File, hier 0)
-    trend = 0.0
-
-    # Gewichte (wie vorgeschlagen)
-    W1, W2, W3 = 0.6, 0.3, 0.2
-    pc_clip = min(3.0, max(0.3, pc))
-    raw = W1*((1.0/pc_clip) - 1.0) + W2*(-(iv_skew if not np.isnan(iv_skew) else 0.0)) + W3*(trend)
-
-    # Dead-zone
-    DEAD = 0.15
-    if abs(raw) < DEAD:
-        d = 0
-    else:
-        d = 1 if raw > 0 else -1
-
-    # Stärke 0..100 (sigmoid + lineare Skalierung)
-    def sigmoid(x):
-        return 1.0 / (1.0 + math.exp(-x))
-    strength = int(round(100.0 * sigmoid(abs(raw))))
-    return d, strength
-
-# ---- Focus-Strike je Horizont
-def pick_focus_for_horizon(df_sym: pd.DataFrame, horizon_days: int, dir_num: int) -> float | None:
-    if df_sym.empty:
-        return None
-    # Wunschfenster:
-    if horizon_days == 7:
-        win = df_sym[(df_sym["dte"].notna()) & (df_sym["dte"] >= 1) & (df_sym["dte"] <= 7)]
-        if win.empty:
-            # fallback: nächster DTE
-            k = df_sym["dte"].dropna()
-            if k.empty: return None
-            target = int(k[k>=0].min()) if (k>=0).any() else int(k.abs().min())
-            win = df_sym[df_sym["dte"] == target]
-    else:
-        # nimm den Verfall mit minimalem |DTE - horizon|
-        df_sym = df_sym[df_sym["dte"].notna()]
-        if df_sym.empty: return None
-        target = int((df_sym["dte"] - horizon_days).abs().idxmin())
-        # idxmin gibt Index → einzelne Zeilen holen (gleicher expiry)
-        exp = df_sym.loc[target, "expiry"] if "expiry" in df_sym.columns else None
-        if pd.isna(exp):
-            # fallback: genau diese Zeile als "Fenster"
-            win = df_sym.loc[[target]]
-        else:
-            win = df_sym[df_sym["expiry"] == exp]
-
-    if win.empty:
+def _coerce_float(x):
+    try:
+        return float(x)
+    except Exception:
         return None
 
-    # Auswahl je Richtung
-    if dir_num > 0 and "call_oi" in win.columns:
-        row = win.loc[win["call_oi"].idxmax()]
-    elif dir_num < 0 and "put_oi" in win.columns:
-        row = win.loc[win["put_oi"].idxmax()]
+def _coerce_int(x):
+    try:
+        v = int(float(x))
+        return v
+    except Exception:
+        return None
+
+def _norm_symbol(s):
+    try:
+        return str(s).strip()
+    except Exception:
+        return s
+
+def main():
+    PROC.mkdir(parents=True, exist_ok=True)
+
+    df_sig = _read_any(PROC / "options_signals")           # optional
+    df_bs  = _read_any(PROC / "options_oi_by_strike")      # optional
+    df_ex  = _read_any(PROC / "options_oi_by_expiry")      # optional
+
+    # ---- Basis-Tabelle (alle Symbole) bestimmen ----
+    symbols = set()
+    for df in (df_sig, df_bs, df_ex):
+        if df is not None:
+            sym_col = _pick_first_col(df, ["symbol","ticker","sym"], None)
+            if sym_col:
+                symbols |= set(map(_norm_symbol, df[sym_col].dropna().unique().tolist()))
+    symbols = sorted(list(symbols))
+
+    if not symbols:
+        print("WARN: Keine Symbolbasis gefunden. Schreibe leere Datei.", file=sys.stderr)
+        out_gz = PROC / "direction_signal.csv.gz"
+        with gzip.open(out_gz, "wt", encoding="utf-8", newline="") as f:
+            pd.DataFrame(columns=[
+                "symbol","dir","strength","next_expiry","nearest_dte",
+                "focus_strike","focus_strike_7","focus_strike_30","focus_strike_60"
+            ]).to_csv(f, index=False)
+        print("wrote", out_gz)
+        return
+
+    # ---- Spalten in options_signals erkennen ----
+    if df_sig is not None:
+        sc_sym   = _pick_first_col(df_sig, ["symbol","ticker","sym"])
+        sc_dir   = _pick_first_col(df_sig, ["dir","direction","signal_dir"])
+        sc_str   = _pick_first_col(df_sig, ["strength","score","signal_strength"])
+        sc_exp   = _pick_first_col(df_sig, ["next_expiry","nearest_expiry","expiry"])
+        sc_dte   = _pick_first_col(df_sig, ["nearest_dte","dte","days_to_expiry"])
+        sc_fs    = _pick_first_col(df_sig, ["focus_strike","strike","target_strike","focus"])
+        sc_fs7   = _pick_first_col(df_sig, ["focus_strike_7","focus_strike_7d","strike_7d"])
+        sc_fs30  = _pick_first_col(df_sig, ["focus_strike_30","focus_strike_30d","strike_30d"])
+        sc_fs60  = _pick_first_col(df_sig, ["focus_strike_60","focus_strike_60d","strike_60d"])
     else:
-        row = win.loc[win["total_oi"].idxmax()]
+        sc_sym=sc_dir=sc_str=sc_exp=sc_dte=sc_fs=sc_fs7=sc_fs30=sc_fs60=None
 
-    strike = float(row.get("strike", np.nan))
-    return None if np.isnan(strike) else strike
+    # ---- Spalten in by_strike erkennen ----
+    if df_bs is not None:
+        bs_sym  = _pick_first_col(df_bs, ["symbol","ticker","sym"])
+        bs_exp  = _pick_first_col(df_bs, ["expiry","next_expiry","nearest_expiry"])
+        bs_dte  = _pick_first_col(df_bs, ["dte","nearest_dte","days_to_expiry","days"])
+        bs_fs   = _pick_first_col(df_bs, ["focus_strike","strike_focus","max_oi_strike","strike_poc"])
+    else:
+        bs_sym=bs_exp=bs_dte=bs_fs=None
 
-# ---- Nächster Verfall (für allgemeines Focus-Strike)
-def nearest_block(df_sym: pd.DataFrame):
-    if df_sym.empty: return (None, None, None)
-    k = df_sym["dte"].dropna()
-    if k.empty: return (None, None, None)
-    dte = int(k[k>=0].min()) if (k>=0).any() else int(k.abs().min())
-    win = df_sym[df_sym["dte"] == dte]
-    exp = pd.NaT
-    if "expiry" in df_sym.columns:
-        exp = win["expiry"].iloc[0]
-    # Focus-Strike nahe Verfall (ohne Richtungsfilter → total_oi)
-    row = win.loc[win["total_oi"].idxmax()]
-    fs = float(row.get("strike", np.nan))
-    return (exp if not pd.isna(exp) else None, dte, (None if np.isnan(fs) else fs))
+    # ---- Spalten in by_expiry erkennen ----
+    if df_ex is not None:
+        ex_sym  = _pick_first_col(df_ex, ["symbol","ticker","sym"])
+        ex_exp  = _pick_first_col(df_ex, ["expiry","next_expiry","nearest_expiry"])
+        ex_dte  = _pick_first_col(df_ex, ["dte","nearest_dte","days_to_expiry","days"])
+    else:
+        ex_sym=ex_exp=ex_dte=None
 
-rows = []
-for sym, gsum in sumo.groupby("symbol", sort=False):
-    d, s = compute_dir_strength(gsum)
+    rows = []
+    for sym in symbols:
+        out = {
+            "symbol": sym,
+            "dir": 0,
+            "strength": 0,
+            "next_expiry": "",
+            "nearest_dte": None,
+            "focus_strike": None,
+            "focus_strike_7": None,
+            "focus_strike_30": None,
+            "focus_strike_60": None
+        }
 
-    # passendes by-strike Subset
-    gbs = bystr[bystr["symbol"] == sym].copy()
-    exp, ndte, fs_general = nearest_block(gbs)
+        # 1) options_signals → dir/strength/expiry/dte/focus_strikes
+        if df_sig is not None and sc_sym:
+            hit = df_sig[df_sig[sc_sym].astype(str).str.upper().eq(sym.upper())]
+            if hit.empty and "." in sym:
+                # EU-Suffix-Heuristik
+                base = sym.split(".", 1)[0]
+                hit = df_sig[df_sig[sc_sym].astype(str).str.upper().isin([sym.upper(), base.upper(), (base+".DE").upper(), (base+".PA").upper()])]
+            if not hit.empty:
+                r = hit.iloc[0]
+                if sc_dir: out["dir"] = _coerce_int(r.get(sc_dir)) or 0
+                if sc_str: out["strength"] = _coerce_int(r.get(sc_str)) or 0
+                if sc_exp: out["next_expiry"] = pd.to_datetime(r.get(sc_exp), errors="coerce").strftime("%Y-%m-%d") if pd.notnull(r.get(sc_exp)) else ""
+                if sc_dte: out["nearest_dte"] = _coerce_int(r.get(sc_dte))
+                if sc_fs:  out["focus_strike"] = _coerce_float(r.get(sc_fs))
+                if sc_fs7: out["focus_strike_7"] = _coerce_float(r.get(sc_fs7))
+                if sc_fs30:out["focus_strike_30"] = _coerce_float(r.get(sc_fs30))
+                if sc_fs60:out["focus_strike_60"] = _coerce_float(r.get(sc_fs60))
 
-    fs_7  = pick_focus_for_horizon(gbs, 7,  d)
-    fs_30 = pick_focus_for_horizon(gbs, 30, d)
-    fs_60 = pick_focus_for_horizon(gbs, 60, d)
+        # 2) Fallback: by_strike für expiry/dte + general focus_strike
+        if (not out["next_expiry"] or out["nearest_dte"] is None or out["focus_strike"] is None) and df_bs is not None and bs_sym:
+            hit = df_bs[df_bs[bs_sym].astype(str).str.upper().eq(sym.upper())]
+            if not hit.empty:
+                r = hit.iloc[0]
+                if (not out["next_expiry"]) and bs_exp:
+                    out["next_expiry"] = pd.to_datetime(r.get(bs_exp), errors="coerce").strftime("%Y-%m-%d") if pd.notnull(r.get(bs_exp)) else out["next_expiry"]
+                if (out["nearest_dte"] is None) and bs_dte:
+                    out["nearest_dte"] = _coerce_int(r.get(bs_dte)) or out["nearest_dte"]
+                if out["focus_strike"] is None and bs_fs:
+                    out["focus_strike"] = _coerce_float(r.get(bs_fs))
 
-    rows.append({
-        "symbol": sym,
-        "dir": int(d),
-        "strength": int(s),
-        "nearest_expiry": (exp.date().isoformat() if isinstance(exp, pd.Timestamp) else ""),
-        "nearest_dte": (int(ndte) if ndte is not None else ""),
-        "focus_strike": (fs_general if fs_general is not None else ""),
-        "focus_strike_7d":  (fs_7 if fs_7 is not None else ""),
-        "focus_strike_30d": (fs_30 if fs_30 is not None else ""),
-        "focus_strike_60d": (fs_60 if fs_60 is not None else "")
-    })
+        # 3) Fallback: by_expiry für expiry/dte
+        if (not out["next_expiry"] or out["nearest_dte"] is None) and df_ex is not None and ex_sym:
+            hit = df_ex[df_ex[ex_sym].astype(str).str.upper().eq(sym.upper())]
+            if not hit.empty:
+                r = hit.sort_values(by=ex_dte if ex_dte else ex_exp, ascending=True).iloc[0]
+                if not out["next_expiry"] and ex_exp:
+                    out["next_expiry"] = pd.to_datetime(r.get(ex_exp), errors="coerce").strftime("%Y-%m-%d") if pd.notnull(r.get(ex_exp)) else out["next_expiry"]
+                if out["nearest_dte"] is None and ex_dte:
+                    out["nearest_dte"] = _coerce_int(r.get(ex_dte)) or out["nearest_dte"]
 
-out_df = pd.DataFrame(rows, columns=[
-    "symbol","dir","strength","nearest_expiry","nearest_dte",
-    "focus_strike","focus_strike_7d","focus_strike_30d","focus_strike_60d"
-])
+        # 4) Dir/Strength minimal absichern
+        if out["dir"] not in (-1,0,1):
+            out["dir"] = 0
+        if out["strength"] is None or out["strength"] < 0:
+            out["strength"] = 0
+        if out["nearest_dte"] is not None and out["nearest_dte"] < 0:
+            out["nearest_dte"] = 0
 
-with gzip.open(str(OUTP), "wt", encoding="utf-8", newline="") as f:
-    out_df.to_csv(f, index=False)
+        rows.append(out)
 
-print("wrote", OUTP, "rows=", len(out_df))
+    out_df = pd.DataFrame(rows, columns=[
+        "symbol","dir","strength","next_expiry","nearest_dte",
+        "focus_strike","focus_strike_7","focus_strike_30","focus_strike_60"
+    ])
+
+    # konsistente Typen/Formats
+    out_df["next_expiry"] = pd.to_datetime(out_df["next_expiry"], errors="coerce").dt.strftime("%Y-%m-%d")
+    out_df["nearest_dte"] = pd.to_numeric(out_df["nearest_dte"], errors="coerce").fillna("").astype("Int64")
+
+    out_gz = PROC / "direction_signal.csv.gz"
+    with gzip.open(out_gz, "wt", encoding="utf-8", newline="") as f:
+        out_df.to_csv(f, index=False)
+    print("wrote", out_gz, "rows=", len(out_df))
+
+if __name__ == "__main__":
+    main()

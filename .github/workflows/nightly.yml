@@ -56,6 +56,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -174,6 +179,9 @@ jobs:
           } | awk 'NF>0' | sort -u > "$tmp"
 
           python scripts/fetch_options_oi.py --watchlist "$tmp"
+          test -s data/processed/options_oi_summary.csv || (echo "options_oi_summary leer!" && exit 1)
+          test -s data/processed/options_oi_by_expiry.csv || (echo "options_oi_by_expiry leer!" && exit 1)
+          test -s data/processed/options_oi_totals.csv || (echo "options_oi_totals leer!" && exit 1)
           head -n 40 data/processed/options_oi_summary.csv || true
           head -n 40 data/processed/options_oi_by_expiry.csv || true
           head -n 40 data/processed/options_oi_totals.csv || true
@@ -181,33 +189,39 @@ jobs:
       - name: Build max OI strike per symbol
         run: |
           python scripts/post_build_strike_max.py
+          test -s data/processed/options_oi_strike_max.csv || (echo "options_oi_strike_max leer!" && exit 1)
           head -n 20 data/processed/options_oi_strike_max.csv || true
 
       - name: Build options BY_STRIKE (aus Summary-TopStrikes)
         run: |
           python scripts/build_options_by_strike.py
+          test -s data/processed/options_oi_by_strike.csv || (echo "options_oi_by_strike leer!" && exit 1)
           head -n 40 data/processed/options_oi_by_strike.csv || true
 
       - name: Build options SIGNALS (pro Symbol)
         run: |
           python scripts/build_options_signals.py
+          test -s data/processed/options_signals.csv || (echo "options_signals leer!" && exit 1)
           head -n 40 data/processed/options_signals.csv || true
 
       # ---------- NEU: Direction-Signal (7/30/60 + Focus-Strike je Horizont) ----------
       - name: Build DIRECTION SIGNAL (7/30/60 strikes)
         run: |
           python scripts/build_direction_signal.py
+          test -s data/processed/direction_signal.csv.gz || (echo "direction_signal leer!" && exit 1)
           zcat data/processed/direction_signal.csv.gz | head -n 20 || true
 
       # ---- Standardisierte CSVs für AgenaTrader-Scanner ----
       - name: Build BY_EXPIRY standard CSV
         run: |
           python scripts/build_by_expiry.py
+          test -s data/processed/options_oi_by_expiry.csv || (echo "std by_expiry leer!" && exit 1)
           head -n 40 data/processed/options_oi_by_expiry.csv || true
 
       - name: Build BY_STRIKE standard CSV
         run: |
           python scripts/build_by_strike.py
+          test -s data/processed/options_oi_by_strike.csv || (echo "std by_strike leer!" && exit 1)
           head -n 40 data/processed/options_oi_by_strike.csv || true
 
       # -------------------- COT 20y: Disaggregated (Combined) ----------------
@@ -232,8 +246,7 @@ jobs:
           echo "== Pull 20y Disaggregated =="
           if ! python -u scripts/fetch_cot_20y.py \
                 --dataset "${COT_DISAGG_DATASET_ID}" \
-                --out "data/processed/cot_20y_disagg.csv.gz" \
-                --chunk-years 4 --batch-markets 8; then
+                --out "data/processed/cot_20y_disagg.csv.gz"; then
             echo "WARN: disagg pull failed (server 503?) – keep going"
           fi
 
@@ -262,8 +275,7 @@ jobs:
           echo "== Pull 20y TFF =="
           if ! python -u scripts/fetch_cot_20y.py \
                 --dataset "${COT_TFF_DATASET_ID}" \
-                --out "data/processed/cot_20y_tff.csv.gz" \
-                --chunk-years 4 --batch-markets 8; then
+                --out "data/processed/cot_20y_tff.csv.gz"; then
             echo "WARN: tff pull failed (server 503?) – keep going"
           fi
 
@@ -374,15 +386,15 @@ jobs:
           manifest = {
             "base": base,
             "datasets": {
-              "cot_20y_disagg": "/data/processed/cot_20y_disagg.csv.gz",
-              "cot_20y_tff":    "/data/processed/cot_20y_tff.csv.gz",
-              "options_by_expiry": "/data/processed/options_oi_by_expiry.csv.gz",
-              "options_totals":    "/data/processed/options_oi_totals.csv.gz",
-              "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
-              "options_strike_max":"/data/processed/options_oi_strike_max.csv.gz",
-              "options_signals":   "/data/processed/options_signals.csv.gz",
-              "direction_signal":  "/data/processed/direction_signal.csv.gz",
-              "fred_oas":          "/data/processed/fred_oas.csv.gz"
+              "cot_20y_disagg":      "/data/processed/cot_20y_disagg.csv.gz",
+              "cot_20y_tff":         "/data/processed/cot_20y_tff.csv.gz",
+              "options_by_expiry":   "/data/processed/options_oi_by_expiry.csv.gz",
+              "options_totals":      "/data/processed/options_oi_totals.csv.gz",
+              "options_by_strike":   "/data/processed/options_oi_by_strike.csv.gz",
+              "options_strike_max":  "/data/processed/options_oi_strike_max.csv.gz",
+              "options_signals":     "/data/processed/options_signals.csv.gz",
+              "direction_signal":    "/data/processed/direction_signal.csv.gz",
+              "fred_oas":            "/data/processed/fred_oas.csv.gz"
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)

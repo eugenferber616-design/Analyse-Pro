@@ -28,4 +28,7 @@ async-timeout>=4.0,<5
 pandas
 requests
 python-dateutil
+pandas
+requests
+urllib3
 

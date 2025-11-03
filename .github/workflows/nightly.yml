@@ -193,10 +193,11 @@ jobs:
           head -n 40 data/processed/options_signals.csv || true
 
       # ---------- NEU: Direction-Signal (erweitert) ----------
-      - name: Build DIRECTION signals (new)
+      - name: Build DIRECTION SIGNAL (7/30/60 strikes)
         run: |
           python scripts/build_direction_signal.py
-          head -n 40 data/processed/direction_signal.csv || true
+          zcat data/processed/direction_signal.csv.gz | head -n 20 || true
+
 
       # ---- Standardisierte CSVs für AgenaTrader-Scanner ----
       - name: Build BY_EXPIRY standard CSV
@@ -361,7 +362,7 @@ jobs:
               "options_totals":    "/data/processed/options_oi_totals.csv.gz",
               "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
               "options_strike_max":"/data/processed/options_oi_strike_max.csv.gz",
-              "options_signals":   "/data/processed/options_signals.csv.gz",
+              "direction_signal": "/data/processed/direction_signal.csv.gz",
               "direction_signal":  "/data/processed/direction_signal.csv.gz",
               "fred_oas":          "/data/processed/fred_oas.csv.gz"
             }

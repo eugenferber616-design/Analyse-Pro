@@ -1,180 +1,172 @@
 # scripts/build_direction_signal.py
-# Erzeugt data/processed/direction_signal.csv mit Spalten:
-# symbol, dir, strength, next_expiry, nearest_dte, focus_strike
+# Erstellt: data/processed/direction_signal.csv.gz
+# Quellen:  data/processed/options_oi_summary.csv(.gz)
+#           data/processed/options_oi_by_strike.csv(.gz)
 
-import os, math, gzip
+import os, io, csv, gzip, math
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from datetime import datetime
 
 BASE = Path("data/processed")
-OUTP = BASE / "direction_signal.csv"
-OUTP.parent.mkdir(parents=True, exist_ok=True)
+OUTP = BASE / "direction_signal.csv.gz"
+BASE.mkdir(parents=True, exist_ok=True)
 
-# ---------- Helper ----------
-def nz(x, v=0.0):
-    try:
-        return v if pd.isna(x) else float(x)
-    except Exception:
-        return v
+def read_csv_auto(path_no_gz: Path) -> pd.DataFrame:
+    p = Path(path_no_gz)
+    gz = Path(str(path_no_gz) + ".gz")
+    if gz.exists():
+        return pd.read_csv(gz, compression="gzip")
+    if p.exists():
+        return pd.read_csv(p)
+    return pd.DataFrame()
 
-def sigmoid(x):
-    # numerisch stabile Sigmoid
-    x = max(-20.0, min(20.0, float(x)))
-    return 1.0 / (1.0 + math.exp(-x))
+def coerce_num(s):
+    return pd.to_numeric(s, errors="coerce")
 
-def normalize_strength(raw_abs, conc=0.0):
-    # 0..100
-    base = sigmoid(raw_abs)  # 0..1
-    # Konzentration (0..1) erhöht die Sicherheit leicht
-    conf = base * (0.6 + 0.4 * max(0.0, min(1.0, conc)))
-    return int(round(conf * 100))
+# ---- Laden
+sumo = read_csv_auto(BASE / "options_oi_summary.csv")
+bystr = read_csv_auto(BASE / "options_oi_by_strike.csv")
 
-def herfindahl(series):
-    v = pd.to_numeric(series, errors="coerce").fillna(0.0).values
-    s = float(v.sum())
-    if s <= 0: return 0.0
-    return float(((v / s) ** 2).sum())
-
-def nearest_block(df_ex, today=None):
-    if df_ex is None or df_ex.empty: return None
-    g = df_ex.copy()
-    if "expiry" not in g.columns: return None
-    g["expiry"] = pd.to_datetime(g["expiry"], errors="coerce")
-    g = g.dropna(subset=["expiry"])
-    g["dte"] = (g["expiry"] - pd.Timestamp.today().normalize()).dt.days
-    g = g[g["dte"] >= 0]
-    if g.empty: return None
-    row = g.sort_values("dte", ascending=True).iloc[0]
-    fs = pd.to_numeric(row.get("focus_strike", np.nan), errors="coerce")
-    if pd.isna(fs):
-        # heuristisch: Strike mit max(total_oi) in diesem Verfall (falls vorhanden)
-        one = g[g["expiry"] == row["expiry"]]
-        if "total_oi" in one.columns and "strike" in one.columns:
-            _r = one.sort_values("total_oi", ascending=False).iloc[0]
-            fs = _r.get("strike", np.nan)
-    return dict(next_expiry=row["expiry"].date().isoformat(),
-                nearest_dte=int(row["dte"]),
-                focus_strike=None if pd.isna(fs) else float(fs))
-
-# ---------- 1) Wenn options_signals.csv existiert → direkt normieren ----------
-sig_csv = BASE / "options_signals.csv"
-if sig_csv.exists():
-    df = pd.read_csv(sig_csv)
-    # Erwartete Spalten: symbol, dir, strength, next_expiry, nearest_dte, focus_strike (oder Teilmenge)
-    cols = {c.lower(): c for c in df.columns}
-    out = []
-    for _, r in df.iterrows():
-        sym = str(r[cols.get("symbol")]).upper().strip()
-        if not sym: 
-            continue
-        dirv = int(nz(r.get(cols.get("dir"), np.nan), 0.0))
-        strength = int(round(nz(r.get(cols.get("strength"), np.nan), 0.0)))
-        nexp = r.get(cols.get("next_expiry")) if cols.get("next_expiry") else ""
-        ndte = r.get(cols.get("nearest_dte")) if cols.get("nearest_dte") else ""
-        fstr = r.get(cols.get("focus_strike")) if cols.get("focus_strike") else ""
-        out.append(dict(symbol=sym, dir=dirv, strength=int(max(0, min(100, strength))),
-                        next_expiry=nexp, nearest_dte=ndte, focus_strike=fstr))
-    pd.DataFrame(out).to_csv(OUTP, index=False)
-    print("wrote", OUTP, "rows=", len(out))
-    raise SystemExit(0)
-
-# ---------- 2) Sonst aus summary + by_expiry bauen (robust & simpel) ----------
-sumo = None
-byex = None
-
-try:
-    sumo = pd.read_csv(BASE / "options_oi_summary.csv")
-except Exception:
-    pass
-try:
-    byex = pd.read_csv(BASE / "options_oi_by_expiry.csv")
-except Exception:
-    pass
-
-if sumo is None or sumo.empty:
-    pd.DataFrame([], columns=["symbol","dir","strength","next_expiry","nearest_dte","focus_strike"]).to_csv(OUTP, index=False)
-    print("wrote", OUTP, "rows=0 (no inputs)")
-    raise SystemExit(0)
-
+# defensive Defaults
 for c in ["call_oi","put_oi","total_oi","call_iv_w","put_iv_w"]:
     if c in sumo.columns:
-        sumo[c] = pd.to_numeric(sumo[c], errors="coerce")
+        sumo[c] = coerce_num(sumo[c])
 
-if byex is not None and not byex.empty:
-    for c in ["call_oi","put_oi","total_oi","strike"]:
-        if c in byex.columns:
-            byex[c] = pd.to_numeric(byex[c], errors="coerce")
-    if "expiry" in byex.columns:
-        byex["expiry"] = pd.to_datetime(byex["expiry"], errors="coerce")
+if "expiry" in sumo.columns:
+    sumo["expiry"] = pd.to_datetime(sumo["expiry"], errors="coerce")
 
-W1 = float(os.getenv("DIR_W_PCR", 0.6))
-W2 = float(os.getenv("DIR_W_IV", 0.3))
-W3 = float(os.getenv("DIR_W_TR", 0.2))
-DEAD = float(os.getenv("DIR_DEAD", 0.15))
-WALL_DTE = int(os.getenv("DIR_WALL_DTE", 7))
-WALL_DAMP = float(os.getenv("DIR_WALL_DAMP", 0.6))
-PC_MIN = float(os.getenv("DIR_PC_MIN", 0.3))
-PC_MAX = float(os.getenv("DIR_PC_MAX", 3.0))
+need_cols = ["symbol","expiry","dte","strike","call_oi","put_oi","total_oi"]
+for c in need_cols:
+    if c not in bystr.columns:
+        bystr[c] = np.nan
 
-out = []
-for sym, g in sumo.groupby("symbol", sort=False):
-    symU = str(sym).upper().strip()
-    if not symU:
-        continue
+bystr["dte"]    = coerce_num(bystr["dte"]).astype("Int64")
+bystr["strike"] = coerce_num(bystr["strike"])
+for c in ["call_oi","put_oi","total_oi"]:
+    bystr[c] = coerce_num(bystr[c])
+if "expiry" in bystr.columns:
+    bystr["expiry"] = pd.to_datetime(bystr["expiry"], errors="coerce")
 
-    put_sum  = nz(g.get("put_oi", np.nan).sum(), 0.0)
-    call_sum = nz(g.get("call_oi", np.nan).sum(), 0.0)
-    pc = put_sum / max(1.0, call_sum)
-    pc = max(PC_MIN, min(PC_MAX, pc))
+# ---- einfache, robuste Richtungs-Heuristik (wie besprochen)
+def compute_dir_strength(gsum: pd.DataFrame) -> tuple[int,int]:
+    # Put/Call OI Ratio über alle Verfälle
+    put_sum  = coerce_num(gsum.get("put_oi", pd.Series(dtype=float))).fillna(0).sum()
+    call_sum = coerce_num(gsum.get("call_oi", pd.Series(dtype=float))).fillna(0).sum()
+    pc = float(put_sum / max(1.0, call_sum))
 
-    iv_call = pd.to_numeric(g.get("call_iv_w", np.nan), errors="coerce")
-    iv_put  = pd.to_numeric(g.get("put_iv_w",  np.nan), errors="coerce")
-    iv_skew = float((iv_put - iv_call).dropna().mean()) if iv_put is not None else 0.0   # >0 = Down-Bias
+    # IV-Skew (put - call), über Verfälle gemittelt
+    iv_put  = coerce_num(gsum.get("put_iv_w", pd.Series(dtype=float))).dropna()
+    iv_call = coerce_num(gsum.get("call_iv_w", pd.Series(dtype=float))).dropna()
+    iv_skew = float((iv_put - iv_call).mean()) if len(iv_put) and len(iv_call) else np.nan
 
-    # einfacher Trend-Proxy: total_oi Slope über Expiries (wenn vorhanden)
-    tr = 0.0
-    try:
-        x = pd.to_numeric(g.get("total_oi"), errors="coerce").fillna(0.0).values
-        if x.size >= 3:
-            # lineare Steigung
-            xi = np.arange(x.size)
-            coef = np.polyfit(xi, x, 1)[0]
-            tr = np.sign(coef)
-    except Exception:
-        pass
+    # grober Trendfilter via nächster Preis-HV (wenn vorhanden in separatem File, hier 0)
+    trend = 0.0
 
-    raw = (W1 * (1.0 / pc - 1.0)) + (W2 * (-iv_skew)) + (W3 * tr)
-    dir_num = 0
-    if raw > DEAD: dir_num = 1
-    elif raw < -DEAD: dir_num = -1
+    # Gewichte (wie vorgeschlagen)
+    W1, W2, W3 = 0.6, 0.3, 0.2
+    pc_clip = min(3.0, max(0.3, pc))
+    raw = W1*((1.0/pc_clip) - 1.0) + W2*(-(iv_skew if not np.isnan(iv_skew) else 0.0)) + W3*(trend)
 
-    # Konzentration über Expiry (Herfindahl) – nur zur Confidence
-    conc = 0.0
-    if byex is not None and not byex.empty:
-        ge = byex[byex["symbol"].str.upper() == symU] if "symbol" in byex.columns else None
-        if ge is not None and not ge.empty and "total_oi" in ge.columns:
-            conc = herfindahl(ge.groupby("expiry")["total_oi"].sum())
-
-        # Wall-Bremse + Next-Block/Strike
-        nb = nearest_block(ge)
+    # Dead-zone
+    DEAD = 0.15
+    if abs(raw) < DEAD:
+        d = 0
     else:
-        ge = None
-        nb = None
+        d = 1 if raw > 0 else -1
 
-    if nb:
-        if nb["nearest_dte"] <= WALL_DTE and (ge is not None and not ge.empty):
-            # „nahe Wall“ → Dämpfen
-            raw *= WALL_DAMP
-        strength = normalize_strength(abs(raw), conc=conc)
-        out.append(dict(symbol=symU, dir=dir_num, strength=strength,
-                        next_expiry=nb.get("next_expiry",""),
-                        nearest_dte=nb.get("nearest_dte",""),
-                        focus_strike=nb.get("focus_strike","")))
+    # Stärke 0..100 (sigmoid + lineare Skalierung)
+    def sigmoid(x):
+        return 1.0 / (1.0 + math.exp(-x))
+    strength = int(round(100.0 * sigmoid(abs(raw))))
+    return d, strength
+
+# ---- Focus-Strike je Horizont
+def pick_focus_for_horizon(df_sym: pd.DataFrame, horizon_days: int, dir_num: int) -> float | None:
+    if df_sym.empty:
+        return None
+    # Wunschfenster:
+    if horizon_days == 7:
+        win = df_sym[(df_sym["dte"].notna()) & (df_sym["dte"] >= 1) & (df_sym["dte"] <= 7)]
+        if win.empty:
+            # fallback: nächster DTE
+            k = df_sym["dte"].dropna()
+            if k.empty: return None
+            target = int(k[k>=0].min()) if (k>=0).any() else int(k.abs().min())
+            win = df_sym[df_sym["dte"] == target]
     else:
-        strength = normalize_strength(abs(raw), conc=conc)
-        out.append(dict(symbol=symU, dir=dir_num, strength=strength,
-                        next_expiry="", nearest_dte="", focus_strike=""))
+        # nimm den Verfall mit minimalem |DTE - horizon|
+        df_sym = df_sym[df_sym["dte"].notna()]
+        if df_sym.empty: return None
+        target = int((df_sym["dte"] - horizon_days).abs().idxmin())
+        # idxmin gibt Index → einzelne Zeilen holen (gleicher expiry)
+        exp = df_sym.loc[target, "expiry"] if "expiry" in df_sym.columns else None
+        if pd.isna(exp):
+            # fallback: genau diese Zeile als "Fenster"
+            win = df_sym.loc[[target]]
+        else:
+            win = df_sym[df_sym["expiry"] == exp]
 
-pd.DataFrame(out).to_csv(OUTP, index=False)
-print("wrote", OUTP, "rows=", len(out))
+    if win.empty:
+        return None
+
+    # Auswahl je Richtung
+    if dir_num > 0 and "call_oi" in win.columns:
+        row = win.loc[win["call_oi"].idxmax()]
+    elif dir_num < 0 and "put_oi" in win.columns:
+        row = win.loc[win["put_oi"].idxmax()]
+    else:
+        row = win.loc[win["total_oi"].idxmax()]
+
+    strike = float(row.get("strike", np.nan))
+    return None if np.isnan(strike) else strike
+
+# ---- Nächster Verfall (für allgemeines Focus-Strike)
+def nearest_block(df_sym: pd.DataFrame):
+    if df_sym.empty: return (None, None, None)
+    k = df_sym["dte"].dropna()
+    if k.empty: return (None, None, None)
+    dte = int(k[k>=0].min()) if (k>=0).any() else int(k.abs().min())
+    win = df_sym[df_sym["dte"] == dte]
+    exp = pd.NaT
+    if "expiry" in df_sym.columns:
+        exp = win["expiry"].iloc[0]
+    # Focus-Strike nahe Verfall (ohne Richtungsfilter → total_oi)
+    row = win.loc[win["total_oi"].idxmax()]
+    fs = float(row.get("strike", np.nan))
+    return (exp if not pd.isna(exp) else None, dte, (None if np.isnan(fs) else fs))
+
+rows = []
+for sym, gsum in sumo.groupby("symbol", sort=False):
+    d, s = compute_dir_strength(gsum)
+
+    # passendes by-strike Subset
+    gbs = bystr[bystr["symbol"] == sym].copy()
+    exp, ndte, fs_general = nearest_block(gbs)
+
+    fs_7  = pick_focus_for_horizon(gbs, 7,  d)
+    fs_30 = pick_focus_for_horizon(gbs, 30, d)
+    fs_60 = pick_focus_for_horizon(gbs, 60, d)
+
+    rows.append({
+        "symbol": sym,
+        "dir": int(d),
+        "strength": int(s),
+        "nearest_expiry": (exp.date().isoformat() if isinstance(exp, pd.Timestamp) else ""),
+        "nearest_dte": (int(ndte) if ndte is not None else ""),
+        "focus_strike": (fs_general if fs_general is not None else ""),
+        "focus_strike_7d":  (fs_7 if fs_7 is not None else ""),
+        "focus_strike_30d": (fs_30 if fs_30 is not None else ""),
+        "focus_strike_60d": (fs_60 if fs_60 is not None else "")
+    })
+
+out_df = pd.DataFrame(rows, columns=[
+    "symbol","dir","strength","nearest_expiry","nearest_dte",
+    "focus_strike","focus_strike_7d","focus_strike_30d","focus_strike_60d"
+])
+
+with gzip.open(str(OUTP), "wt", encoding="utf-8", newline="") as f:
+    out_df.to_csv(f, index=False)
+
+print("wrote", OUTP, "rows=", len(out_df))

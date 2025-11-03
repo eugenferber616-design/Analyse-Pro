@@ -8,6 +8,7 @@
     "options_by_strike": "/data/processed/options_oi_by_strike.csv.gz",
     "options_strike_max": "/data/processed/options_oi_strike_max.csv.gz",
     "options_signals": "/data/processed/options_signals.csv.gz",
+    "direction_signal": "/data/processed/direction_signal.csv.gz",
     "fred_oas": "/data/processed/fred_oas.csv.gz"
   }
 }

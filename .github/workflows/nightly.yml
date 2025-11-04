@@ -34,8 +34,8 @@ jobs:
 
       # COT – Socrata Basis
       CFTC_API_BASE:         "https://publicreporting.cftc.gov/resource"
-      COT_DISAGG_DATASET_ID: "kh3c-gbw2"   # Disaggregated (F+O Combined)
-      COT_TFF_DATASET_ID:    "yw9f-hn96"   # TFF (F+O Combined)
+      COT_DISAGG_DATASET_ID: "kh3c-gbw2"
+      COT_TFF_DATASET_ID:    "yw9f-hn96"
       COT_YEARS:             "20"
       COT_MARKETS_MODE:      "SMART"        # "ALL" | "FILE" | "LIST"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
@@ -43,6 +43,9 @@ jobs:
       SOC_RETRIES:           "8"
       SOC_BACKOFF:           "2.0"
       SOC_LIMIT:             "20000"
+
+      # FRED
+      FRED_START: "2003-01-01"
 
       # lokale Module auffindbar
       PYTHONPATH: "."
@@ -65,11 +68,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # sicherstellen, dass yfinance vorhanden ist (für market_core)
+          pip install --upgrade yfinance
           pip install --upgrade pyarrow fastparquet
 
       - name: Init cache DB
         run: |
-          mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/processed data/reports docs watchlists
+          mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/market/core data/processed data/reports docs watchlists
           python - << 'PY'
           import os, sqlite3
           db_path = os.path.join('data','cache','cache.db')
@@ -314,7 +319,7 @@ jobs:
           PY
           rm -f data/market/stooq/*.csv || true
 
-      # ===================== NEU: RiskIndex Build ============================
+      # ===================== RiskIndex Inputs (Core) =========================
       - name: Fetch FRED core (macro & OAS)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -327,6 +332,15 @@ jobs:
         run: |
           python scripts/fetch_market_core.py
           zcat data/processed/market_core.csv.gz | head -n 5 || true
+
+      - name: Sanity check RiskIndex inputs
+        shell: bash
+        run: |
+          echo "== processed listing =="
+          ls -lh data/processed || true
+          echo "== core head =="
+          [ -f data/processed/fred_core.csv.gz ]   && zcat data/processed/fred_core.csv.gz   | head -n 3 || echo "no fred_core"
+          [ -f data/processed/market_core.csv.gz ] && zcat data/processed/market_core.csv.gz | head -n 3 || echo "no market_core"
 
       - name: (optional) Assemble prices parquet (if CSVs exist)
         run: |

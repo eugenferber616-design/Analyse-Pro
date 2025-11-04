@@ -320,7 +320,12 @@ jobs:
           PY
           rm -f data/market/stooq/*.csv || true
 
-      # ===================== RiskIndex Inputs (Core) =========================
+          # ===================== RiskIndex Inputs (Core) =========================
+      - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)
+        run: |
+          python scripts/fetch_market_core.py
+          zcat data/processed/market_core.csv.gz | head -n 5 || true
+
       - name: Fetch FRED core (macro & OAS)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -329,18 +334,14 @@ jobs:
           zcat data/processed/fred_core.csv.gz | head -n 5 || true
           zcat data/processed/fred_oas.csv.gz  | head -n 5 || true
 
-      - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)
-        run: |
-          python scripts/fetch_market_core.py
-          zcat data/processed/market_core.csv.gz | head -n 5 || true
-
       - name: Sanity check RiskIndex inputs
         shell: bash
         run: |
           echo "== processed listing =="; ls -lh data/processed || true
           echo "== core head =="
-          [ -f data/processed/fred_core.csv.gz ]   && zcat data/processed/fred_core.csv.gz   | head -n 3 || echo "no fred_core"
           [ -f data/processed/market_core.csv.gz ] && zcat data/processed/market_core.csv.gz | head -n 3 || echo "no market_core"
+          [ -f data/processed/fred_core.csv.gz   ] && zcat data/processed/fred_core.csv.gz   | head -n 3 || echo "no fred_core"
+
 
       - name: (optional) Assemble prices parquet (if CSVs exist)
         run: |

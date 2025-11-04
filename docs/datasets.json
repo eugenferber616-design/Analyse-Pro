@@ -9,6 +9,10 @@
     "options_strike_max": "/data/processed/options_oi_strike_max.csv.gz",
     "options_signals": "/data/processed/options_signals.csv.gz",
     "direction_signal": "/data/processed/direction_signal.csv.gz",
-    "fred_oas": "/data/processed/fred_oas.csv.gz"
+    "fred_core": "/data/processed/fred_core.csv.gz",
+    "fred_oas": "/data/processed/fred_oas.csv.gz",
+    "market_core": "/data/processed/market_core.csv.gz",
+    "riskindex_snapshot": "/data/processed/riskindex_snapshot.json.gz",
+    "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz"
   }
 }

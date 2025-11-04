@@ -315,6 +315,19 @@ jobs:
           PY
           rm -f data/market/stooq/*.csv || true
 
+      - name: Fetch FRED core (API)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python scripts/fetch_fred_core.py
+          zcat data/processed/fred_core.csv.gz | head -n 3 || true
+
+      - name: Fetch MARKET core (yfinance)
+        run: |
+          python scripts/fetch_market_core.py --days 2200
+          zcat data/processed/market_core.csv.gz | head -n 3 || true
+
+
       # ===================== NEU: RiskIndex Build ============================
       - name: Fetch FRED core (macro & OAS)
         env:

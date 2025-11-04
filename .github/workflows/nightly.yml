@@ -327,6 +327,13 @@ jobs:
           python scripts/fetch_market_core.py --days 2200
           zcat data/processed/market_core.csv.gz | head -n 3 || true
 
+      - name: Build MARKET core (yfinance)
+        run: |
+          python scripts/build_market_core.py
+          test -s data/processed/market_core.csv.gz || (echo "market_core fehlt!" && exit 1)
+          zcat data/processed/market_core.csv.gz | head -n 3 || true
+
+
 
       # ===================== NEU: RiskIndex Build ============================
       - name: Fetch FRED core (macro & OAS)

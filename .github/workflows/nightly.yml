@@ -315,6 +315,20 @@ jobs:
           PY
           rm -f data/market/stooq/*.csv || true
 
+      # ===================== NEU: RiskIndex Build ============================
+      - name: (optional) Assemble prices parquet (if CSVs exist)
+        run: |
+          # Falls du ein eigenes Parquet-Build-Skript hast, hier aufrufen; ansonsten überspringen.
+          if [ -f "scripts/build_prices_parquet.py" ]; then
+            python scripts/build_prices_parquet.py || true
+          fi
+
+      - name: Build RiskIndex snapshot & timeseries
+        run: |
+          python scripts/build_riskindex.py
+          test -s data/processed/riskindex_snapshot.json || (echo "riskindex_snapshot fehlt!" && exit 1)
+          test -s data/processed/riskindex_timeseries.csv || echo "riskindex_timeseries leer/fehlend (ok)"
+
       # ===================== ALLES KOMPRIMIEREN ====================
       - name: Compress ALL processed & docs to .gz
         shell: bash
@@ -394,7 +408,9 @@ jobs:
               "options_strike_max":  "/data/processed/options_oi_strike_max.csv.gz",
               "options_signals":     "/data/processed/options_signals.csv.gz",
               "direction_signal":    "/data/processed/direction_signal.csv.gz",
-              "fred_oas":            "/data/processed/fred_oas.csv.gz"
+              "fred_oas":            "/data/processed/fred_oas.csv.gz",
+              "riskindex_snapshot":  "/data/processed/riskindex_snapshot.json.gz",
+              "riskindex_timeseries":"/data/processed/riskindex_timeseries.csv.gz"
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
@@ -410,7 +426,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (no LLM, add direction_signal, all .gz to R2)" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (no LLM) + RiskIndex snapshot/timeseries + direction_signal" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

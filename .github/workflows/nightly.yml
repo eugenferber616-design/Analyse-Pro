@@ -316,9 +316,21 @@ jobs:
           rm -f data/market/stooq/*.csv || true
 
       # ===================== NEU: RiskIndex Build ============================
+      - name: Fetch FRED core (macro & OAS)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python scripts/fetch_fred_core.py
+          zcat data/processed/fred_core.csv.gz | head -n 5 || true
+          zcat data/processed/fred_oas.csv.gz  | head -n 5 || true
+
+      - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)
+        run: |
+          python scripts/fetch_market_core.py
+          zcat data/processed/market_core.csv.gz | head -n 5 || true
+
       - name: (optional) Assemble prices parquet (if CSVs exist)
         run: |
-          # Falls du ein eigenes Parquet-Build-Skript hast, hier aufrufen; ansonsten überspringen.
           if [ -f "scripts/build_prices_parquet.py" ]; then
             python scripts/build_prices_parquet.py || true
           fi
@@ -328,6 +340,8 @@ jobs:
           python scripts/build_riskindex.py
           test -s data/processed/riskindex_snapshot.json || (echo "riskindex_snapshot fehlt!" && exit 1)
           test -s data/processed/riskindex_timeseries.csv || echo "riskindex_timeseries leer/fehlend (ok)"
+          head -n 5 data/processed/riskindex_timeseries.csv || true
+          cat data/processed/riskindex_snapshot.json || true
 
       # ===================== ALLES KOMPRIMIEREN ====================
       - name: Compress ALL processed & docs to .gz
@@ -400,17 +414,19 @@ jobs:
           manifest = {
             "base": base,
             "datasets": {
-              "cot_20y_disagg":      "/data/processed/cot_20y_disagg.csv.gz",
-              "cot_20y_tff":         "/data/processed/cot_20y_tff.csv.gz",
-              "options_by_expiry":   "/data/processed/options_oi_by_expiry.csv.gz",
-              "options_totals":      "/data/processed/options_oi_totals.csv.gz",
-              "options_by_strike":   "/data/processed/options_oi_by_strike.csv.gz",
-              "options_strike_max":  "/data/processed/options_oi_strike_max.csv.gz",
-              "options_signals":     "/data/processed/options_signals.csv.gz",
-              "direction_signal":    "/data/processed/direction_signal.csv.gz",
-              "fred_oas":            "/data/processed/fred_oas.csv.gz",
-              "riskindex_snapshot":  "/data/processed/riskindex_snapshot.json.gz",
-              "riskindex_timeseries":"/data/processed/riskindex_timeseries.csv.gz"
+              "cot_20y_disagg":       "/data/processed/cot_20y_disagg.csv.gz",
+              "cot_20y_tff":          "/data/processed/cot_20y_tff.csv.gz",
+              "options_by_expiry":    "/data/processed/options_oi_by_expiry.csv.gz",
+              "options_totals":       "/data/processed/options_oi_totals.csv.gz",
+              "options_by_strike":    "/data/processed/options_oi_by_strike.csv.gz",
+              "options_strike_max":   "/data/processed/options_oi_strike_max.csv.gz",
+              "options_signals":      "/data/processed/options_signals.csv.gz",
+              "direction_signal":     "/data/processed/direction_signal.csv.gz",
+              "fred_core":            "/data/processed/fred_core.csv.gz",
+              "fred_oas":             "/data/processed/fred_oas.csv.gz",
+              "market_core":          "/data/processed/market_core.csv.gz",
+              "riskindex_snapshot":   "/data/processed/riskindex_snapshot.json.gz",
+              "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz"
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)

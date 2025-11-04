@@ -1,9 +1,9 @@
 {
-  "ts": "2025-11-03T02:27:52.891400Z",
+  "ts": "2025-11-04T02:19:56.512844Z",
   "watchlist": "watchlists/mylist.txt",
   "symbols": 19,
-  "rows_summary": 198,
-  "rows_by_expiry": 198,
+  "rows_summary": 196,
+  "rows_by_expiry": 196,
   "rows_by_strike": 2382,
   "errors": [
     {

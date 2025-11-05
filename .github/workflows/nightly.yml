@@ -136,7 +136,7 @@ jobs:
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
           # schreibt automatisch nach data/processed/earnings_results.csv[.gz]
-          python scripts/fetch_earnings_v2.py --watchlist "${WATCHLIST_STOCKS}" --limit 40 --use-yf
+          python scripts/fetch_earnings.py --watchlist "${WATCHLIST_STOCKS}" --limit 40 --use-yf
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
       - name: Pull ETF basics (Finnhub)

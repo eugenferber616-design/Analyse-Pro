@@ -35,7 +35,7 @@ def _read_df(p: Path) -> pd.DataFrame:
     except Exception as e:
         print(f"WARN: CSV-Read fehlgeschlagen ({p}): {e}")
         return pd.DataFrame()
-    # Spaltennamen normieren
+    # Spaltennamen normieren (noch nicht case-verändert)
     df.columns = [str(c).strip() for c in df.columns]
     # Datums-Spalte finden
     date_col = None
@@ -44,7 +44,6 @@ def _read_df(p: Path) -> pd.DataFrame:
             date_col = cand
             break
     if date_col is None:
-        # 1. Spalte als Fallback
         date_col = df.columns[0]
     try:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce", utc=True).dt.tz_localize(None)
@@ -83,11 +82,6 @@ def _last(s: pd.Series | None) -> float | None:
 def _has(df: pd.DataFrame, col: str) -> bool:
     return (not df.empty) and (col in df.columns)
 
-def _warn_missing(cols: list[str], dfname: str):
-    miss = [c for c in cols if c not in cols_available]
-    if miss:
-        print(f"WARN: {dfname} ohne erwartete Spalten: {', '.join(miss)}")
-
 # --------- Main ---------
 def main() -> int:
     OUTDIR.mkdir(parents=True, exist_ok=True)
@@ -105,6 +99,16 @@ def main() -> int:
     if not dfM.empty: dfM = _daily_ffill(dfM)
     if not dfO.empty: dfO = _daily_ffill(dfO)
 
+    # WICHTIG: Case-Normalisierung
+    # - FRED/OAS bleiben in UPPERCASE (so wie referenziert)
+    # - MARKET wurde im Fetch-Skript evtl. lowercase geschrieben → hier auf UPPERCASE heben
+    if not dfM.empty:
+        dfM.columns = [str(c).strip().upper() for c in dfM.columns]
+    if not dfF.empty:
+        dfF.columns = [str(c).strip().upper() for c in dfF.columns]
+    if not dfO.empty:
+        dfO.columns = [str(c).strip().upper() for c in dfO.columns]
+
     # Join aller verfügbaren Quellen
     dfs = [d for d in (dfF, dfM, dfO) if not d.empty]
     df  = pd.concat(dfs, axis=1).sort_index().ffill()
@@ -112,19 +116,7 @@ def main() -> int:
         print("WARN: Nach Join keine Daten – Snapshot übersprungen.")
         return 0
 
-    # Erwartete Spaltennamen (so wie deine Fetch-Skripte sie schreiben)
-    # FRED:
-    fred_cols = [
-        "DGS30","DGS10","DGS2","DGS3MO","SOFR","RRPONTSYD","STLFSI4",
-        "WALCL","WTREGEN","WRESBAL"
-    ]
-    # Market:
-    mkt_cols = ["VIX","VIX3M","DXY","USDJPY","HYG","LQD","XLF","SPY"]
-    # OAS:
-    oas_cols = ["IG_OAS","HY_OAS"]
-
     # Verfügbare Cols merken
-    global cols_available
     cols_available = set(df.columns)
 
     # --- Z-Reihen bauen (wo möglich) ---
@@ -137,8 +129,10 @@ def main() -> int:
     rrp_pct  = S("RRPONTSYD").rank(pct=True)                      if S("RRPONTSYD") is not None else None
     z_stlfsi = _zscore(S("STLFSI4"), W)                           if S("STLFSI4") is not None else None
 
+    # Market
     z_vix    = _zscore(S("VIX"), W)                               if S("VIX") is not None else None
-    z_vxterm = _zscore(S("VIX") - S("VIX3M"), W)                  if S("VIX") is not None and S("VIX3M") is not None else None
+    # VX-Termstruktur richtig herum: VIX3M - VIX (positiv = entspannter)
+    z_vxterm = _zscore(S("VIX3M") - S("VIX"), W)                  if S("VIX3M") is not None and S("VIX") is not None else None
     z_dxy    = _zscore(S("DXY"), W)                               if S("DXY") is not None else None
 
     if S("USDJPY") is not None:
@@ -184,16 +178,19 @@ def main() -> int:
         "sofr"   : _score_from_z(_last(z_sofr30)),
         "rrp"    : (1.0 - float(_last(rrp_pct))) * 100.0 if rrp_pct is not None and _last(rrp_pct) is not None else None,
         "stlfsi" : _score_from_z(_last(z_stlfsi)),
+
         "vix"    : _score_from_z(_last(z_vix)),
         "usdvol" : _score_from_z(_last(z_usdvol)),
         "dxy"    : _score_from_z(_last(z_dxy)),
         "cr"     : _score_from_z(_last(z_cr30)),
         "vxterm" : _score_from_z(_last(z_vxterm)),
+
         "10s2s"  : _score_from_z(_last(z_10s2),  invert=True),
         "10s3m"  : _score_from_z(_last(z_10s3m), invert=True),
         "relfin" : _score_from_z(_last(z_relfin30), invert=True),
         "ust10v" : _score_from_z(_last(z_ust10v)),
         "netliq" : _score_from_z(_last(z_netliq30), invert=True),
+
         "ig_oas" : _score_from_z(_last(z_ig_oas)) if z_ig_oas is not None else None,
         "hy_oas" : _score_from_z(_last(z_hy_oas)) if z_hy_oas is not None else None,
     }
@@ -201,7 +198,7 @@ def main() -> int:
     sc_vals = [v for v in scores.values() if v is not None]
     sc_comp = float(sum(sc_vals)/len(sc_vals)) if sc_vals else None
 
-    # --- Regime-Logik (wie gehabt, mit Guards) ---
+    # --- Regime-Logik (Guarded) ---
     def is_red(v): return v is not None and v >= 70
     gate_hits = sum(is_red(scores.get(k)) for k in ["cr","vix","vxterm","ust10v","relfin","10s2s","10s3m"])
     fs_score  = 2 if (is_red(scores.get("vix")) and is_red(scores.get("cr"))) else (1 if is_red(scores.get("vix")) else 0)
@@ -258,7 +255,6 @@ def main() -> int:
     zlist = [z for z in (z_dgs30, z_2s30s, z_sofr30, z_stlfsi, z_vix, z_usdvol, z_dxy, z_cr30,
                          z_vxterm, z_10s2, z_10s3m, z_relfin30, z_ust10v, z_netliq30) if z is not None]
     if zlist:
-        # Gemeinsame Index-Union und täglich füllen
         idx = df.index
         rows = []
         for dt in idx:

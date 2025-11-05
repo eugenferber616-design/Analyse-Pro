@@ -79,7 +79,7 @@ def normalize_finnhub(sym, prof, m):
         "pb": num(g("pbAnnual","pbQuarterly")),
         "ev_ebitda": num(g("evToEbitdaAnnual","evToEbitdaTTM")),
         "gross_margin": num(g("grossMarginTTM","grossMarginAnnual")),
-        "op_margin": num(g("operatingMarginTTM","operatingMarginAnnual")),
+        "oper_margin": num(g("operatingMarginTTM","operatingMarginAnnual")),
         "net_margin": num(g("netProfitMarginTTM","netProfitMarginAnnual")),
         "roic": num(g("roicTTM","roicAnnual")),
         "roe": num(g("roeTTM","roeAnnual")),
@@ -116,7 +116,7 @@ def av_overview(sym: str) -> Dict[str,Any]:
         "pb": num(j.get("PriceToBookRatio")),
         "ev_ebitda": num(j.get("EVToEBITDA")),
         "gross_margin": None,
-        "op_margin": None,
+        "oper_margin": None,
         "net_margin": num(j.get("ProfitMargin")),
         "roic": None,
         "roe": num(j.get("ReturnOnEquityTTM")),
@@ -160,7 +160,7 @@ def simfin_core(sym: str) -> Dict[str,Any]:
             "pb": num(ratios.get("pbTTM")),
             "ev_ebitda": None,
             "gross_margin": num(ratios.get("grossMarginTTM")),
-            "op_margin": num(ratios.get("operatingMarginTTM")),
+            "oper_margin": num(ratios.get("operatingMarginTTM")),
             "net_margin": num(ratios.get("netProfitMarginTTM")),
             "roic": num(ratios.get("roicTTM")),
             "roe": num(ratios.get("roeTTM")),
@@ -203,7 +203,7 @@ def yf_core(sym: str) -> Dict[str,Any]:
         "pb": gi("priceToBook"),
         "ev_ebitda": gi("enterpriseToEbitda"),
         "gross_margin": gi("grossMargins"),
-        "op_margin": gi("operatingMargins"),
+        "oper_margin": gi("operatingMargins"),
         "net_margin": gi("profitMargins"),
         "roic": None,
         "roe": gi("returnOnEquity"),
@@ -288,7 +288,7 @@ def main():
 
     # DataFrame & Persist
     cols = ["symbol","name","exchange","country","industry","currency",
-            "pe","ps","pb","ev_ebitda","gross_margin","op_margin","net_margin",
+            "pe","ps","pb","ev_ebitda","gross_margin","oper_margin","net_margin",
             "roic","roe","debt_to_equity","net_debt","fcf_margin","div_yield",
             "eps_ttm","rev_ttm","rev_growth_yoy","eps_growth_yoy","shares_out","beta"]
     df = pd.DataFrame(out_rows)[cols]

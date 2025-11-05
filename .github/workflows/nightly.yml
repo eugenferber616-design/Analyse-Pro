@@ -37,7 +37,7 @@ jobs:
       COT_DISAGG_DATASET_ID: "kh3c-gbw2"
       COT_TFF_DATASET_ID:    "yw9f-hn96"
       COT_YEARS:             "20"
-      COT_MARKETS_MODE:      "SMART"        # "ALL" | "FILE" | "LIST"
+      COT_MARKETS_MODE:      "SMART"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
       SOC_TIMEOUT:           "120"
       SOC_RETRIES:           "8"
@@ -68,9 +68,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # yfinance / Stooq-Fallbacks
           pip install --upgrade yfinance pandas_datareader
-          # parquet-Engines optional
           pip install --upgrade pyarrow fastparquet matplotlib
 
       - name: Init cache DB
@@ -120,6 +118,7 @@ jobs:
           echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
 
       # ---------------- Earnings / Fundamentals / Optionen -------------------
+
       - name: Pull earnings CALENDAR (optional)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -129,14 +128,17 @@ jobs:
           python scripts/fetch_earnings.py --watchlist "${WATCHLIST_STOCKS}" --window-days "${WINDOW_DAYS}"
           test -f docs/earnings_next.json && head -n 50 docs/earnings_next.json || true
 
-      - name: Pull earnings RESULTS (robust)
+      - name: Pull earnings RESULTS (historisch, robust)
         env:
-          FINNHUB_TOKEN:    ${{ secrets.FINNHUB_TOKEN }}
-          FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
-          FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
+          FINNHUB_TOKEN:        ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          SEC_USER_AGENT:       ${{ secrets.SEC_USER_AGENT }}
+          SIMFIN_API_KEY:       ${{ secrets.SIMFIN_API_KEY }}
+          FINNHUB_SLEEP_MS:     ${{ env.FINNHUB_SLEEP_MS }}
         run: |
-          # schreibt automatisch nach data/processed/earnings_results.csv[.gz]
-          python scripts/fetch_earnings.py --watchlist "${WATCHLIST_STOCKS}" --limit 40 --use-yf
+          # Schreibt: data/processed/earnings_results.csv (oder .csv.gz)
+          python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --limit 12
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
       - name: Pull ETF basics (Finnhub)
@@ -150,16 +152,16 @@ jobs:
           head -n 30 data/processed/etf_basics.csv || true
           test -f data/reports/etf_errors.json && cat data/reports/etf_errors.json || true
 
-      - name: Pull FUNDAMENTALS (multi provider, robust)
+      - name: Pull FUNDAMENTALS (profile2 + metrics, mit Fallbacks)
         env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
-          FINNHUB_SLEEP_MS: "200"
+          FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:    ${{ secrets.FINNHUB_TOKEN }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          SIMFIN_API_KEY:   ${{ secrets.SIMFIN_API_KEY }}
         run: |
           python scripts/fetch_fundamentals.py \
             --watchlist "${WATCHLIST_STOCKS}" \
-            --overrides watchlists/fund_overrides.csv \
-            --merge-existing data/processed/fundamentals_core.csv.gz
+            --sleep_ms 200 || true
           head -n 20 data/processed/fundamentals_core.csv || true
 
       - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
@@ -213,111 +215,13 @@ jobs:
           test -s data/processed/options_signals.csv || (echo "options_signals leer!" && exit 1)
           head -n 40 data/processed/options_signals.csv || true
 
-      - name: Build DIRECTION SIGNAL (7/30/60 strikes)
-        run: |
-          python scripts/build_direction_signal.py
-          test -s data/processed/direction_signal.csv.gz || (echo "direction_signal leer!" && exit 1)
-          zcat data/processed/direction_signal.csv.gz | head -n 20 || true
-
-      # -------------------- COT 20y Pulls ---------------------------
-      - name: Pull COT 20y – Disaggregated (F+O Combined)
-        env:
-          CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "== Socrata Probe (Disaggregated) =="
-          for i in 1 2 3; do
-            if curl -fsS -G "${CFTC_API_BASE}/${COT_DISAGG_DATASET_ID}.json" \
-                 --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
-                 --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
-                 --data-urlencode '$limit=1' \
-                 -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then
-              break
-            fi
-            echo "probe failed (try $i) – sleep 10s"; sleep 10
-          done
-
-          echo "== Pull 20y Disaggregated =="
-          if ! python -u scripts/fetch_cot_20y.py \
-                --dataset "${COT_DISAGG_DATASET_ID}" \
-                --out "data/processed/cot_20y_disagg.csv.gz"; then
-            echo "WARN: disagg pull failed (server 503?) – keep going"
-          fi
-
-          ls -lh data/processed/cot_20y_disagg.csv.gz || true
-          zcat data/processed/cot_20y_disagg.csv.gz | head -n 2 || true
-
-      - name: Pull COT 20y – TFF (F+O Combined)
-        env:
-          CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "== Socrata Probe (TFF) =="
-          for i in 1 2 3; do
-            if curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
-                 --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
-                 --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
-                 --data-urlencode '$limit=1' \
-                 -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then
-              break
-            fi
-            echo "probe failed (try $i) – sleep 10s"; sleep 10
-          done
-
-          echo "== Pull 20y TFF =="
-          if ! python -u scripts/fetch_cot_20y.py \
-                --dataset "${COT_TFF_DATASET_ID}" \
-                --out "data/processed/cot_20y_tff.csv.gz"; then
-            echo "WARN: tff pull failed (server 503?) – keep going"
-          fi
-
-          ls -lh data/processed/cot_20y_tff.csv.gz || true
-          zcat data/processed/cot_20y_tff.csv.gz | head -n 2 || true
-
-      # -------------------- Stooq HV (klein & gz) ---------------------------
-      - name: Pull Stooq quotes (Xetra only) → build HV summary → purge raws
-        env:
-          HV_WIN_SHORT: ${{ env.HV_WIN_SHORT }}
-          HV_WIN_LONG:  ${{ env.HV_WIN_LONG }}
-        run: |
-          set -e
-          mkdir -p data/market/stooq data/processed
-          python scripts/fetch_stooq.py --watchlist "${WATCHLIST_STOCKS}" --days 365 || true
-          python - << 'PY'
-          import os, csv, gzip, pandas as pd
-          from pathlib import Path
-          in_dir = Path("data/market/stooq")
-          rows=[]
-          w20=int(os.getenv("HV_WIN_SHORT","20")); w60=int(os.getenv("HV_WIN_LONG","60"))
-          for p in sorted(in_dir.glob("*.csv")):
-              try:
-                  df=pd.read_csv(p)
-                  col="Adj Close" if "Adj Close" in df.columns else "Close"
-                  s=pd.to_numeric(df[col], errors="coerce").dropna()
-                  if s.size < max(w20,w60)+2: continue
-                  r=s.pct_change().dropna()
-                  hv20=float(r.tail(w20).std()*(252**0.5)); hv60=float(r.tail(w60).std()*(252**0.5))
-                  rows.append({"symbol":p.stem,"hv20":hv20,"hv60":hv60})
-              except: pass
-          outp=Path("data/processed/hv_summary.csv.gz")
-          outp.parent.mkdir(parents=True, exist_ok=True)
-          with gzip.open(outp,"wt",encoding="utf-8",newline="") as f:
-              w=csv.DictWriter(f, fieldnames=["symbol","hv20","hv60"]); w.writeheader(); [w.writerow(r) for r in rows]
-          print("HV rows:", len(rows))
-          PY
-          rm -f data/market/stooq/*.csv || true
-
       # ===================== RiskIndex Inputs (Core) =========================
       - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)
         run: |
           python scripts/fetch_market_core.py
           zcat data/processed/market_core.csv.gz | head -n 5 || true
-          # Non-Null-Check (muss SPY/HYG/LQD/XLF enthalten)
           python - << 'PY'
           import pandas as pd
-          import sys
           try:
               df = pd.read_csv("data/processed/market_core.csv.gz", compression="gzip")
               nn = df.notna().sum().to_dict()
@@ -338,15 +242,7 @@ jobs:
           zcat data/processed/fred_core.csv.gz | head -n 5 || true
           zcat data/processed/fred_oas.csv.gz  | head -n 5 || true
 
-      - name: Sanity check RiskIndex inputs
-        shell: bash
-        run: |
-          echo "== processed listing =="; ls -lh data/processed || true
-          echo "== core head ==";
-          [ -f data/processed/market_core.csv.gz ] && zcat data/processed/market_core.csv.gz | head -n 3 || echo "no market_core"
-          [ -f data/processed/fred_core.csv.gz   ] && zcat data/processed/fred_core.csv.gz   | head -n 3 || echo "no fred_core"
-
-      - name: (optional) Assemble prices parquet (if CSVs exist)
+      - name: (optional) Assemble prices parquet
         run: |
           if [ -f "scripts/build_prices_parquet.py" ]; then
             python scripts/build_prices_parquet.py || true
@@ -404,14 +300,13 @@ jobs:
             --include "*.gz" --exclude "*"
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50 || true
 
-      # ===================== REPO AUFRÄUMEN ========================
+      # ===================== REPO AUFRÄUMEN & COMMIT ========================
       - name: Purge heavy local files before commit
         shell: bash
         run: |
           set -e
           find data/processed -type f ! -name ".gitkeep" -delete || true
 
-      # ===================== QA / Manifest / Commit ================
       - name: Build datasets manifest (docs/datasets.json)
         env:
           PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}

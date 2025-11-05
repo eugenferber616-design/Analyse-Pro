@@ -78,8 +78,7 @@ jobs:
           import os, sqlite3
           db_path = os.path.join('data','cache','cache.db')
           os.makedirs(os.path.dirname(db_path), exist_ok=True)
-          con = sqlite3.connect(db_path)
-          cur = con.cursor()
+          con = sqlite3.connect(db_path); cur = con.cursor()
           cur.execute("""
           CREATE TABLE IF NOT EXISTS kv (
             k  TEXT PRIMARY KEY,
@@ -101,17 +100,14 @@ jobs:
           set -e
           TOKEN="${FINNHUB_TOKEN:-$FINNHUB_API_KEY}"
           if [ -z "$TOKEN" ]; then
-            echo "❌ FINNHUB_TOKEN/FINNHUB_API_KEY fehlt."
-            exit 1
+            echo "❌ FINNHUB_TOKEN/FINNHUB_API_KEY fehlt."; exit 1
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
-
           if [ ! -f "$WATCHLIST_STOCKS" ]; then
             printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
             echo "WATCHLIST_STOCKS=watchlists/mylist.csv" >> "$GITHUB_ENV"
           fi
           echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
-
           if [ ! -f "$WATCHLIST_ETF" ]; then
             printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
           fi
@@ -154,10 +150,10 @@ jobs:
 
       - name: Pull FUNDAMENTALS (profile2 + metrics, mit Fallbacks)
         env:
-          FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
-          FINNHUB_TOKEN:    ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY:      ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:        ${{ secrets.FINNHUB_TOKEN }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
-          SIMFIN_API_KEY:   ${{ secrets.SIMFIN_API_KEY }}
+          SIMFIN_API_KEY:       ${{ secrets.SIMFIN_API_KEY }}
         run: |
           python scripts/fetch_fundamentals.py \
             --watchlist "${WATCHLIST_STOCKS}" \
@@ -214,6 +210,67 @@ jobs:
           python scripts/build_options_signals.py
           test -s data/processed/options_signals.csv || (echo "options_signals leer!" && exit 1)
           head -n 40 data/processed/options_signals.csv || true
+
+      - name: Build DIRECTION SIGNAL (7/30/60 strikes)
+        run: |
+          python scripts/build_direction_signal.py
+          test -s data/processed/direction_signal.csv.gz || (echo "direction_signal leer!" && exit 1)
+          zcat data/processed/direction_signal.csv.gz | head -n 20 || true
+
+      - name: Build BY_EXPIRY standard CSV
+        run: |
+          python scripts/build_by_expiry.py
+          test -s data/processed/options_oi_by_expiry.csv || (echo "std by_expiry leer!" && exit 1)
+          head -n 40 data/processed/options_oi_by_expiry.csv || true
+
+      - name: Build BY_STRIKE standard CSV
+        run: |
+          python scripts/build_by_strike.py
+          test -s data/processed/options_oi_by_strike.csv || (echo "std by_strike leer!" && exit 1)
+          head -n 40 data/processed/options_oi_by_strike.csv || true
+
+      # -------------------- COT 20y Pulls ---------------------------
+      - name: Pull COT 20y – Disaggregated (F+O Combined)
+        env:
+          CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== Socrata Probe (Disaggregated) =="
+          for i in 1 2 3; do
+            if curl -fsS -G "${CFTC_API_BASE}/${COT_DISAGG_DATASET_ID}.json" \
+                 --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
+                 --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
+                 --data-urlencode '$limit=1' \
+                 -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then break; fi
+            echo "probe failed (try $i) – sleep 10s"; sleep 10
+          done
+          python -u scripts/fetch_cot_20y.py \
+            --dataset "${COT_DISAGG_DATASET_ID}" \
+            --out "data/processed/cot_20y_disagg.csv.gz" || echo "WARN: disagg pull failed"
+          ls -lh data/processed/cot_20y_disagg.csv.gz || true
+          zcat data/processed/cot_20y_disagg.csv.gz | head -n 2 || true
+
+      - name: Pull COT 20y – TFF (F+O Combined)
+        env:
+          CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== Socrata Probe (TFF) =="
+          for i in 1 2 3; do
+            if curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
+                 --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
+                 --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
+                 --data-urlencode '$limit=1' \
+                 -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then break; fi
+            echo "probe failed (try $i) – sleep 10s"; sleep 10
+          done
+          python -u scripts/fetch_cot_20y.py \
+            --dataset "${COT_TFF_DATASET_ID}" \
+            --out "data/processed/cot_20y_tff.csv.gz" || echo "WARN: tff pull failed"
+          ls -lh data/processed/cot_20y_tff.csv.gz || true
+          zcat data/processed/cot_20y_tff.csv.gz | head -n 2 || true
 
       # ===================== RiskIndex Inputs (Core) =========================
       - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)

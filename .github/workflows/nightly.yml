@@ -36,7 +36,7 @@ jobs:
       CFTC_API_BASE:         "https://publicreporting.cftc.gov/resource"
       COT_DISAGG_DATASET_ID: "kh3c-gbw2"
       COT_TFF_DATASET_ID:    "yw9f-hn96"
-      COT_YEARS:             "25"
+      COT_YEARS:             "20"
       COT_MARKETS_MODE:      "SMART"        # "ALL" | "FILE" | "LIST"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
       SOC_TIMEOUT:           "120"

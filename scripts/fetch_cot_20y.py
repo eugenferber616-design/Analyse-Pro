@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 fetch_cot_20y.py — robuster (SMART) CFTC Socrata Pull mit Alias/Token-Matching,
-Datumschunking (–-chunk-years) und Markt-Batching (–-batch-markets).
+Datumschunking (--chunk-years) und Markt-Batching (--batch-markets).
 
 Beispiele:
   python scripts/fetch_cot_20y.py --dataset kh3c-gbw2 --out data/processed/cot_20y_disagg.csv.gz --mode SMART
@@ -134,15 +134,23 @@ def build_where_any_of(combos):
         variants.append("(" + " AND ".join(conds) + ")")
     return " OR ".join(variants) if variants else "1=1"
 
+# --- robuste Datums-Konvertierung ---
+def _to_date(x):
+    if isinstance(x, dt.date):
+        return x
+    return pd.to_datetime(x).date()
+
 def chunk_date_ranges(start_date, end_date, chunk_years):
-    """Erzeugt [ (from,to), ... ] in Jahr-Blöcken."""
+    """Erzeugt [(from,to), …] in Jahr-Blöcken. Nimmt date oder String entgegen."""
     out = []
-    cur_from = start_date
-    while cur_from < end_date:
+    cur_from = _to_date(start_date)
+    end_date = _to_date(end_date)
+    while cur_from <= end_date:
         nxt = cur_from.replace(year=cur_from.year + chunk_years)
-        if nxt > end_date: nxt = end_date
+        if nxt > end_date:
+            nxt = end_date
         out.append((cur_from, nxt))
-        cur_from = nxt
+        cur_from = nxt + dt.timedelta(days=1)
     return out
 
 def batched(seq, n):
@@ -154,7 +162,7 @@ def fetch_range(dataset_id, date_from, date_to, mode, markets, chunk_years, batc
     rows_all = []
     # Datumschunks (500s/503s vermeiden)
     for d_from, d_to in chunk_date_ranges(date_from, date_to, chunk_years):
-        base = f"report_date_as_yyyy_mm_dd between '{d_from}' and '{d_to}'"
+        base = f"report_date_as_yyyy_mm_dd between '{d_from}' and '{d_to}'"  # date → ISO-String
         if mode == "ALL":
             where = base
             rows_all += _paged_pull(dataset_id, where)
@@ -191,9 +199,10 @@ def _paged_pull(dataset_id, where):
 # -------- Main --------
 def main():
     args = parse_args()
-    today = dt.date.today()
-    date_to   = today.strftime("%Y-%m-%d")
-    date_from = (today - dt.timedelta(days=365*args.years + 10)).strftime("%Y-%m-%d")
+
+    # **Wieder echte date-Objekte** (nicht str)
+    date_to   = dt.date.today()
+    date_from = date_to - dt.timedelta(days=365*args.years + 10)
 
     markets = None
     if args.mode in ("FILE","LIST","SMART"):
@@ -224,8 +233,11 @@ def main():
     rep = {
         "ts": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "dataset": args.dataset, "years": args.years, "mode": args.mode,
-        "rows": int(len(df)), "date_from": date_from, "date_to": date_to,
-        "watchlist": (len(markets or [])), "chunk_years": args.chunk_years,
+        "rows": int(len(df)),
+        "date_from": str(date_from),
+        "date_to": str(date_to),
+        "watchlist": (len(markets or [])),
+        "chunk_years": args.chunk_years,
         "batch_markets": args.batch_markets
     }
     os.makedirs("data/reports", exist_ok=True)

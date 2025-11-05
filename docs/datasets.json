@@ -13,7 +13,7 @@
     "fred_oas": "/data/processed/fred_oas.csv.gz",
     "market_core": "/data/processed/market_core.csv.gz",
     "hv_summary": "/data/processed/hv_summary.csv.gz",
-    "cds_proxy_v3": "/data/processed/cds_proxy_v3.csv.gz",
+    "cds_proxy": "/data/processed/cds_proxy.csv.gz",
     "riskindex_snapshot": "/data/processed/riskindex_snapshot.json.gz",
     "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz"
   }

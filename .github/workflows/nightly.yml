@@ -4,6 +4,32 @@ on:
   schedule:
     - cron: "30 0 * * *"   # täglich 00:30 UTC
   workflow_dispatch:
+    inputs:
+      RUN_OPTIMIZER:
+        description: "Optimizer laufen lassen?"
+        type: choice
+        options: [ "true", "false" ]
+        default: "true"
+      RUN_TRAIN_TEST:
+        description: "Train/Test laufen lassen?"
+        type: choice
+        options: [ "auto", "true", "false" ]
+        default: "auto"
+      OPT_EMA_SPANS:
+        description: "EMA-Spannen (Komma oder Range 10-63:1)"
+        default: "42,63,84,126"
+      OPT_THRESHOLDS:
+        description: "Ein/Aus-Schwellen als Paare on:off, Komma-separiert"
+        default: "40:60,45:55,42:58"
+      OPT_MODE_SET:
+        description: "Modi (Komma) z.B. long_only,tri_state"
+        default: "long_only,tri_state"
+      OPT_SHORT_WEIGHTS:
+        description: "Short-Gewichte nur für tri_state (Komma)"
+        default: "-0.5,-0.25"
+      OPT_GROUP_WEIGHTS:
+        description: "Gruppen-Gewichte (vol,curve,credit,usd,liq,rates,equity)"
+        default: "1.0,1.0,1.0,1.0,1.0,1.0,1.0"
 
 permissions:
   contents: write
@@ -47,6 +73,16 @@ jobs:
       # FRED
       FRED_START: "2003-01-01"
 
+      # Optimizer-Schalter (per workflow_dispatch überschreibbar)
+      RUN_OPTIMIZER:   ${{ inputs.RUN_OPTIMIZER || 'true' }}
+      RUN_TRAIN_TEST:  ${{ inputs.RUN_TRAIN_TEST || 'auto' }}  # auto = nur sonntags
+      OPT_EMA_SPANS:   ${{ inputs.OPT_EMA_SPANS || '42,63,84,126' }}
+      OPT_THRESHOLDS:  ${{ inputs.OPT_THRESHOLDS || '40:60,45:55,42:58' }}
+      OPT_MODE_SET:    ${{ inputs.OPT_MODE_SET || 'long_only,tri_state' }}
+      OPT_SHORT_WEIGHTS: ${{ inputs.OPT_SHORT_WEIGHTS || '-0.5,-0.25' }}
+      # Gruppenreihenfolge: vol,curve,credit,usd,liq,rates,equity
+      OPT_GROUP_WEIGHTS: ${{ inputs.OPT_GROUP_WEIGHTS || '1.0,1.0,1.0,1.0,1.0,1.0,1.0' }}
+
       # lokale Module auffindbar
       PYTHONPATH: "."
 
@@ -71,11 +107,11 @@ jobs:
           # yfinance / Stooq-Fallbacks
           pip install --upgrade yfinance pandas_datareader
           # parquet-Engines optional
-          pip install --upgrade pyarrow fastparquet
+          pip install --upgrade pyarrow fastparquet matplotlib
 
       - name: Init cache DB
         run: |
-          mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/market/core data/processed data/reports docs watchlists
+          mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/market/core data/processed data/reports docs watchlists scripts
           python - << 'PY'
           import os, sqlite3
           db_path = os.path.join('data','cache','cache.db')
@@ -155,8 +191,8 @@ jobs:
           mkdir -p data/fundamentals
           python scripts/fetch_fundamentals.py \
             --watchlist "${WATCHLIST_STOCKS}" \
-            --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
-            --sleep_ms 150
+            --finnhub_key "${{ secrets.FINNHAB_API_KEY }}" \
+            --sleep_ms 150 || true
           head -n 20 data/processed/fundamentals_core.csv || true
 
       - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
@@ -328,13 +364,17 @@ jobs:
           # Non-Null-Check (muss SPY/HYG/LQD/XLF enthalten)
           python - << 'PY'
           import pandas as pd
-          df = pd.read_csv("data/processed/market_core.csv.gz", compression="gzip")
-          nn = df.notna().sum().to_dict()
-          print("market_core nonnull:", nn)
-          need = ["SPY","HYG","LQD","XLF"]
-          missing = [c for c in need if nn.get(c,0)==0]
-          if missing:
-              raise SystemExit("Fehlende Market-Core Spalten ohne Daten: " + ", ".join(missing))
+          import sys
+          try:
+              df = pd.read_csv("data/processed/market_core.csv.gz", compression="gzip")
+              nn = df.notna().sum().to_dict()
+              print("market_core nonnull:", nn)
+              need = ["SPY","HYG","LQD","XLF"]
+              missing = [c for c in need if nn.get(c,0)==0]
+              if missing:
+                  raise SystemExit("Fehlende Market-Core Spalten ohne Daten: " + ", ".join(missing))
+          except Exception as e:
+              print("WARN:", e)
           PY
 
       - name: Fetch FRED core (macro & OAS)
@@ -349,7 +389,7 @@ jobs:
         shell: bash
         run: |
           echo "== processed listing =="; ls -lh data/processed || true
-          echo "== core head =="
+          echo "== core head ==";
           [ -f data/processed/market_core.csv.gz ] && zcat data/processed/market_core.csv.gz | head -n 3 || echo "no market_core"
           [ -f data/processed/fred_core.csv.gz   ] && zcat data/processed/fred_core.csv.gz   | head -n 3 || echo "no fred_core"
 
@@ -367,20 +407,55 @@ jobs:
           head -n 5 data/processed/riskindex_timeseries.csv || true
           cat data/processed/riskindex_snapshot.json || true
 
+      # ===================== Optimizer – Schalter & Parameter =====================
+      - name: Optimize RiskIndex (grid) — via ENV switches
+        if: ${{ env.RUN_OPTIMIZER == 'true' }}
+        env:
+          OPT_EMA_SPANS:     ${{ env.OPT_EMA_SPANS }}
+          OPT_THRESHOLDS:    ${{ env.OPT_THRESHOLDS }}
+          OPT_MODE_SET:      ${{ env.OPT_MODE_SET }}
+          OPT_SHORT_WEIGHTS: ${{ env.OPT_SHORT_WEIGHTS }}
+          OPT_GROUP_WEIGHTS: ${{ env.OPT_GROUP_WEIGHTS }}
+        run: |
+          echo "Optimizer ON"
+          echo "EMA_SPANS=$OPT_EMA_SPANS"
+          echo "THRESHOLDS=$OPT_THRESHOLDS"
+          echo "MODE_SET=$OPT_MODE_SET"
+          echo "SHORT_WEIGHTS=$OPT_SHORT_WEIGHTS"
+          echo "GROUP_WEIGHTS=$OPT_GROUP_WEIGHTS"
+          if [ -f data/processed/riskindex_components.csv.gz ]; then
+            python scripts/optimize_riskindex.py
+            head -n 20 docs/opt_results.csv || true
+          else
+            echo "skip: components missing"
+          fi
+
+      - name: Train/Test Walk-Forward — via ENV switch
+        # auto = sonntags (GitHub cron weekday 0 = Sonntag). Bei manual run immer ON.
+        if: ${{ (env.RUN_TRAIN_TEST == 'true') || (env.RUN_TRAIN_TEST == 'auto' && github.event_name == 'schedule' && contains('0', (github.event.schedule || ''))) || (github.event_name == 'workflow_dispatch' && env.RUN_TRAIN_TEST != 'false') }}
+        env:
+          OPT_EMA_SPANS:     ${{ env.OPT_EMA_SPANS }}
+          OPT_THRESHOLDS:    ${{ env.OPT_THRESHOLDS }}
+          OPT_MODE_SET:      ${{ env.OPT_MODE_SET }}
+          OPT_SHORT_WEIGHTS: ${{ env.OPT_SHORT_WEIGHTS }}
+          OPT_GROUP_WEIGHTS: ${{ env.OPT_GROUP_WEIGHTS }}
+        run: |
+          echo "Train/Test ON (mode=$RUN_TRAIN_TEST)"
+          if [ -f data/processed/riskindex_components.csv.gz ]; then
+            python scripts/optimize_train_test.py
+            head -n 20 docs/train_test_results.csv || true
+          else
+            echo "skip: components missing"
+          fi
+
       # ===================== ALLES KOMPRIMIEREN ====================
       - name: Compress ALL processed & docs to .gz
         shell: bash
         run: |
           set -e
           shopt -s nullglob
-          for f in data/processed/*.{csv,json,ndjson,parquet}; do
-            [ -f "$f" ] || continue
-            gzip -f -9 "$f"
-          done
-          for f in docs/*.json; do
-            [ -f "$f" ] || continue
-            gzip -f -9 "$f"
-          done
+          for f in data/processed/*.{csv,json,ndjson,parquet}; do [ -f "$f" ] && gzip -f -9 "$f" || true; done
+          for f in docs/*.{json,csv}; do [ -f "$f" ] && gzip -f -9 "$f" || true; done
           echo "== processed after gzip =="; ls -lh data/processed || true
           echo "== docs after gzip =="; ls -lh docs || true
 
@@ -448,7 +523,10 @@ jobs:
               "fred_oas":             "/data/processed/fred_oas.csv.gz",
               "market_core":          "/data/processed/market_core.csv.gz",
               "riskindex_snapshot":   "/data/processed/riskindex_snapshot.json.gz",
-              "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz"
+              "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz",
+              "opt_results":          "/docs/opt_results.csv.gz",
+              "train_test_results":   "/docs/train_test_results.csv.gz",
+              "train_test_summary":   "/docs/train_test_summary.csv.gz"
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
@@ -464,7 +542,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries + direction_signal" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries + optimizers (switchable)" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

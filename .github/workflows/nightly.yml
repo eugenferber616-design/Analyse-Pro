@@ -341,9 +341,16 @@ jobs:
       # -------------------- CDS Proxy aus OAS/ETF ----------------------------
       - name: Build CDS proxy (v2) from OAS/ETF
         run: |
-          python scripts/build_cds_proxy_v2.py
-          test -s data/processed/cds_proxy_v2.csv || (echo "cds_proxy_v2 fehlt!" && exit 1)
-          head -n 20 data/processed/cds_proxy_v2.csv || true
+          python scripts/build_cds_proxy_v2.py \
+          --watchlist "${WATCHLIST_STOCKS}" \
+          --fred-oas data/processed/fred_oas.csv \
+          --fundamentals data/processed/fundamentals_core.csv \
+          --hv data/processed/hv_summary.csv.gz \
+          --eu-hy-alpha 1.0 --eu-hy-premium 0.20 \
+          --hv-anchor 0.25 --hv-min 0.85 --hv-max 1.15
+          test -s data/processed/cds_proxy.csv || (echo "cds_proxy fehlt!" && exit 1)
+          head -n 5 data/processed/cds_proxy.csv || true
+
 
       - name: (optional) Assemble prices parquet
         run: |

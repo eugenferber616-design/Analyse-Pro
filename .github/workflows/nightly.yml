@@ -339,11 +339,11 @@ jobs:
           zcat data/processed/fred_oas.csv.gz  | head -n 5 || true
 
       # -------------------- CDS Proxy aus OAS/ETF ----------------------------
-      - name: Build CDS proxy (v3) from OAS/ETF
+      - name: Build CDS proxy (v2) from OAS/ETF
         run: |
-          python scripts/build_cds_proxy_v3.py
-          test -s data/processed/cds_proxy_v3.csv || (echo "cds_proxy_v3 fehlt!" && exit 1)
-          head -n 20 data/processed/cds_proxy_v3.csv || true
+          python scripts/build_cds_proxy_v2.py
+          test -s data/processed/cds_proxy_v2.csv || (echo "cds_proxy_v2 fehlt!" && exit 1)
+          head -n 20 data/processed/cds_proxy_v2.csv || true
 
       - name: (optional) Assemble prices parquet
         run: |

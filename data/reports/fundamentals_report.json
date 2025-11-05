@@ -1,5 +1,7 @@
 {
-  "ok": [
+  "ok": [],
+  "miss": [],
+  "fallback": [
     "AAPL,US_IG",
     "ADS.DE,EU_IG",
     "ALV.DE,EU_IG",
@@ -20,7 +22,5 @@
     "SPY,US_IG",
     "VOW3.DE,EU_IG"
   ],
-  "miss": [],
-  "fallback": [],
   "errors": []
 }

@@ -1,14 +1,17 @@
 {
-  "ts": "2025-11-05T12:28:10Z",
+  "ts": "2025-11-05T18:20:09Z",
   "watchlist": "watchlists/mylist.txt",
   "overrides": "watchlists/earnings_overrides.csv",
-  "rows": 12,
+  "rows": 40,
   "symbols": 19,
   "errors": [],
-  "missing": 0,
+  "missing": 9,
   "files": {
     "earnings_results_csv": "data/processed/earnings_results.csv",
+    "earnings_results_gz": "data/processed/earnings_results.csv.gz",
     "preview": "data/reports/eu_checks/earnings_results_preview.txt",
     "missing": "data/reports/eu_checks/earnings_results_missing.txt"
-  }
+  },
+  "use_yf": false,
+  "limit": 12
 }

@@ -1,1 +1,10 @@
 symbol,tried,status
+SIE.DE,SIE,no-data
+BAS.DE,BAS,no-data
+BAYN.DE,BAYN,no-data
+BMW.DE,BMW,no-data
+VOW3.DE,VOW3,no-data
+ADS.DE,ADS,no-data
+IFX.DE,IFX,no-data
+SPY,SPY,no-data
+GLD,GLD,no-data

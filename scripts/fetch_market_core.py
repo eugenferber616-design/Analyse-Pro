@@ -159,6 +159,9 @@ def main() -> int:
     full = pd.date_range(df.index.min(), df.index.max(), freq="D")
     df = df.reindex(full).ffill()
 
+    # >>> WICHTIG: Spaltennamen für RiskIndex normalisieren (lowercase) <<<
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
     out = OUT_DIR / "market_core.csv.gz"
     df.to_csv(out, index=True, float_format="%.6f", compression="gzip")
     print(f"✔ wrote {out}  cols={list(df.columns)}  rows={len(df)}")

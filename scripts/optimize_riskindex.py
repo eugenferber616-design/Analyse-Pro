@@ -1,125 +1,129 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+optimize_riskindex_auto.py
+Brute-Force Optimizer ohne Eingaben:
+ - Liest sc_comp (0-100) aus riskindex_timeseries.csv
+ - Liest SPY aus market_core.csv.gz
+ - Grid-Search für EMA/Thresholds/Modus/Short-Gewicht
+ - Bewertet Out-of-Model-Backtest auf Daily-Basis (1d Delay)
+Outputs:
+ - docs/opt_results_auto.csv
+ - docs/opt_best_params.json
+"""
 from __future__ import annotations
-import itertools, json
+import json, math
 from pathlib import Path
-import numpy as np, pandas as pd
-import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
 
-P = Path("data/processed")
-F_COMP = P/"riskindex_components.csv.gz"
-F_MKT  = P/"market_core.csv.gz"
+PROCESSED = Path("data/processed")
+DOCS = Path("docs")
+DOCS.mkdir(parents=True, exist_ok=True)
 
-def load():
-    comp = pd.read_csv(F_COMP, compression="infer", parse_dates=["date"]).set_index("date").sort_index()
-    mkt  = pd.read_csv(F_MKT,  compression="infer", parse_dates=["date"]).set_index("date").sort_index()
-    spy  = pd.to_numeric(mkt["SPY"], errors="coerce").dropna()
-    return comp, spy
+def load_data() -> pd.DataFrame:
+    ts = pd.read_csv(PROCESSED/"riskindex_timeseries.csv", parse_dates=["date"])
+    ts = ts.rename(columns={"date":"date","sc_comp":"sc_comp"}).set_index("date").sort_index()
+    mkt = pd.read_csv(PROCESSED/"market_core.csv.gz", compression="gzip")
+    # flexible Date-Spalte erkennen
+    dcol = None
+    for c in ("date","Date","DATE"):
+        if c in mkt.columns: dcol=c; break
+    if dcol is None: dcol = mkt.columns[0]
+    mkt[dcol] = pd.to_datetime(mkt[dcol], errors="coerce")
+    mkt = mkt.set_index(dcol).sort_index()
+    if "SPY" not in mkt.columns:
+        raise SystemExit("SPY fehlt in market_core.csv.gz – Optimizer kann nicht laufen.")
+    df = ts.join(mkt[["SPY"]], how="inner").dropna()
+    df["ret"] = np.log(df["SPY"]/df["SPY"].shift(1)).fillna(0.0)  # log-returns
+    return df
 
-def composite(df: pd.DataFrame, weights: dict[str,float]) -> pd.Series:
-    cols = [c for c in weights if c in df.columns and weights[c]!=0]
-    if not cols: return pd.Series(dtype=float)
-    w = np.array([weights[c] for c in cols], dtype=float)
-    w = w / np.sum(np.abs(w))
-    x = df[cols].copy()
-    num = (x * w).sum(axis=1, skipna=True)
-    den = (~x[cols].isna()).dot(np.abs(w))
-    sc  = (num / den.replace(0, np.nan)).dropna()
-    return sc
+def kpis(eq: pd.Series) -> dict:
+    if eq.empty: 
+        return dict(CAGR=0, Sharpe=0, MaxDD=0, Calmar=0)
+    rets = eq.pct_change().dropna()
+    ann = 252
+    cagr = float((eq.iloc[-1]/eq.iloc[0])**(ann/len(eq)) - 1.0) if len(eq)>0 and eq.iloc[0]>0 else 0.0
+    vol  = float(rets.std() * math.sqrt(ann)) if rets.size>3 else 0.0
+    sharpe = (float(rets.mean())*ann)/vol if vol>0 else 0.0
+    runmax = eq.cummax()
+    dd = (eq/runmax - 1.0).min() if (runmax>0).any() else 0.0
+    calmar = (-cagr/dd) if dd<0 else 0.0
+    return dict(CAGR=cagr, Sharpe=sharpe, MaxDD=float(dd), Calmar=calmar)
 
-def strat_returns(spy: pd.Series, score: pd.Series, ema_len:int, on_thr:float, off_thr:float, mode:str="long_only"):
-    sc = score.ewm(span=ema_len, adjust=False, min_periods=max(10,ema_len//3)).mean()
-    sc = sc.reindex(spy.index).ffill().dropna()
-    r  = spy.pct_change().fillna(0.0)
+def make_signal(sc: pd.Series, ema:int, on:float, off:float, mode:str, short_w:float) -> pd.Series:
+    # tiefer Score = risk-on (kaufen), hoher Score = risk-off (verkaufen)
+    x = sc.ewm(span=ema, min_periods=max(5, ema//4)).mean()
+    if mode == "long_only":
+        sig = pd.Series(0.0, index=x.index)
+        # entry long wenn unter on, exit wenn über off
+        long = False
+        for i, v in enumerate(x):
+            if not long and v < on: long = True
+            elif long and v > off: long = False
+            sig.iat[i] = 1.0 if long else 0.0
+        return sig
+    elif mode == "tri_state":
+        # +1 long unter on, -1 short über off, sonst flat
+        sig = pd.Series(0.0, index=x.index)
+        state = 0
+        for i, v in enumerate(x):
+            if v < on:   state = 1
+            elif v > off: state = -1
+            sig.iat[i] = 1.0 if state==1 else (short_w if state==-1 else 0.0)
+        return sig
+    else:
+        raise ValueError("unknown mode")
 
-    sig = pd.Series(0.0, index=sc.index)
-    if mode=="long_only":
-        sig[sc < on_thr]  = 1.0
-        sig[sc > off_thr] = 0.0
-    else:  # tri_state
-        sig[sc < on_thr]  = 1.0
-        sig[(sc >= on_thr) & (sc <= off_thr)] = 0.0
-        sig[sc > off_thr] = -0.5
-    sig = sig.ffill().reindex(r.index).fillna(0.0)
-
-    eq = (1.0 + sig * r).cumprod()
-    return eq, sig
-
-def metrics(eq: pd.Series):
-    r = eq.pct_change().dropna()
-    ann = (eq.iloc[-1]/eq.iloc[0])**(252/len(r)) - 1
-    vol = r.std()*np.sqrt(252)
-    sharpe = ann/vol if vol>0 else np.nan
-    mdd = (eq/eq.cummax()-1).min()
-    return {"ann": float(ann), "vol": float(vol), "sharpe": float(sharpe), "mdd": float(mdd)}
+def evaluate(df: pd.DataFrame, ema:int, on:int, off:int, mode:str, short_w:float) -> dict:
+    sig = make_signal(df["sc_comp"], ema, on, off, mode, short_w)
+    # 1-Tages Delay (um Lookahead zu vermeiden)
+    strat_ret = sig.shift(1).fillna(0.0) * df["ret"]
+    eq = (1.0 + strat_ret).cumprod()
+    base = (1.0 + df["ret"]).cumprod()
+    metrics = kpis(eq)
+    # Trades zählen (State-Wechsel)
+    flips = (sig != sig.shift(1)).fillna(False).sum()
+    wins = (strat_ret > 0).sum()
+    trades = int(flips)
+    hitrate = float(wins/max(1, len(strat_ret[strat_ret!=0])))
+    return dict(
+        ema=ema, on=on, off=off, mode=mode, short_w=short_w,
+        **metrics,
+        Trades=trades, HitRate=hitrate,
+        EqEnd=float(eq.iloc[-1]), EqBase=float(base.iloc[-1])
+    )
 
 def main():
-    comp, spy = load()
+    df = load_data()
+    results = []
 
-    # Komponenten-Gruppen (verwende die vorhandenen Namen aus build_riskindex_components)
-    groups = {
-        "vol"   : ["vix","usdvol","vxterm","ust10v"],
-        "curve" : ["10s2s","10s3m","2s30s"],
-        "credit": ["cr","ig_oas","hy_oas"],
-        "usd"   : ["dxy"],
-        "liq"   : ["netliq"],
-        "rates" : ["dgs30","sofr","stlfsi"],
-        "equity": ["relfin"],
-    }
+    ema_grid = list(range(10, 127, 1))
+    on_grid  = list(range(38, 51, 1))
+    off_grid = list(range(50, 63, 1))
+    modes    = ["long_only", "tri_state"]
+    short_ws = [-1.0, -0.75, -0.5, -0.25]
 
-    # Suchraster
-    w_opts   = [0.5, 1.0, 2.0]           # relative Gruppen-Gewichte
-    ema_opts = [42, 63, 84, 126]
-    thr_opts = [(40,60), (45,55), (42,58)]
-    mode_opts= ["long_only","tri_state"]
+    for ema in ema_grid:
+        for on in on_grid:
+            for off in off_grid:
+                if on >= off: 
+                    continue
+                # long_only
+                results.append(evaluate(df, ema, on, off, "long_only", 0.0))
+                # tri_state Varianten
+                for sw in short_ws:
+                    results.append(evaluate(df, ema, on, off, "tri_state", sw))
 
-    rows=[]
-    for wv in itertools.product(*([w_opts]*len(groups))):
-        gw = dict(zip(groups.keys(), wv))
-        # auf Komponenten verteilen
-        weights = {}
-        for g, comps in groups.items():
-            present = [c for c in comps if c in comp.columns]
-            if not present: continue
-            for c in present:
-                weights[c] = gw[g] / len(present)
-        sc = composite(comp, weights)
-        if sc.empty: continue
+    res = pd.DataFrame(results)
+    res["Sharpe"].replace([np.inf, -np.inf], np.nan, inplace=True)
+    res = res.sort_values(["Sharpe","CAGR","Calmar"], ascending=False)
+    out_csv = DOCS/"opt_results_auto.csv"
+    res.to_csv(out_csv, index=False)
+    best = res.iloc[0].to_dict() if not res.empty else {}
+    (DOCS/"opt_best_params.json").write_text(json.dumps(best, indent=2, ensure_ascii=False), encoding="utf-8")
+    print("✔ wrote", out_csv, "rows:", len(res))
+    print("Best:", best)
 
-        for ema in ema_opts:
-            for (on,off) in thr_opts:
-                for mode in mode_opts:
-                    eq, _ = strat_returns(spy, sc, ema, on, off, mode=mode)
-                    m = metrics(eq.dropna())
-                    rows.append({
-                        "ema":ema,"on":on,"off":off,"mode":mode,
-                        **{f"gw_{k}":float(v) for k,v in gw.items()},
-                        **m
-                    })
-
-    out = pd.DataFrame(rows).sort_values("sharpe", ascending=False)
-    Path("docs").mkdir(parents=True, exist_ok=True)
-    out.to_csv("docs/opt_results.csv", index=False)
-    print("Top 10:\n", out.head(10))
-
-    # Plot bester Lauf
-    best = out.iloc[0]
-    best_weights={}
-    for g, comps in groups.items():
-        present = [c for c in comps if c in comp.columns]
-        if not present: continue
-        for c in present:
-            best_weights[c]=best[f"gw_{g}"]/len(present)
-
-    sc = composite(comp, best_weights)
-    eq_best,_ = strat_returns(spy, sc, int(best.ema), float(best.on), float(best.off), best.mode)
-    eq_bh = (1+spy.pct_change().fillna(0.0)).cumprod()
-    plt.figure(figsize=(10,5))
-    plt.plot(eq_bh.index, eq_bh.values, label="Buy&Hold SPY")
-    plt.plot(eq_best.index, eq_best.values, label=f"Best {best.mode} (ema={int(best.ema)}, thr=({best.on},{best.off}))")
-    plt.yscale("log"); plt.legend(); plt.title("Equity (log) – best run")
-    plt.tight_layout(); plt.savefig("docs/opt_equity.png", dpi=160)
-    print("Saved docs/opt_results.csv and docs/opt_equity.png")
-
-if __name__=="__main__":
+if __name__ == "__main__":
     main()

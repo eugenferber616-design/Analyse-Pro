@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Train/Test (Walk-Forward) – AUTO (V2)
+Train/Test (Walk-Forward) – AUTO (V2, look-ahead-sicher)
 - Nutzt riskindex_timeseries:
     • bevorzugt: risk_index_bin (0..100)
     • fallback : sc_comp        (0..100-ähnlich)
 - Benchmark: SPY Buy&Hold (Kennzahlen je Testfenster + Summary)
 - Rolling: 5y Train / 1y Test
+- Look-ahead-Schutz: Positionen handeln mit shift(1)
 - Schreibt:
     docs/train_test_results_auto.csv
     docs/train_test_summary_auto.csv
@@ -69,8 +70,10 @@ def _hyst(x: pd.Series, on: float, off: float,
     pos, last = [], 0.0
     for v in x.values:
         if np.isnan(v): pos.append(last); continue
-        if v <= on: last = 1.0
-        elif v >= off: last = 0.0 if mode == "long_only" else short_w
+        if v <= on:
+            last = 1.0
+        elif v >= off:
+            last = 0.0 if mode == "long_only" else short_w
         pos.append(last)
     return pd.Series(pos, index=x.index, name="pos")
 
@@ -80,7 +83,8 @@ def _ema_signal(sig: pd.Series, span: int) -> pd.Series:
 def _eval_params(span, on, off, mode, sw, ret, sig) -> tuple[float,float,float,pd.Series]:
     ema = _ema_signal(sig, span=span)
     pos = _hyst(ema, on, off, mode=mode, short_w=sw)
-    strat_r = (ret * pos).fillna(0.0)
+    # LOOK-AHEAD-SCHUTZ:
+    strat_r = (ret * pos.shift(1).fillna(0.0)).fillna(0.0)
     curve = (1.0 + strat_r).cumprod()
     return _sharpe(strat_r), _cagr(curve), _maxdd(curve), curve
 
@@ -108,7 +112,7 @@ if not signal_cols:
     (DOCS / "train_test_results_auto.csv").write_text("no_signal\n", encoding="utf-8")
     raise SystemExit(0)
 
-# Align auf Daily
+# Align auf Daily (outer + ffill)
 idx_union = ts.index.union(mkt.index)
 full_idx = pd.date_range(idx_union.min(), idx_union.max(), freq="D")
 
@@ -149,24 +153,36 @@ for sig_col in signal_cols:
         bh_cg = _cagr(bh_te_curve)
         bh_dd = _maxdd(bh_te_curve)
 
-        # Grid-Suche auf Train
+        # Grid-Suche auf Train (look-ahead-sicher)
         best_key, best_params = None, None
         for span in ema_spans:
             ema_tr = _ema_signal(sig_raw[tr_mask], span=span)
             for on, off in thresholds:
-                for mode in modes:
-                    sw_list = [0.0] if mode == "long_only" else short_ws
-                    for sw in sw_list:
-                        # Kennzahlen Train
-                        pos_tr = _hyst(ema_tr, on, off, mode=mode, short_w=sw)
-                        strat_r_tr = (spy_ret[tr_mask] * pos_tr).fillna(0.0)
-                        curve_tr = (1.0 + strat_r_tr).cumprod()
-                        key = (_sharpe(strat_r_tr), _cagr(curve_tr), -abs(_maxdd(curve_tr)))
-                        if (best_key is None) or (key > best_key):
-                            best_key = key
-                            best_params = dict(ema_span=span, on=on, off=off, mode=mode, short_w=sw)
+                if on >= off:
+                    continue
+                # long_only
+                pos_tr = _hyst(ema_tr, on, off, mode="long_only", short_w=0.0)
+                strat_r_tr = (spy_ret[tr_mask] * pos_tr.shift(1).fillna(0.0)).fillna(0.0)
+                curve_tr = (1.0 + strat_r_tr).cumprod()
+                cand = (_sharpe(strat_r_tr), _cagr(curve_tr), -abs(_maxdd(curve_tr)))
+                if (best_key is None) or (cand > best_key):
+                    best_key = cand
+                    best_params = dict(ema_span=span, on=on, off=off, mode="long_only", short_w=0.0)
+                # tri_state
+                for sw in short_ws:
+                    pos_tr2 = _hyst(ema_tr, on, off, mode="tri_state", short_w=sw)
+                    strat_r_tr2 = (spy_ret[tr_mask] * pos_tr2.shift(1).fillna(0.0)).fillna(0.0)
+                    curve_tr2 = (1.0 + strat_r_tr2).cumprod()
+                    cand2 = (_sharpe(strat_r_tr2), _cagr(curve_tr2), -abs(_maxdd(curve_tr2)))
+                    if cand2 > best_key:
+                        best_key = cand2
+                        best_params = dict(ema_span=span, on=on, off=off, mode="tri_state", short_w=sw)
 
-        # Test mit besten Parametern
+        # --- GUARD: falls kein Kandidat
+        if best_params is None:
+            continue
+
+        # Test mit besten Parametern (look-ahead-sicher)
         sh_te, cg_te, dd_te, curve_te = _eval_params(
             best_params["ema_span"], best_params["on"], best_params["off"],
             best_params["mode"], best_params["short_w"], spy_ret[te_mask], sig_raw[te_mask]
@@ -195,6 +211,7 @@ for sig_col in signal_cols:
 df = pd.DataFrame(rows)
 if df.empty:
     (DOCS / "train_test_results_auto.csv").write_text("no_results\n", encoding="utf-8")
+    (DOCS / "train_test_summary_auto.csv").write_text("no_results\n", encoding="utf-8")
     raise SystemExit(0)
 
 df.to_csv(DOCS / "train_test_results_auto.csv", index=False)

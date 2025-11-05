@@ -407,6 +407,17 @@ jobs:
           head -n 5 data/processed/riskindex_timeseries.csv || true
           cat data/processed/riskindex_snapshot.json || true
 
+      - name: Optimizer (auto, no inputs)
+        run: |
+          python scripts/optimize_riskindex_auto.py
+          head -n 20 docs/opt_results_auto.csv || true
+
+      - name: Train/Test (auto, walk-forward)
+        run: |
+          python scripts/optimize_train_test_auto.py
+          head -n 20 docs/train_test_results_auto.csv || true
+
+
       # ===================== Optimizer – Schalter & Parameter =====================
       - name: Optimize RiskIndex (grid) — via ENV switches
         if: ${{ env.RUN_OPTIMIZER == 'true' }}

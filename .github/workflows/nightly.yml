@@ -68,8 +68,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # yfinance für market_core
-          pip install --upgrade yfinance
+          # yfinance/Stooq-Fallbacks
+          pip install --upgrade yfinance pandas_datareader
           # parquet-Engines optional
           pip install --upgrade pyarrow fastparquet
 
@@ -122,7 +122,7 @@ jobs:
       # ---------------- Earnings / Fundamentals / Optionen -------------------
       - name: Pull earnings CALENDAR (optional)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
           mkdir -p data/earnings docs
@@ -131,8 +131,8 @@ jobs:
 
       - name: Pull earnings RESULTS (EPS/Revenue)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:    ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
           mkdir -p data/earnings/results
@@ -141,7 +141,7 @@ jobs:
 
       - name: Pull ETF basics (Finnhub)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN || secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: |
           python scripts/fetch_etf_basics.py --watchlist "${WATCHLIST_ETF}" \
@@ -185,12 +185,12 @@ jobs:
           } | awk 'NF>0' | sort -u > "$tmp"
 
           python scripts/fetch_options_oi.py --watchlist "$tmp"
-          test -s data/processed/options_oi_summary.csv || (echo "options_oi_summary leer!" && exit 1)
-          test -s data/processed/options_oi_by_expiry.csv || (echo "options_oi_by_expiry leer!" && exit 1)
-          test -s data/processed/options_oi_totals.csv || (echo "options_oi_totals leer!" && exit 1)
-          head -n 40 data/processed/options_oi_summary.csv || true
-          head -n 40 data/processed/options_oi_by_expiry.csv || true
-          head -n 40 data/processed/options_oi_totals.csv || true
+          test -s data/processed/options_oi_summary.csv     || (echo "options_oi_summary leer!" && exit 1)
+          test -s data/processed/options_oi_by_expiry.csv   || (echo "options_oi_by_expiry leer!" && exit 1)
+          test -s data/processed/options_oi_totals.csv      || (echo "options_oi_totals leer!" && exit 1)
+          head -n 40 data/processed/options_oi_summary.csv  || true
+          head -n 40 data/processed/options_oi_by_expiry.csv|| true
+          head -n 40 data/processed/options_oi_totals.csv   || true
 
       - name: Build max OI strike per symbol
         run: |
@@ -320,7 +320,7 @@ jobs:
           PY
           rm -f data/market/stooq/*.csv || true
 
-          # ===================== RiskIndex Inputs (Core) =========================
+      # ===================== RiskIndex Inputs (Core) =========================
       - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)
         run: |
           python scripts/fetch_market_core.py
@@ -341,7 +341,6 @@ jobs:
           echo "== core head =="
           [ -f data/processed/market_core.csv.gz ] && zcat data/processed/market_core.csv.gz | head -n 3 || echo "no market_core"
           [ -f data/processed/fred_core.csv.gz   ] && zcat data/processed/fred_core.csv.gz   | head -n 3 || echo "no fred_core"
-
 
       - name: (optional) Assemble prices parquet (if CSVs exist)
         run: |
@@ -454,7 +453,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (no LLM) + RiskIndex snapshot/timeseries + direction_signal" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries + direction_signal" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

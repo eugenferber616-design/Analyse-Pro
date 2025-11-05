@@ -171,9 +171,9 @@ jobs:
           FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
-          mkdir -p data/earnings/results
-          python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --outdir data/earnings/results --limit 12
-          test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
+          python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --limit 12
+          head -n 20 data/processed/earnings_results.csv || true
+
 
       - name: Pull ETF basics (Finnhub)
         env:

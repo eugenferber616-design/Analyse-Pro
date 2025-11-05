@@ -3,33 +3,7 @@ name: Nightly Data Pull and Cache (No LLM)
 on:
   schedule:
     - cron: "30 0 * * *"   # täglich 00:30 UTC
-  workflow_dispatch:
-    inputs:
-      RUN_OPTIMIZER:
-        description: "Optimizer laufen lassen?"
-        type: choice
-        options: [ "true", "false" ]
-        default: "true"
-      RUN_TRAIN_TEST:
-        description: "Train/Test laufen lassen?"
-        type: choice
-        options: [ "auto", "true", "false" ]
-        default: "auto"
-      OPT_EMA_SPANS:
-        description: "EMA-Spannen (Komma oder Range 10-63:1)"
-        default: "42,63,84,126"
-      OPT_THRESHOLDS:
-        description: "Ein/Aus-Schwellen als Paare on:off, Komma-separiert"
-        default: "40:60,45:55,42:58"
-      OPT_MODE_SET:
-        description: "Modi (Komma) z.B. long_only,tri_state"
-        default: "long_only,tri_state"
-      OPT_SHORT_WEIGHTS:
-        description: "Short-Gewichte nur für tri_state (Komma)"
-        default: "-0.5,-0.25"
-      OPT_GROUP_WEIGHTS:
-        description: "Gruppen-Gewichte (vol,curve,credit,usd,liq,rates,equity)"
-        default: "1.0,1.0,1.0,1.0,1.0,1.0,1.0"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -72,16 +46,6 @@ jobs:
 
       # FRED
       FRED_START: "2003-01-01"
-
-      # Optimizer-Schalter (per workflow_dispatch überschreibbar)
-      RUN_OPTIMIZER:   ${{ inputs.RUN_OPTIMIZER || 'true' }}
-      RUN_TRAIN_TEST:  ${{ inputs.RUN_TRAIN_TEST || 'auto' }}  # auto = nur sonntags
-      OPT_EMA_SPANS:   ${{ inputs.OPT_EMA_SPANS || '42,63,84,126' }}
-      OPT_THRESHOLDS:  ${{ inputs.OPT_THRESHOLDS || '40:60,45:55,42:58' }}
-      OPT_MODE_SET:    ${{ inputs.OPT_MODE_SET || 'long_only,tri_state' }}
-      OPT_SHORT_WEIGHTS: ${{ inputs.OPT_SHORT_WEIGHTS || '-0.5,-0.25' }}
-      # Gruppenreihenfolge: vol,curve,credit,usd,liq,rates,equity
-      OPT_GROUP_WEIGHTS: ${{ inputs.OPT_GROUP_WEIGHTS || '1.0,1.0,1.0,1.0,1.0,1.0,1.0' }}
 
       # lokale Module auffindbar
       PYTHONPATH: "."
@@ -165,15 +129,15 @@ jobs:
           python scripts/fetch_earnings.py --watchlist "${WATCHLIST_STOCKS}" --window-days "${WINDOW_DAYS}"
           test -f docs/earnings_next.json && head -n 50 docs/earnings_next.json || true
 
-      - name: Pull earnings RESULTS (EPS/Revenue)
+      - name: Pull earnings RESULTS (robust)
         env:
           FINNHUB_TOKEN:    ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_SLEEP_MS: ${{ env.FINNHUB_SLEEP_MS }}
         run: |
-          python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --limit 12
-          head -n 20 data/processed/earnings_results.csv || true
-
+          # schreibt automatisch nach data/processed/earnings_results.csv[.gz]
+          python scripts/fetch_earnings_v2.py --watchlist "${WATCHLIST_STOCKS}" --limit 40 --use-yf
+          test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
       - name: Pull ETF basics (Finnhub)
         env:
@@ -186,14 +150,17 @@ jobs:
           head -n 30 data/processed/etf_basics.csv || true
           test -f data/reports/etf_errors.json && cat data/reports/etf_errors.json || true
 
-      - name: Pull FUNDAMENTALS (profile2 + metrics)
+      - name: Pull FUNDAMENTALS (multi provider, robust)
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_SLEEP_MS: "200"
         run: |
           python scripts/fetch_fundamentals.py \
             --watchlist "${WATCHLIST_STOCKS}" \
-            --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
-            --sleep_ms 150 || true
+            --overrides watchlists/fund_overrides.csv \
+            --merge-existing data/processed/fundamentals_core.csv.gz
           head -n 20 data/processed/fundamentals_core.csv || true
-
 
       - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
         shell: bash
@@ -246,25 +213,11 @@ jobs:
           test -s data/processed/options_signals.csv || (echo "options_signals leer!" && exit 1)
           head -n 40 data/processed/options_signals.csv || true
 
-      # ---------- NEU: Direction-Signal (7/30/60 + Focus-Strike je Horizont) ----------
       - name: Build DIRECTION SIGNAL (7/30/60 strikes)
         run: |
           python scripts/build_direction_signal.py
           test -s data/processed/direction_signal.csv.gz || (echo "direction_signal leer!" && exit 1)
           zcat data/processed/direction_signal.csv.gz | head -n 20 || true
-
-      # ---- Standardisierte CSVs für AgenaTrader-Scanner ----
-      - name: Build BY_EXPIRY standard CSV
-        run: |
-          python scripts/build_by_expiry.py
-          test -s data/processed/options_oi_by_expiry.csv || (echo "std by_expiry leer!" && exit 1)
-          head -n 40 data/processed/options_oi_by_expiry.csv || true
-
-      - name: Build BY_STRIKE standard CSV
-        run: |
-          python scripts/build_by_strike.py
-          test -s data/processed/options_oi_by_strike.csv || (echo "std by_strike leer!" && exit 1)
-          head -n 40 data/processed/options_oi_by_strike.csv || true
 
       # -------------------- COT 20y Pulls ---------------------------
       - name: Pull COT 20y – Disaggregated (F+O Combined)
@@ -407,10 +360,6 @@ jobs:
           head -n 5 data/processed/riskindex_timeseries.csv || true
           cat data/processed/riskindex_snapshot.json || true
 
-      
-
-    
-
       # ===================== ALLES KOMPRIMIEREN ====================
       - name: Compress ALL processed & docs to .gz
         shell: bash
@@ -486,10 +435,7 @@ jobs:
               "fred_oas":             "/data/processed/fred_oas.csv.gz",
               "market_core":          "/data/processed/market_core.csv.gz",
               "riskindex_snapshot":   "/data/processed/riskindex_snapshot.json.gz",
-              "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz",
-              "opt_results":          "/docs/opt_results.csv.gz",
-              "train_test_results":   "/docs/train_test_results.csv.gz",
-              "train_test_summary":   "/docs/train_test_summary.csv.gz"
+              "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz"
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
@@ -505,7 +451,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries + optimizers (switchable)" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

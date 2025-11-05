@@ -13,9 +13,6 @@
     "fred_oas": "/data/processed/fred_oas.csv.gz",
     "market_core": "/data/processed/market_core.csv.gz",
     "riskindex_snapshot": "/data/processed/riskindex_snapshot.json.gz",
-    "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz",
-    "opt_results": "/docs/opt_results.csv.gz",
-    "train_test_results": "/docs/train_test_results.csv.gz",
-    "train_test_summary": "/docs/train_test_summary.csv.gz"
+    "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz"
   }
 }

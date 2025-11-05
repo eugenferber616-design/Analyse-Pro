@@ -1,26 +1,10 @@
 {
-  "ok": [],
-  "miss": [],
-  "fallback": [
-    "AAPL,US_IG",
-    "ADS.DE,EU_IG",
-    "ALV.DE,EU_IG",
-    "AMZN,US_IG",
-    "AVGO,US_IG",
-    "BAS.DE,EU_IG",
-    "BAYN.DE,EU_IG",
-    "BMW.DE,EU_IG",
-    "DTE.DE,EU_IG",
-    "GLD,US_IG",
-    "GOOGL,US_IG",
-    "IFX.DE,EU_IG",
-    "META,US_IG",
-    "MSFT,US_IG",
-    "NVDA,US_IG",
-    "SAP.DE,EU_IG",
-    "SIE.DE,EU_IG",
-    "SPY,US_IG",
-    "VOW3.DE,EU_IG"
-  ],
+  "ok": 19,
+  "miss": 0,
+  "providers": {
+    "finnhub": true,
+    "alphavantage": true,
+    "simfin": true
+  },
   "errors": []
 }

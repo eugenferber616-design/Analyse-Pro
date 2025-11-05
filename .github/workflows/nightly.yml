@@ -68,7 +68,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # yfinance/Stooq-Fallbacks
+          # yfinance / Stooq-Fallbacks
           pip install --upgrade yfinance pandas_datareader
           # parquet-Engines optional
           pip install --upgrade pyarrow fastparquet
@@ -325,6 +325,17 @@ jobs:
         run: |
           python scripts/fetch_market_core.py
           zcat data/processed/market_core.csv.gz | head -n 5 || true
+          # Non-Null-Check (muss SPY/HYG/LQD/XLF enthalten)
+          python - << 'PY'
+          import pandas as pd
+          df = pd.read_csv("data/processed/market_core.csv.gz", compression="gzip")
+          nn = df.notna().sum().to_dict()
+          print("market_core nonnull:", nn)
+          need = ["SPY","HYG","LQD","XLF"]
+          missing = [c for c in need if nn.get(c,0)==0]
+          if missing:
+              raise SystemExit("Fehlende Market-Core Spalten ohne Daten: " + ", ".join(missing))
+          PY
 
       - name: Fetch FRED core (macro & OAS)
         env:

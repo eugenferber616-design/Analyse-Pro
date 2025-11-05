@@ -188,12 +188,12 @@ jobs:
 
       - name: Pull FUNDAMENTALS (profile2 + metrics)
         run: |
-          mkdir -p data/fundamentals
           python scripts/fetch_fundamentals.py \
             --watchlist "${WATCHLIST_STOCKS}" \
-            --finnhub_key "${{ secrets.FINNHAB_API_KEY }}" \
+            --finnhub_key "${{ secrets.FINNHUB_API_KEY }}" \
             --sleep_ms 150 || true
           head -n 20 data/processed/fundamentals_core.csv || true
+
 
       - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
         shell: bash
@@ -407,57 +407,9 @@ jobs:
           head -n 5 data/processed/riskindex_timeseries.csv || true
           cat data/processed/riskindex_snapshot.json || true
 
-      - name: Optimizer (auto, no inputs)
-        run: |
-          python scripts/optimize_riskindex_auto.py
-          head -n 20 docs/opt_results_auto.csv || true
+      
 
-      - name: Train/Test (auto, walk-forward)
-        run: |
-          python scripts/optimize_train_test_auto.py
-          head -n 20 docs/train_test_results_auto.csv || true
-
-
-      # ===================== Optimizer – Schalter & Parameter =====================
-      - name: Optimize RiskIndex (grid) — via ENV switches
-        if: ${{ env.RUN_OPTIMIZER == 'true' }}
-        env:
-          OPT_EMA_SPANS:     ${{ env.OPT_EMA_SPANS }}
-          OPT_THRESHOLDS:    ${{ env.OPT_THRESHOLDS }}
-          OPT_MODE_SET:      ${{ env.OPT_MODE_SET }}
-          OPT_SHORT_WEIGHTS: ${{ env.OPT_SHORT_WEIGHTS }}
-          OPT_GROUP_WEIGHTS: ${{ env.OPT_GROUP_WEIGHTS }}
-        run: |
-          echo "Optimizer ON"
-          echo "EMA_SPANS=$OPT_EMA_SPANS"
-          echo "THRESHOLDS=$OPT_THRESHOLDS"
-          echo "MODE_SET=$OPT_MODE_SET"
-          echo "SHORT_WEIGHTS=$OPT_SHORT_WEIGHTS"
-          echo "GROUP_WEIGHTS=$OPT_GROUP_WEIGHTS"
-          if [ -f data/processed/riskindex_components.csv.gz ]; then
-            python scripts/optimize_riskindex.py
-            head -n 20 docs/opt_results.csv || true
-          else
-            echo "skip: components missing"
-          fi
-
-      - name: Train/Test Walk-Forward — via ENV switch
-        # auto = sonntags (GitHub cron weekday 0 = Sonntag). Bei manual run immer ON.
-        if: ${{ (env.RUN_TRAIN_TEST == 'true') || (env.RUN_TRAIN_TEST == 'auto' && github.event_name == 'schedule' && contains('0', (github.event.schedule || ''))) || (github.event_name == 'workflow_dispatch' && env.RUN_TRAIN_TEST != 'false') }}
-        env:
-          OPT_EMA_SPANS:     ${{ env.OPT_EMA_SPANS }}
-          OPT_THRESHOLDS:    ${{ env.OPT_THRESHOLDS }}
-          OPT_MODE_SET:      ${{ env.OPT_MODE_SET }}
-          OPT_SHORT_WEIGHTS: ${{ env.OPT_SHORT_WEIGHTS }}
-          OPT_GROUP_WEIGHTS: ${{ env.OPT_GROUP_WEIGHTS }}
-        run: |
-          echo "Train/Test ON (mode=$RUN_TRAIN_TEST)"
-          if [ -f data/processed/riskindex_components.csv.gz ]; then
-            python scripts/optimize_train_test.py
-            head -n 20 docs/train_test_results.csv || true
-          else
-            echo "skip: components missing"
-          fi
+    
 
       # ===================== ALLES KOMPRIMIEREN ====================
       - name: Compress ALL processed & docs to .gz

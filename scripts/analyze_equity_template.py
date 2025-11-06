@@ -1,317 +1,389 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-analyze_equity_template.py  (RICH PAYLOAD EDITION)
-Baut eine quellengebundene, LLM-freundliche JSON pro Ticker aus den bereits
-vorhandenen Pipeline-Dateien und rendert eine kleine HTML-Vorschau.
-
-Nutzt u.a.:
-  - data/processed/fundamentals_core.csv
-  - data/processed/earnings_results.csv
-  - docs/earnings_next.json
-  - data/processed/options_oi_by_expiry.csv
-  - data/processed/options_oi_by_strike.csv
-  - data/processed/options_oi_strike_max.csv
-  - data/processed/hv_summary.csv.gz
-  - data/processed/cds_proxy.csv
-  - data/processed/market_core.csv.gz  (optional)
-
-CLI bleibt kompatibel:
-  --symbol        Ticker
-  --out-json      Pfad zur JSON-Ausgabe
-  --out-html      Pfad zur HTML-Ausgabe
-  --public-base   Öffentliche Basis-URL (R2), z.B. https://pub-...r2.dev
+analyze_equity_template.py  (AI-READY PAYLOAD)
+Baut eine kompakte, quellengebundene Analyse-Payload (OHNE LLM) für einen Ticker.
+- Liest lokale Pipeline-Outputs: fundamentals_core, hv_summary, cds_proxy,
+  options_oi_* (expiry/strike/signals), earnings_next, earnings_results, market_core, riskindex_snapshot
+- Optional: Finnhub/yfinance Fallbacks für Basisprofil
+- Schreibt JSON (reich an Feldern + Quellenpfaden) und ein schlankes HTML zur Sichtprüfung
+CLI bleibt identisch zum Vorgänger:
+  --symbol SYMBOL --out-json PATH.json --out-html PATH.html --public-base https://pub-...r2.dev
 """
 
 from __future__ import annotations
-import os, json, math, argparse
+import os, sys, json, math, argparse, gzip
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional, Tuple
 
 import pandas as pd
+import requests
 
-# ----------------------------- Utils -----------------------------------------
-def _read_csv(path: str | Path) -> pd.DataFrame:
-    """Liest CSV oder CSV.GZ robust; existiert Datei nicht, -> leeres DF."""
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
+
+# ----------------------------- Helpers -----------------------------
+
+def _env(k: str, default: str = "") -> str:
+    v = os.getenv(k)
+    return v.strip() if v else default
+
+def _read_csv_any(path: str) -> Optional[pd.DataFrame]:
     p = Path(path)
     if not p.exists():
-        return pd.DataFrame()
+        return None
     try:
-        if p.suffix == ".gz":
+        if str(p).endswith(".gz"):
             return pd.read_csv(p, compression="gzip")
         return pd.read_csv(p)
     except Exception:
-        try:
-            return pd.read_csv(p, low_memory=False)
-        except Exception:
-            return pd.DataFrame()
+        return None
 
-def _read_json(path: str | Path):
+def _read_json_any(path: str) -> Optional[Any]:
     p = Path(path)
     if not p.exists():
         return None
     try:
-        with open(p, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+        if str(p).endswith(".gz"):
+            with gzip.open(p, "rt", encoding="utf-8") as f:
+                return json.load(f)
+        return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return None
 
-def _num(x):
+def _fmt_pct(x) -> Optional[float]:
     try:
-        if x is None or (isinstance(x, float) and math.isnan(x)):
-            return None
         return float(x)
     except Exception:
         return None
 
-def _first(series, default=None):
+def _float(x) -> Optional[float]:
     try:
-        v = series.iloc[0]
-        return v if pd.notna(v) else default
+        return float(x)
     except Exception:
-        return default
+        return None
 
-# ----------------------------- Laden der Quellen ------------------------------
-P = {
-    "fundamentals": "data/processed/fundamentals_core.csv",
-    "earnings_results": "data/processed/earnings_results.csv",
-    "earnings_next": "docs/earnings_next.json",
-    "options_by_expiry": "data/processed/options_oi_by_expiry.csv",
-    "options_by_strike": "data/processed/options_oi_by_strike.csv",
-    "strike_max": "data/processed/options_oi_strike_max.csv",
-    "hv_summary": "data/processed/hv_summary.csv.gz",
-    "cds_proxy": "data/processed/cds_proxy.csv",
-    "market_core": "data/processed/market_core.csv.gz",  # optional
-}
+def _upper(x: str) -> str:
+    return (x or "").upper()
 
-DF_fund = _read_csv(P["fundamentals"])
-DF_earn = _read_csv(P["earnings_results"])
-DF_exp  = _read_csv(P["options_by_expiry"])
-DF_strk = _read_csv(P["options_by_strike"])
-DF_smax = _read_csv(P["strike_max"])
-DF_hv   = _read_csv(P["hv_summary"])
-DF_cds  = _read_csv(P["cds_proxy"])
-DF_mkt  = _read_csv(P["market_core"])
-EARN_NEXT = _read_json(P["earnings_next"]) or []
+# ------------------------ Online profile (fallback) ------------------------
 
-# Vorindizierung
-if not DF_fund.empty and "symbol" in DF_fund.columns:
-    DF_fund["symbol"] = DF_fund["symbol"].astype(str).str.upper()
-    DF_fund.set_index("symbol", inplace=True, drop=False)
+def fetch_profile(symbol: str) -> Dict[str, Any]:
+    token = _env("FINNHUB_TOKEN") or _env("FINNHUB_API_KEY")
+    if token:
+        try:
+            r = requests.get(
+                "https://finnhub.io/api/v1/stock/profile2",
+                params={"symbol": symbol, "token": token},
+                timeout=15,
+            )
+            if r.ok:
+                d = r.json() or {}
+                if d.get("name"):
+                    return {
+                        "name": d.get("name"),
+                        "ticker": symbol,
+                        "exchange": d.get("exchange") or "",
+                        "country": d.get("country") or "",
+                        "currency": d.get("currency") or "",
+                        "sector": d.get("finnhubIndustry") or "",
+                        "ipo": d.get("ipo") or "",
+                        "market_cap": d.get("marketCapitalization"),
+                        "weburl": d.get("weburl") or "",
+                        "source": "finnhub:profile2",
+                    }
+        except Exception:
+            pass
 
-if not DF_hv.empty and "symbol" in DF_hv.columns:
-    DF_hv["symbol"] = DF_hv["symbol"].astype(str).str.upper()
-    DF_hv.set_index("symbol", inplace=True, drop=False)
+    if yf:
+        try:
+            t = yf.Ticker(symbol)
+            info = getattr(t, "info", {})
+            finfo = getattr(t, "fast_info", {})
+            return {
+                "name": info.get("longName") or info.get("shortName") or "",
+                "ticker": symbol,
+                "exchange": info.get("exchange") or "",
+                "country": info.get("country") or "",
+                "currency": finfo.get("currency") or info.get("currency") or "",
+                "sector": info.get("sector") or "",
+                "ipo": "",
+                "market_cap": finfo.get("market_cap") or info.get("marketCap"),
+                "weburl": info.get("website") or "",
+                "source": "yfinance",
+            }
+        except Exception:
+            pass
 
-if not DF_cds.empty and "symbol" in DF_cds.columns:
-    DF_cds["symbol"] = DF_cds["symbol"].astype(str).str.upper()
-    DF_cds.set_index("symbol", inplace=True, drop=False)
+    return {"ticker": symbol, "source": "unknown"}
 
-if not DF_smax.empty and "symbol" in DF_smax.columns:
-    DF_smax["symbol"] = DF_smax["symbol"].astype(str).str.upper()
-    DF_smax.set_index("symbol", inplace=True, drop=False)
+# ------------------------ Local pipeline readers ------------------------
 
-# Map: nächster Earnings-Termin
-EARN_NEXT_MAP: Dict[str,str] = {}
-for row in EARN_NEXT if isinstance(EARN_NEXT, list) else []:
-    s = str(row.get("symbol","")).upper()
-    d = row.get("next_date")
-    if s and d:
-        EARN_NEXT_MAP[s] = d
+def pick_row(df: Optional[pd.DataFrame], symbol_col: str, symbol: str) -> Optional[pd.Series]:
+    if df is None or df.empty: return None
+    colz = {c.lower(): c for c in df.columns}
+    sc = colz.get(symbol_col.lower())
+    if sc is None: return None
+    sub = df[df[sc].astype(str).str.upper() == _upper(symbol)]
+    if sub.empty: return None
+    return sub.iloc[0]
 
-# ----------------------------- Kernlogik -------------------------------------
-def build_payload(symbol: str, public_base: str) -> Dict[str, Any]:
-    s = symbol.strip().upper()
-
-    # Fundamentals
-    f = DF_fund.loc[s] if (not DF_fund.empty and s in DF_fund.index) else {}
-
-    profile = {
-        "name": f.get("name") if isinstance(f, pd.Series) else None,
-        "ticker": s,
-        "exchange": f.get("exchange") if isinstance(f, pd.Series) else None,
-        "country": f.get("country") if isinstance(f, pd.Series) else None,
-        "currency": f.get("currency") if isinstance(f, pd.Series) else None,
-        "sector": f.get("sector") if isinstance(f, pd.Series) else None,
-        "industry": f.get("industry") if isinstance(f, pd.Series) else None,
-        "isin": f.get("isin") if isinstance(f, pd.Series) else None,
-        "market_cap": _num(f.get("market_cap")) if isinstance(f, pd.Series) else None,
-        "source": "fundamentals_core.csv"
+def load_fundamentals_core(symbol: str) -> Dict[str, Any]:
+    df = _read_csv_any("data/processed/fundamentals_core.csv")
+    r = pick_row(df, "symbol", symbol)
+    if r is None: return {}
+    # tolerante Spaltennamen
+    def g(*cand):
+        for c in cand:
+            if c in r: return r[c]
+        return None
+    return {
+        "revenue_ttm": _float(g("revenue_ttm", "revenue")),
+        "gross_margin": _float(g("gross_margin", "grossMargins")),
+        "operating_margin": _float(g("operating_margin", "operatingMargins")),
+        "free_cashflow": _float(g("free_cashflow", "freeCashflow")),
+        "total_debt": _float(g("total_debt")),
+        "total_cash": _float(g("total_cash")),
+        "pe_trailing": _float(g("pe", "trailingPE")),
+        "pe_forward": _float(g("forward_pe", "forwardPE")),
+        "ev_ebitda": _float(g("ev_ebitda")),
+        "currency": g("currency") or "",
+        "source": "fundamentals_core.csv",
     }
 
+def load_hv(symbol: str) -> Dict[str, Any]:
+    df = _read_csv_any("data/processed/hv_summary.csv.gz")
+    r = pick_row(df, "symbol", symbol)
+    if r is None: return {}
+    return {
+        "hv20": _float(r.get("hv20")),
+        "hv60": _float(r.get("hv60")),
+        "source": "hv_summary.csv.gz",
+    }
+
+def load_cds_proxy(symbol: str) -> Dict[str, Any]:
+    df = _read_csv_any("data/processed/cds_proxy.csv")
+    r = pick_row(df, "symbol", symbol)
+    if r is None: return {}
+    return {
+        "proxy_spread": _float(r.get("proxy_spread")),
+        "asof": str(r.get("asof")) if r.get("asof") is not None else "",
+        "source": "cds_proxy.csv",
+    }
+
+def load_options(symbol: str) -> Dict[str, Any]:
+    # by_expiry (finde max total_oi)
+    dfe = _read_csv_any("data/processed/options_oi_by_expiry.csv.gz")
+    exp = None
+    put_oi = call_oi = None
+    if dfe is not None and not dfe.empty:
+        sub = dfe[dfe["symbol"].astype(str).str.upper() == _upper(symbol)].copy()
+        if not sub.empty:
+            # flexible Spaltennamen
+            def g(row, name, alt):
+                return row[name] if name in row else row.get(alt)
+            if "total_call_oi" in sub.columns and "total_put_oi" in sub.columns:
+                sub["total_oi"] = sub["total_call_oi"].fillna(0) + sub["total_put_oi"].fillna(0)
+                top = sub.sort_values("total_oi", ascending=False).head(1)
+                if not top.empty:
+                    exp = str(top.iloc[0].get("expiry"))
+                    call_oi = _float(top.iloc[0].get("total_call_oi"))
+                    put_oi  = _float(top.iloc[0].get("total_put_oi"))
+
+    # by_strike (focus)
+    dfs = _read_csv_any("data/processed/options_oi_by_strike.csv")
+    focus_strike = focus_side = None
+    if dfs is not None and not dfs.empty:
+        sub = dfs[dfs["symbol"].astype(str).str.upper() == _upper(symbol)]
+        if not sub.empty:
+            # nimm erste Zeile (bereits sortiert in Pipeline)
+            focus_strike = _float(sub.iloc[0].get("focus_strike"))
+            focus_side   = str(sub.iloc[0].get("focus_side") or "")
+
+    return {
+        "focus_expiry": exp,
+        "focus_strike": focus_strike,
+        "focus_side": focus_side,
+        "put_oi": put_oi,
+        "call_oi": call_oi,
+        "source": "options_oi_by_expiry.csv.gz + options_oi_by_strike.csv",
+    }
+
+def load_earnings(symbol: str) -> Dict[str, Any]:
+    nxt = _read_json_any("docs/earnings_next.json")
+    next_date = ""
+    if isinstance(nxt, list):
+        for row in nxt:
+            if _upper(row.get("symbol","")) == _upper(symbol):
+                next_date = row.get("next_date","") or ""
+                break
+
+    df = _read_csv_any("data/processed/earnings_results.csv")
+    last_surprise = None
+    if df is not None and not df.empty:
+        sub = df[df["symbol"].astype(str).str.upper() == _upper(symbol)]
+        if not sub.empty:
+            sub = sub.sort_values("date", ascending=False)
+            v = sub.iloc[0].get("surprise_percent")
+            last_surprise = _float(v)
+
+    return {
+        "next_date": next_date,
+        "last_surprise_pct": last_surprise,
+        "source": "earnings_next.json + earnings_results.csv",
+    }
+
+def load_riskindex_snapshot() -> Dict[str, Any]:
+    j = _read_json_any("data/processed/riskindex_snapshot.json") or \
+        _read_json_any("data/processed/riskindex_snapshot.json.gz")
+    if not isinstance(j, dict): return {}
+    return {
+        "regime": j.get("regime"),
+        "score": _float(j.get("score")),
+        "source": "riskindex_snapshot.json(.gz)",
+    }
+
+# ------------------------ JSON builder ------------------------
+
+def build_payload(symbol: str, public_base: str) -> Dict[str, Any]:
+    prof = fetch_profile(symbol)                     # Fallbacks
+    fcs  = load_fundamentals_core(symbol)
+    hv   = load_hv(symbol)
+    cds  = load_cds_proxy(symbol)
+    opt  = load_options(symbol)
+    ern  = load_earnings(symbol)
+    rix  = load_riskindex_snapshot()
+
+    currency = fcs.get("currency") or prof.get("currency") or ""
+
     financials = {
-        "revenue_ttm": _num(f.get("revenue_ttm")) if isinstance(f, pd.Series) else None,
-        "gross_margin": _num(f.get("gross_margin")) if isinstance(f, pd.Series) else None,
-        "op_margin": _num(f.get("oper_margin")) if isinstance(f, pd.Series) else None,
-        "fcf_ttm": _num(f.get("fcf_ttm")) if isinstance(f, pd.Series) else None,
-        "net_debt": _num(f.get("net_debt")) if isinstance(f, pd.Series) else None,
-        "liquidity_note": f.get("liquidity_note") if isinstance(f, pd.Series) else "",
+        "revenue_yoy": None,  # nicht robust lokal vorhanden → leer
+        "gross_margin": fcs.get("gross_margin"),
+        "op_margin":   fcs.get("operating_margin"),
+        "fcf":         fcs.get("free_cashflow"),
+        "net_debt":    (fcs.get("total_debt") or 0.0) - (fcs.get("total_cash") or 0.0) \
+                        if fcs.get("total_debt") is not None or fcs.get("total_cash") is not None else None,
+        "liquidity_note": "",
+        "currency": currency,
     }
 
     valuation = {
-        "pe": _num(f.get("pe")) if isinstance(f, pd.Series) else None,
-        "ps": _num(f.get("ps")) if isinstance(f, pd.Series) else None,
-        "pb": _num(f.get("pb")) if isinstance(f, pd.Series) else None,
-        "ev_ebitda": _num(f.get("ev_ebitda")) if isinstance(f, pd.Series) else None,
-        "note": ""
+        "pe": fcs.get("pe_trailing"),
+        "ev_ebitda": fcs.get("ev_ebitda"),
+        "note": " ".join([
+            f"Trailing P/E ~{fcs['pe_trailing']:.1f}" if fcs.get("pe_trailing") else "",
+            f"Forward P/E ~{fcs['pe_forward']:.1f}" if fcs.get("pe_forward") else "",
+            f"EV/EBITDA ~{fcs['ev_ebitda']:.1f}" if fcs.get("ev_ebitda") else "",
+        ]).strip(),
     }
 
-    # HV / Volatilität
-    hv = DF_hv.loc[s] if (not DF_hv.empty and s in DF_hv.index) else {}
-    volatility = {
-        "hv20": _num(hv.get("hv20")) if isinstance(hv, pd.Series) else None,
-        "hv60": _num(hv.get("hv60")) if isinstance(hv, pd.Series) else None
-    }
+    sources = []
+    def add_src(name, typ, path_note=""):
+        if name:
+            sources.append({"name": name, "type": typ, "snippet": path_note})
 
-    # Credit-Proxy
-    cd = DF_cds.loc[s] if (not DF_cds.empty and s in DF_cds.index) else {}
-    credit_proxy = {
-        "proxy": cd.get("proxy") if isinstance(cd, pd.Series) else None,
-        "proxy_spread": _num(cd.get("proxy_spread")) if isinstance(cd, pd.Series) else None
-    }
+    add_src(prof.get("source"), "profile")
+    add_src(fcs.get("source"),  "fundamentals",  f"{public_base}/data/processed/fundamentals_core.csv.gz")
+    add_src(hv.get("source"),   "hv",            f"{public_base}/data/processed/hv_summary.csv.gz")
+    add_src(cds.get("source"),  "credit",        f"{public_base}/data/processed/cds_proxy.csv.gz")
+    add_src(opt.get("source"),  "options",
+            f"{public_base}/data/processed/options_oi_by_expiry.csv.gz; "
+            f"{public_base}/data/processed/options_oi_by_strike.csv.gz")
+    add_src(ern.get("source"),  "earnings",
+            f"{public_base}/docs/earnings_next.json.gz; {public_base}/data/processed/earnings_results.csv.gz")
+    add_src(rix.get("source"),  "riskindex",     f"{public_base}/data/processed/riskindex_snapshot.json.gz")
 
-    # Options: Put/Call + Focus-Strike
-    pcr, peak_expiry = None, None
-    if not DF_exp.empty:
-        sub = DF_exp[DF_exp["symbol"].astype(str).str.upper() == s]
-        if not sub.empty:
-            last = sub.sort_values("expiry").iloc[-1]
-            c = _num(last.get("total_call_oi"))
-            p = _num(last.get("total_put_oi"))
-            if c and c > 0 and p is not None:
-                pcr = round(p / c, 3)
-            peak_expiry = str(last.get("expiry"))
-
-    smax = DF_smax.loc[s] if (not DF_smax.empty and s in DF_smax.index) else {}
-    options = {
-        "expiry": smax.get("expiry") if isinstance(smax, pd.Series) else peak_expiry,
-        "focus_strike": _num(smax.get("focus_strike")) if isinstance(smax, pd.Series) else None,
-        "focus_side": smax.get("focus_side") if isinstance(smax, pd.Series) else None,
-        "put_call_ratio": pcr
-    }
-
-    # Earnings: Historie (letzte 6–8) + nächster Termin
-    earnings_history: List[Dict[str, Any]] = []
-    if not DF_earn.empty:
-        er = DF_earn[DF_earn["symbol"].astype(str).str.upper() == s].copy()
-        if not er.empty:
-            er = er.sort_values("date").tail(8)
-            for _, r in er.iterrows():
-                earnings_history.append({
-                    "date": str(r.get("date")),
-                    "eps": _num(r.get("eps")),
-                    "surprise_pct": _num(r.get("surprise_percent")),
-                    "revenue": _num(r.get("revenue"))
-                })
-
-    earnings = {
-        "next_date": EARN_NEXT_MAP.get(s),
-        "history": earnings_history
-    }
-
-    # Summary bullets (rein faktenbasiert)
     bullets = []
-    if profile.get("market_cap"):
-        bullets.append(f"Marktkapitalisierung: ~{int(profile['market_cap']):,}".replace(",", "."))
-    if valuation.get("pe"):
-        bullets.append(f"P/E (ttm): {valuation['pe']:.1f}")
-    if volatility.get("hv20") is not None:
-        bullets.append(f"HV20: {volatility['hv20']:.2f}")
-    if credit_proxy.get("proxy_spread") is not None:
-        bullets.append(f"Credit-Proxy Spread: {credit_proxy['proxy_spread']:.1f} bp")
-    if options.get("put_call_ratio") is not None:
-        bullets.append(f"Put/Call OI: {options['put_call_ratio']:.2f}")
+    if prof.get("market_cap"):
+        bullets.append(f"Marktkap.: ~{int(prof['market_cap']):,} (Quelle: {prof.get('source')})".replace(",", "."))
+    if cds.get("proxy_spread") is not None:
+        bullets.append(f"Credit-Proxy Spread: {cds['proxy_spread']:.2f} bp")
+    if hv.get("hv20") is not None or hv.get("hv60") is not None:
+        bullets.append(f"HV20/HV60: {hv.get('hv20','–')} / {hv.get('hv60','–')}")
 
-    # R2-Links (damit externe Agenten Quellen haben)
-    base = (public_base or "https://pub-CHANGE-ME.r2.dev").rstrip("/")
-    r2_links = {
-        "eq_payload_gz": f"{base}/data/processed/eq_template/{s}.json.gz",
-        "fundamentals": f"{base}/data/processed/fundamentals_core.csv.gz",
-        "earnings_results": f"{base}/data/processed/earnings_results.csv.gz",
-        "earnings_next": f"{base}/docs/earnings_next.json.gz",
-        "options_by_expiry": f"{base}/data/processed/options_oi_by_expiry.csv.gz",
-        "options_by_strike": f"{base}/data/processed/options_oi_by_strike.csv.gz",
-        "hv_summary": f"{base}/data/processed/hv_summary.csv.gz",
-        "cds_proxy": f"{base}/data/processed/cds_proxy.csv.gz"
-    }
-
-    # Externe, generische Quellen (zur Web-Ergänzung)
-    external = [
-        {"name": "Company IR", "url": f"https://www.google.com/search?q={s}+investor+relations"},
-        {"name": "SEC Search", "url": f"https://www.sec.gov/edgar/search/#/q={s}"},
-        {"name": "Yahoo Finance", "url": f"https://finance.yahoo.com/quote/{s}"}
-    ]
-
-    # Quellenliste für die JSON-Struktur
-    sources = [
-        {"name":"fundamentals_core.csv","type":"fundamentals","snippet":""},
-        {"name":"earnings_results.csv","type":"earnings","snippet":"Q-Ergebnisse & Surprise%"},
-        {"name":"earnings_next.json","type":"calendar","snippet":"nächster Termin"},
-        {"name":"options_oi_*","type":"options","snippet":"Put/Call & Fokus-Strike"},
-        {"name":"hv_summary.csv.gz","type":"volatility","snippet":"HV20/HV60"},
-        {"name":"cds_proxy.csv","type":"credit","snippet":"Proxy/OAS"}
-    ]
-
-    # Output (kompatibel mit deinem Prompt – plus Zusatzfelder 'profile', 'sources.r2')
-    out: Dict[str, Any] = {
-        "ticker": s,
+    payload = {
+        "ticker": _upper(symbol),
+        "name": prof.get("name") or "",
+        "exchange": prof.get("exchange") or "",
+        "country": prof.get("country") or "",
+        "currency": currency,
+        "web": prof.get("weburl") or "",
         "summary_bullets": bullets,
-        "profile": profile,
-        "financials": {
-            "revenue_yoy": None,             # unbekannt (keine saubere Quelle lokal)
-            "gross_margin": financials["gross_margin"],
-            "op_margin": financials["op_margin"],
-            "fcf": financials["fcf_ttm"],
-            "net_debt": financials["net_debt"],
-            "liquidity_note": financials["liquidity_note"] or ""
-        },
-        "outlook": [],                       # absichtlich leer (keine Spekulation)
-        "risks": [],                         # absichtlich leer (nur harte Daten)
-        "competition": [],
-        "valuation": {"pe": valuation["pe"], "ev_ebitda": valuation["ev_ebitda"], "note": valuation["note"]},
+
+        "financials": financials,
+        "outlook": [],                 # absichtlich leer (keine Spekulation)
+        "risks": [],                   # dito
+        "competition": [],             # dito
+        "valuation": valuation,
+
         "earnings_dynamics": {
-            "revisions": "",                 # falls du revisions.csv.gz befüllst, kann man das ergänzen
-            "surprises": "",                 # Details stecken in earnings.history
-            "tone": ""
+            "revisions": "",
+            "surprises": (f"Letzte Überraschung: {ern['last_surprise_pct']:.1f}%"
+                          if ern.get("last_surprise_pct") is not None else ""),
+            "tone": "",
         },
-        "catalysts": [],
+        "catalysts": ([f"Nächster Earnings-Termin: {ern['next_date']}"] if ern.get("next_date") else []),
+
+        # Optionen/HV/CDS/RiskIndex als technische Inputs
+        "options": {
+            "focus_expiry": opt.get("focus_expiry"),
+            "focus_strike": opt.get("focus_strike"),
+            "focus_side":   opt.get("focus_side"),
+            "put_oi":       opt.get("put_oi"),
+            "call_oi":      opt.get("call_oi"),
+        },
+        "volatility": {
+            "hv20": hv.get("hv20"),
+            "hv60": hv.get("hv60"),
+        },
+        "credit_proxy": {
+            "spread_bp": cds.get("proxy_spread"),
+            "asof": cds.get("asof"),
+        },
+        "riskindex": {
+            "regime": rix.get("regime"),
+            "score":  rix.get("score"),
+        },
+
+        # AI-Prompt-ähnliche Felder (falls du direkt in Google AI schicken willst)
         "stance": "neutral",
-        "options": options,
-        "volatility": volatility,
-        "credit_proxy": credit_proxy,
-        "earnings": earnings,
         "sources": sources,
+
         "links": {
-            "html": f"{base}/site/eq/{s}.html",
-            "json_gz": f"{base}/data/processed/eq_template/{s}.json.gz"
+            "json_gz": f"{public_base}/data/processed/eq_template/{_upper(symbol)}.json.gz",
+            "html":    f"{public_base}/site/eq/{_upper(symbol)}.html",
         },
-        "sources_r2": r2_links,
-        "sources_external": external,
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds")+"Z"
+        "generated_at": datetime.utcnow().isoformat() + "Z",
     }
-    return out
+    return payload
 
-# ----------------------------- HTML ------------------------------------------
-def fmt_pct(x):
-    try:
-        return f"{float(x)*100:.1f}%"
-    except Exception:
-        return "unbekannt"
+# ------------------------ HTML (compact check) ------------------------
 
-def fmt_num(x):
-    try:
-        return f"{float(x):,.0f}".replace(",", ".")
-    except Exception:
-        return "unbekannt"
+def render_html(j: Dict[str, Any]) -> str:
+    kv_fin = [
+        ("Gross Margin",  pct(j["financials"].get("gross_margin"))),
+        ("Operating Margin", pct(j["financials"].get("op_margin"))),
+        ("FCF (ttm)",  num(j["financials"].get("fcf"))),
+        ("Net Debt",   num(j["financials"].get("net_debt"))),
+    ]
+    kv_val = [
+        ("P/E", num(j["valuation"].get("pe"))),
+        ("EV/EBITDA", num(j["valuation"].get("ev_ebitda"))),
+        ("HV20 / HV60", f"{num(j['volatility'].get('hv20'))} / {num(j['volatility'].get('hv60'))}"),
+        ("Credit-Proxy", f"{num(j['credit_proxy'].get('spread_bp'))} bp"),
+    ]
+    bullets = "".join(f"<li>{b}</li>" for b in j.get("summary_bullets", []))
+    srcs = "".join(f"<li>{s.get('name','')} – {s.get('type','')}</li>" for s in j.get("sources", []))
 
-def render_html(j: Dict[str,Any]) -> str:
-    bullets = "".join(f"<li>{b}</li>" for b in j.get("summary_bullets",[]))
-    hv = j.get("volatility", {})
-    cp = j.get("credit_proxy", {})
-    opt = j.get("options", {})
-    fin = j.get("financials", {})
-    val = j.get("valuation", {})
+    def tbl(rows):  # simple key/value table
+        out = ['<table class="kv">']
+        for k,v in rows:
+            out.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
+        out.append("</table>")
+        return "".join(out)
 
     return f"""<!doctype html><html lang="de"><meta charset="utf-8">
 <title>{j['ticker']} – Equity Payload</title>
@@ -331,57 +403,47 @@ h1,h2{{margin:0 0 12px}} .muted{{opacity:.8}} a{{color:#8ab4ff;text-decoration:n
     <h1>Equity Payload – <span>{j['ticker']}</span></h1>
     <div class="badge">{j.get('stance','neutral').upper()}</div>
     <p class="muted">erstellt: {j.get('generated_at','')}</p>
-    <ul>{bullets or "<li>–</li>"}</ul>
+    <ul>{bullets}</ul>
   </div>
 
   <div class="grid">
-    <div class="card">
-      <h2>Finanzlage</h2>
-      <table class="kv">
-        <tr><td>Gross Margin</td><td>{fmt_pct(fin.get('gross_margin'))}</td></tr>
-        <tr><td>Operating Margin</td><td>{fmt_pct(fin.get('op_margin'))}</td></tr>
-        <tr><td>FCF (ttm)</td><td>{fmt_num(fin.get('fcf'))}</td></tr>
-        <tr><td>Net Debt</td><td>{fmt_num(fin.get('net_debt'))}</td></tr>
-      </table>
-    </div>
-    <div class="card">
-      <h2>Bewertung & Risiko</h2>
-      <table class="kv">
-        <tr><td>P/E</td><td>{val.get('pe') if val.get('pe') is not None else "unbekannt"}</td></tr>
-        <tr><td>EV/EBITDA</td><td>{val.get('ev_ebitda') if val.get('ev_ebitda') is not None else "unbekannt"}</td></tr>
-        <tr><td>HV20 / HV60</td><td>{hv.get('hv20') if hv.get('hv20') is not None else "–"} / {hv.get('hv60') if hv.get('hv60') is not None else "–"}</td></tr>
-        <tr><td>Credit-Proxy</td><td>{cp.get('proxy') or "–"} | {cp.get('proxy_spread') if cp.get('proxy_spread') is not None else "–"} bp</td></tr>
-      </table>
-    </div>
-    <div class="card">
-      <h2>Optionen</h2>
-      <table class="kv">
-        <tr><td>Focus-Expiry</td><td>{opt.get('expiry') or "unbekannt"}</td></tr>
-        <tr><td>Focus-Strike</td><td>{fmt_num(opt.get('focus_strike'))}</td></tr>
-        <tr><td>Put/Call OI</td><td>{opt.get('put_call_ratio') if opt.get('put_call_ratio') is not None else "unbekannt"}</td></tr>
-      </table>
-    </div>
-    <div class="card">
-      <h2>Earnings</h2>
-      <p>Nächster Termin: {j.get('earnings',{}).get('next_date') or "unbekannt"}</p>
-      <p class="muted">Details (history) nur in JSON.</p>
+    <div class="card"><h2>Finanzlage</h2>{tbl(kv_fin)}</div>
+    <div class="card"><h2>Bewertung & Risiko</h2>{tbl(kv_val)}</div>
+    <div class="card"><h2>Optionen</h2>{tbl([("Focus-Expiry",j['options'].get("focus_expiry") or "unbekannt"),
+       ("Focus-Strike", j['options'].get("focus_strike") or "unbekannt"),
+       ("Focus-Side",   j['options'].get("focus_side")   or "unbekannt"),
+       ("Put/Call OI",  f"{num(j['options'].get('put_oi'))} / {num(j['options'].get('call_oi'))}")])}</div>
+    <div class="card"><h2>Earnings</h2>
+      <p>Nächster Termin: {j['catalysts'][0] if j['catalysts'] else "unbekannt"}</p>
+      <p class="muted">{j['earnings_dynamics'].get('surprises') or ""}</p>
     </div>
   </div>
 
   <div class="card">
     <h2>Quellen</h2>
-    <ul>
-      <li>R2 JSON: <a href="{j['links']['json_gz']}">{j['links']['json_gz']}</a></li>
-      <li>Fundamentals: <a href="{j.get('sources_r2',{}).get('fundamentals','')}">fundamentals_core.csv.gz</a></li>
-      <li>Options: <a href="{j.get('sources_r2',{}).get('options_by_expiry','')}">options_by_expiry.csv.gz</a></li>
-      <li>HV: <a href="{j.get('sources_r2',{}).get('hv_summary','')}">hv_summary.csv.gz</a></li>
-      <li>Credit: <a href="{j.get('sources_r2',{}).get('cds_proxy','')}">cds_proxy.csv.gz</a></li>
-    </ul>
+    <ul>{srcs or "<li>unbekannt</li>"}</ul>
+    <p>JSON: <a href="{j['links']['json_gz']}">{j['links']['json_gz']}</a></p>
   </div>
 </div>
 </html>"""
 
-# ----------------------------- CLI -------------------------------------------
+def pct(x):
+    try:
+        return f"{float(x)*100:.1f}%"
+    except Exception:
+        return "unbekannt"
+
+def num(x):
+    try:
+        v = float(x)
+        if abs(v) >= 1000:  # Tausenderpunkte deutsch
+            return f"{v:,.0f}".replace(",", ".")
+        return f"{v:.2f}"
+    except Exception:
+        return "–"
+
+# ------------------------ CLI ------------------------
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", required=True)
@@ -390,17 +452,17 @@ def main():
     ap.add_argument("--public-base", required=True)
     args = ap.parse_args()
 
+    payload = build_payload(args.symbol, args.public_base)
+
     Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out_html).parent.mkdir(parents=True, exist_ok=True)
 
-    payload = build_payload(args.symbol, args.public_base)
-
+    # JSON uncompressed (Workflow gzippt danach)
     with open(args.out_json, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     html = render_html(payload)
-    with open(args.out_html, "w", encoding="utf-8") as f:
-        f.write(html)
+    Path(args.out_html).write_text(html, encoding="utf-8")
 
     print("Wrote:", args.out_json, "and", args.out_html)
 

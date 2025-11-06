@@ -15,7 +15,7 @@ jobs:
     env:
       WATCHLIST_STOCKS: watchlists/mylist.txt
       WATCHLIST_ETF:    watchlists/etf_sample.txt
-      FORKAST_SUBDIR:   "prompter"   # Ziel-Prefix im Bucket "forcast"
+      FORKAST_SUBDIR:   "prompter"   # unbenutzt, kann bleiben
 
       # Kurse/History
       PRICES_DAYS:      "750"
@@ -56,7 +56,7 @@ jobs:
       # lokale Module auffindbar
       PYTHONPATH: "."
 
-      # ✨ Secrets einmal in env spiegeln → if: kann env.* prüfen
+      # Secrets in env spiegeln → if: kann env.* prüfen
       CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
       CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
       CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
@@ -416,9 +416,8 @@ jobs:
           echo "== processed after gzip =="; ls -lh data/processed || true
           echo "== docs after gzip =="; ls -lh docs || true
 
-      # ===================== R2 UPLOADS ====================
-      # Sync .gz (processed & docs) to R2 (Haupt-Bucket)
-      - name: Sync .gz (processed & docs) to R2 (***)
+      # ===================== R2 UPLOADS (ein Bucket) ====================
+      - name: Sync .gz (processed & docs) to R2
         if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
@@ -442,8 +441,7 @@ jobs:
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
           rclone sync docs           "r2:${CF_R2_BUCKET}/docs"           --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
 
-      # NEU: Site/eq in den gleichen Bucket
-      - name: Sync eq site to R2 (***)
+      - name: Sync eq site to R2
         if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
@@ -464,77 +462,13 @@ jobs:
           force_path_style = true
           no_check_bucket = true
           EOF
-          # lädt site/eq/* hoch
-          rclone sync site/eq "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket -v
-          # optional: Root-Index
-          rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" --config rclone.conf --s3-no-check-bucket -v
-
-      # === Diagnose & Schreib-Test für "forcast" (nie failen)
-      - name: Diagnose forkast secrets & bucket (forcast)
-        env:
-          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID_FORKAST }}
-          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY_FORKAST }}
-          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET_FORKAST }}   # forcast
-          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT_FORKAST }}
-        shell: bash
-        run: |
-          set +e
-          for k in CF_R2_ACCESS_KEY_ID CF_R2_SECRET_ACCESS_KEY CF_R2_BUCKET CF_R2_ENDPOINT; do
-            if [ -n "${!k}" ]; then echo "$k=SET"; else echo "$k=EMPTY"; fi
-          done
-
-          curl -fsSL https://rclone.org/install.sh | sudo bash
-          cat > rclone.conf <<EOF
-          [r2f]
-          type = s3
-          provider = Cloudflare
-          access_key_id = ${CF_R2_ACCESS_KEY_ID}
-          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
-          endpoint = ${CF_R2_ENDPOINT}
-          force_path_style = true
-          no_check_bucket = true
-          EOF
-
-          echo "== Try list prefix (can fail with bucket-scoped tokens) =="
-          rclone --config rclone.conf --s3-no-check-bucket lsf "r2f:${CF_R2_BUCKET}/" || echo "(ignored)"
-
-          echo "== Write test object to verify permissions =="
-          echo "ok $(date -u)" > /tmp/health.txt
-          if rclone --config rclone.conf --s3-no-check-bucket copy /tmp/health.txt "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}/health.txt"; then
-            echo "WRITE SUCCESS to r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}/health.txt"
-            exit 0
-          else
-            echo "WRITE FAILED – check endpoint/bucket/keys (ignored)"
+          # Nur syncen, wenn site/eq existiert UND nicht leer ist
+          if [ ! -d "site/eq" ] || [ -z "$(ls -A site/eq 2>/dev/null)" ]; then
+            echo "site/eq ist leer – skip Upload."
             exit 0
           fi
-
-      - name: Sync Prompter site to R2 (forcast)
-        env:
-          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID_FORKAST }}
-          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY_FORKAST }}
-          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET_FORKAST }}   # "forcast"
-          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT_FORKAST }}
-        shell: bash
-        run: |
-          set -e
-          curl -fsSL https://rclone.org/install.sh | sudo bash
-          cat > rclone.conf <<EOF
-          [r2f]
-          type = s3
-          provider = Cloudflare
-          access_key_id = ${CF_R2_ACCESS_KEY_ID}
-          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
-          endpoint = ${CF_R2_ENDPOINT}
-          acl = public-read
-          force_path_style = true
-          no_check_bucket = true
-          EOF
-          echo "== Local site files =="; find site -maxdepth 2 -type f -printf "%P\n" | sed 's/^/  /' || true
-          echo "== Sync to r2://${CF_R2_BUCKET}/${FORKAST_SUBDIR} =="
-          rclone sync site "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" \
-            --config rclone.conf --fast-list --checksum --update -vv --s3-no-check-bucket
-          echo "== Remote listing =="; rclone lsf "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" \
-            --config rclone.conf --s3-no-check-bucket || true
+          rclone sync site/eq "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket -v
+          rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" --config rclone.conf --s3-no-check-bucket -v || true
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
       - name: Purge heavy local files before commit

@@ -473,29 +473,29 @@ jobs:
           rclone lsd "r2:${CF_R2_BUCKET}"           --config rclone.conf --s3-no-check-bucket || true
           find site/eq -type f -printf "%P\n" | sed 's/^/  /' || true
 
-          # DRYRUN=1 → Probe ohne Upload
-          [ "${DRYRUN:-0}" = "1" ] && DRY="--dry-run" || DRY=""
-
           echo "== Upload (verbose) =="
           set +e
           rclone sync site/eq "r2:${CF_R2_BUCKET}/site/eq" \
             --config rclone.conf --s3-no-check-bucket \
             -vv --log-file rclone.log --retries 3 --low-level-retries 10 --ignore-errors \
-            --s3-chunk-size 64M --s3-upload-concurrency 4 $DRY
+            --s3-chunk-size 64M --s3-upload-concurrency 4
           RC=$?
 
+          # index.html mitkopieren (Fehler hier ignorieren)
           if [ -f site/index.html ]; then
             rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" \
-              --config rclone.conf --s3-no-check-bucket \
-              -vv --log-file rclone.log --retries 3 --ignore-errors $DRY
+              --config rclone.conf --s3-no-check-bucket -vv --log-file rclone.log || true
           fi
 
           echo "== rclone LOG (tail) =="
           tail -n 200 rclone.log || true
 
-          # Exit 3 = partial errors -> Workflow nicht failen
-          if [ $RC -ne 0 ] && [ $RC -ne 3 ]; then exit $RC; fi
-
+          # Exit 3 = partial errors -> NICHT fehlschlagen lassen
+          if [ "$RC" -eq 0 ] || [ "$RC" -eq 3 ]; then
+            exit 0
+          else
+            exit "$RC"
+          fi
 
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================

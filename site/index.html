@@ -1,1 +1,10 @@
-<!doctype html><meta http-equiv="refresh" content="0; url=summary.html">
+<!doctype html>
+<meta charset="utf-8">
+<title>Redirect…</title>
+<script>
+  // Leitet nach summary.html und übernimmt ?symbol=…
+  location.replace("summary.html" + (location.search || ""));
+</script>
+<noscript>
+  <a href="summary.html">Weiter zu summary.html</a>
+</noscript>

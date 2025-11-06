@@ -1,4 +1,3 @@
-# .github/workflows/analyze_watchlist.yml
 name: Analyze watchlist (Template)
 
 on:
@@ -50,7 +49,6 @@ jobs:
       - name: Ensure folders
         run: |
           mkdir -p "$OUTDIR" "$SITE_OUT" site
-          echo "public_base=${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}" >> $GITHUB_OUTPUT
 
       - name: Normalize watchlist
         id: wl
@@ -63,18 +61,16 @@ jobs:
             printf "AAPL,US_IG\nMSFT,US_IG\n" >> watchlists/mylist.txt
             WL="watchlists/mylist.txt"
           fi
-          # Erster Eintrag als Header? -> prüfen
           HEAD="$(head -n1 "$WL" | tr -d '\r')"
           if echo "$HEAD" | grep -qiE 'symbol|proxy|ticker'; then
             TAIL="tail -n +2"
           else
             TAIL="cat"
           fi
-          # Spalte 1 extrahieren (vor Komma) und Uppercase
           TMP=/tmp/syms.txt
           eval "$TAIL \"$WL\"" | cut -d',' -f1 | tr -d '\r ' | tr '[:lower:]' '[:upper:]' \
             | awk 'NF>0' | sort -u > "$TMP"
-          echo "list=$TMP" >> "$GITHUB_OUTPUT"
+          echo "list=$TMP"   >> "$GITHUB_OUTPUT"
           echo "count=$(wc -l < $TMP | tr -d ' ')" >> "$GITHUB_OUTPUT"
           echo "Using watchlist $WL with $(wc -l < $TMP) symbols:"
           head -n 20 "$TMP" || true
@@ -84,10 +80,10 @@ jobs:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           SEC_USER_AGENT:  ${{ secrets.SEC_USER_AGENT }}
-          PUBLIC_BASE:     ${{ steps.wl.outputs.public_base }}
+          PUBLIC_BASE:     ${{ env.PUBLIC_BASE }}
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           INDEX_JSON="$OUTDIR/index.json"
           echo "[]" > "$INDEX_JSON"
           n=0
@@ -98,46 +94,47 @@ jobs:
               --symbol "$SYM" \
               --out-json "$OUTDIR/${SYM}.json" \
               --out-html "$SITE_OUT/${SYM}.html" \
-              --public-base "${PUBLIC_BASE}"
+              --public-base "${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}"
             gzip -f -9 "$OUTDIR/${SYM}.json" || true
 
-            # in index.json aufnehmen
+            # in index.json aufnehmen (Heredoc korrekt quoten!)
             python - "$INDEX_JSON" "$SYM" << 'PY'
-import json,sys
-p=sys.argv[1]; sym=sys.argv[2]
-data=json.load(open(p))
-data=[d for d in data if d.get("symbol")!=sym]
-data.append({"symbol":sym,"json":f"{sym}.json.gz","html":f"{sym}.html"})
-open(p,"w").write(json.dumps(sorted(data,key=lambda x:x["symbol"]),indent=2))
+import json, sys
+p = sys.argv[1]; sym = sys.argv[2]
+data = json.load(open(p))
+data = [d for d in data if d.get("symbol") == sym]
+data.append({"symbol": sym, "json": f"{sym}.json.gz", "html": f"{sym}.html"})
+open(p, "w").write(json.dumps(sorted(data, key=lambda x: x["symbol"]), indent=2))
 PY
             n=$((n+1))
           done < "${{ steps.wl.outputs.list }}"
 
-          # einfache Liste als HTML
-          cat > site/index.html <<HTML
+          # einfache Liste als HTML (Heredoc korrekt quoten!)
+          cat > site/index.html << 'HTML'
 <!doctype html><meta charset="utf-8">
 <title>Equity Templates</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<style>body{font:14px/1.5 system-ui,Segoe UI,Roboto,Arial;padding:24px;background:#0f1116;color:#e6e6e6}
+<style>
+body{font:14px/1.5 system-ui,Segoe UI,Roboto,Arial;padding:24px;background:#0f1116;color:#e6e6e6}
 a{color:#7bd4ff;text-decoration:none}a:hover{text-decoration:underline}
 .card{max-width:900px;margin:0 auto}
-h1{margin:0 0 8px 0} .muted{color:#9aa4ad}
-ul{columns:3;gap:24px} li{margin:6px 0}
+h1{margin:0 0 8px 0}.muted{color:#9aa4ad}
+ul{columns:3;gap:24px}li{margin:6px 0}
 </style>
 <div class="card">
   <h1>Equity Templates</h1>
-  <div class="muted">Ticker-Liste aus der Watchlist (n=${n}).</div>
+  <div class="muted">Ticker-Liste aus der Watchlist.</div>
   <ul>
-$(awk '{print "    <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "${{ steps.wl.outputs.list }}")
-  </ul>
-</div>
 HTML
+          awk '{print "    <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "${{ steps.wl.outputs.list }}" >> site/index.html
+          echo "  </ul>" >> site/index.html
+          echo "</div>"  >> site/index.html
 
           # JSON-Index gzippen
           gzip -f -9 "$INDEX_JSON" || true
 
       - name: Upload to R2 (public)
-        if: ${{ secrets.CF_R2_BUCKET != '' }}
+        if: ${{ secrets.CF_R2_BUCKET && secrets.CF_R2_ACCESS_KEY_ID && secrets.CF_R2_SECRET_ACCESS_KEY && secrets.CF_R2_ENDPOINT }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -157,13 +154,10 @@ HTML
           force_path_style = true
           no_check_bucket = true
           EOF
-          echo "== Upload JSON(.gz) index & files =="
           rclone copy "data/processed/eq_template" "r2:${CF_R2_BUCKET}/analysis/eq_template" \
             --config rclone.conf --s3-no-check-bucket -v --include "*.json.gz" --include "index.json.gz"
-          echo "== Upload HTML site =="
           rclone copy "site" "r2:${CF_R2_BUCKET}/site" \
             --config rclone.conf --s3-no-check-bucket -v --exclude ".DS_Store"
-          echo "Listing (site/eq/*):"
           rclone lsf "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket | head -n 50 || true
 
       - name: Upload artifacts

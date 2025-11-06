@@ -55,7 +55,6 @@ jobs:
 
       # lokale Module auffindbar
       PYTHONPATH: "."
-      
 
     steps:
       - name: Checkout
@@ -400,7 +399,6 @@ jobs:
             echo '</ul></div>'
           } > site/index.html
 
-
       # ===================== ALLES KOMPRIMIEREN ====================
       - name: Compress ALL processed & docs to .gz
         shell: bash
@@ -413,61 +411,16 @@ jobs:
           echo "== docs after gzip =="; ls -lh docs || true
 
       # ===================== R2 UPLOADS ====================
-      - name: Sync .gz (processed & docs) to R2 (analysis-pro)
+      # Sync .gz (processed & docs) to R2 (Haupt-Bucket)
+      - name: Sync .gz (processed & docs) to R2 (***)
+        if: ${{ secrets.CF_R2_BUCKET != '' && secrets.CF_R2_ENDPOINT != '' && secrets.CF_R2_ACCESS_KEY_ID != '' && secrets.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
           CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
-        shell: bash
         run: |
           set -e
-          if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
-             [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
-            echo "R2 (analysis-pro) nicht konfiguriert – Step übersprungen."
-            exit 0
-          fi
-          curl -fsSL https://rclone.org/install.sh | sudo bash
-          cat > rclone.conf <<EOF
-          [r2]
-          type = s3
-          provider = Cloudflare
-          access_key_id = ${CF_R2_ACCESS_KEY_ID}
-          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
-          endpoint = ${CF_R2_ENDPOINT}
-          acl = private
-          force_path_style = true
-          no_check_bucket = true
-          EOF
-          rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" \
-            --config rclone.conf --fast-list --checksum --update --include "*.gz" --exclude "*" \
-            --s3-no-check-bucket -vv
-          rclone sync docs "r2:${CF_R2_BUCKET}/docs" \
-            --config rclone.conf --fast-list --checksum --update --include "*.gz" --exclude "*" \
-            --s3-no-check-bucket -vv
-          rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket | head -n 50 || true
-
-      - name: Add marker file to site
-        run: |
-          mkdir -p site
-          echo "$(date -u) – deploy ok" > site/deploy-ok.txt
-          echo "<!doctype html><meta charset='utf-8'><title>OK</title>deploy ok" > site/ok.html
-
-      # **NEU**: Site/eq nach analysis-pro Bucket
-      - name: Sync eq site to R2 (analysis-pro)
-        env:
-          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
-          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
-          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
-          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
-        shell: bash
-        run: |
-          set -e
-          if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
-             [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
-            echo "R2 (analysis-pro) nicht konfiguriert – Step übersprungen."
-            exit 0
-          fi
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
           [r2]
@@ -480,9 +433,35 @@ jobs:
           force_path_style = true
           no_check_bucket = true
           EOF
-          rclone sync site "r2:${CF_R2_BUCKET}/site" \
-            --config rclone.conf --fast-list --checksum --update -vv --s3-no-check-bucket
-          rclone lsf "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket | head -n 20 || true
+          rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
+          rclone sync docs           "r2:${CF_R2_BUCKET}/docs"           --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
+
+      # NEU: Site/eq in den gleichen Bucket
+      - name: Sync eq site to R2 (***)
+        if: ${{ secrets.CF_R2_BUCKET != '' && secrets.CF_R2_ENDPOINT != '' && secrets.CF_R2_ACCESS_KEY_ID != '' && secrets.CF_R2_SECRET_ACCESS_KEY != '' }}
+        env:
+          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
+          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
+        run: |
+          set -e
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          cat > rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${CF_R2_ACCESS_KEY_ID}
+          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
+          endpoint = ${CF_R2_ENDPOINT}
+          acl = public-read
+          force_path_style = true
+          no_check_bucket = true
+          EOF
+          # lädt site/eq/* hoch
+          rclone sync site/eq "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket -v
+          # optional: Root-Index
+          rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" --config rclone.conf --s3-no-check-bucket -v
 
       # === Diagnose & Schreib-Test für "forcast" (nie failen)
       - name: Diagnose forkast secrets & bucket (forcast)

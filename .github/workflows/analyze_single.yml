@@ -1,74 +1,58 @@
-name: Analyze single equity (Template)
+# .github/workflows/analyze_watchlist.yml
+name: Analyze watchlist (Template)
 
 on:
-  workflow_dispatch:
-    inputs:
-      SYMBOL:
-        description: "Ticker (z.B. AAPL, TSLA, SAP)"
-        required: true
-        default: "AAPL"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
 
 jobs:
-  analyze:
+  batch:
     runs-on: ubuntu-latest
     env:
-      SYMBOL: ${{ inputs.SYMBOL }}
+      WATCHLIST: watchlists/mylist.txt
       OUTDIR: data/processed/eq_template
       SITE_OUT: site/eq
       PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
+        with: { python-version: "3.11" }
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt || true
           pip install pandas yfinance requests python-dateutil
-
       - name: Ensure folders
-        run: |
-          mkdir -p "$OUTDIR" "$SITE_OUT" site
-
-      - name: Build equity template (JSON + HTML)
+        run: mkdir -p "$OUTDIR" "$SITE_OUT" site
+      - name: Loop watchlist and render
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           SEC_USER_AGENT:  ${{ secrets.SEC_USER_AGENT }}
-          PUBLIC_BASE:     ${{ env.PUBLIC_BASE }}
+        shell: bash
         run: |
-          python scripts/analyze_equity_template.py \
-            --symbol "$SYMBOL" \
-            --out-json "$OUTDIR/${SYMBOL}.json" \
-            --out-html "$SITE_OUT/${SYMBOL}.html" \
-            --public-base "${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}"
-
-      - name: Write /site/index.html redirect
-        run: |
-          echo "<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='0; url=eq/${SYMBOL}.html'>" > site/index.html
-
-      - name: Compress JSON (optional)
-        run: |
-          gzip -f -9 "$OUTDIR/${SYMBOL}.json" || true
-          ls -lh "$OUTDIR" || true
-          ls -lh "$SITE_OUT" || true
-
-      - name: Sync artifacts to R2
+          # erste Spalte = Symbol, Header überspringen
+          tail -n +2 "$WATCHLIST" | cut -d',' -f1 | tr -d '\r' | while read -r SYM; do
+            [ -z "$SYM" ] && continue
+            echo "== Build $SYM =="
+            python scripts/analyze_equity_template.py \
+              --symbol "$SYM" \
+              --out-json "$OUTDIR/${SYM}.json" \
+              --out-html "$SITE_OUT/${SYM}.html" \
+              --public-base "${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}" || true
+            gzip -f -9 "$OUTDIR/${SYM}.json" || true
+          done
+          echo "<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='0; url=eq/${SYM}.html'>" > site/index.html
+      - name: Upload to R2
+        if: ${{ secrets.CF_R2_BUCKET != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
           CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
-        shell: bash
         run: |
-          if [ -z "$CF_R2_BUCKET" ]; then
-            echo "R2 secrets fehlen -> Skip Upload"; exit 0; fi
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
           [r2]
@@ -80,22 +64,6 @@ jobs:
           force_path_style = true
           no_check_bucket = true
           EOF
-          rclone copy "$OUTDIR" "r2:${CF_R2_BUCKET}/analysis/eq_template" \
-            --config rclone.conf --s3-no-check-bucket --checksum -v
-          rclone copy "$SITE_OUT" "r2:${CF_R2_BUCKET}/site/eq" \
-            --config rclone.conf --s3-no-check-bucket --checksum -v
-          rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" \
-            --config rclone.conf --s3-no-check-bucket --checksum -v
-          echo "== Remote listing =="
-          rclone lsf "r2:${CF_R2_BUCKET}/analysis/eq_template" --config rclone.conf --s3-no-check-bucket | head -n 20 || true
-          rclone lsf "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket | head -n 20 || true
-
-      - name: Commit artifact manifest (optional)
-        run: |
-          mkdir -p docs
-          echo "{\"symbol\":\"$SYMBOL\",\"json\":\"/analysis/eq_template/${SYMBOL}.json.gz\",\"html\":\"/site/eq/${SYMBOL}.html\"}" > docs/last_single_equity.json
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/last_single_equity.json || true
-          git commit -m "Add single equity artifact for $SYMBOL" || echo "No changes"
-          git push || true
+          rclone copy "data/processed/eq_template" "r2:${CF_R2_BUCKET}/analysis/eq_template" --config rclone.conf --s3-no-check-bucket -v
+          rclone copy "site/eq"                     "r2:${CF_R2_BUCKET}/site/eq"            --config rclone.conf --s3-no-check-bucket -v
+          rclone copy site/index.html               "r2:${CF_R2_BUCKET}/site"               --config rclone.conf --s3-no-check-bucket -v

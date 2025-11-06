@@ -261,7 +261,7 @@ jobs:
                  --data-urlencode '$limit=1' \
                  -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then
               break
-            fi>
+            fi
             echo "probe failed (try $i) – sleep 10s"; sleep 10
           done
 

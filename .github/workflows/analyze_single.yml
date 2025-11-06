@@ -1,28 +1,20 @@
+# .github/workflows/analyze_watchlist.yml
 name: Analyze watchlist (Template)
 
 on:
-  workflow_dispatch:
-    inputs:
-      WATCHLIST_PATH:
-        description: "Pfad zur Watchlist (optional)"
-        required: false
-        default: "watchlists/mylist.txt"
+  workflow_dispatch: {}
 
 permissions:
   contents: write
-
-concurrency:
-  group: analyze-watchlist
-  cancel-in-progress: false
 
 jobs:
   batch:
     runs-on: ubuntu-latest
     env:
-      WATCHLIST: ${{ inputs.WATCHLIST_PATH }}
+      WATCHLIST: watchlists/mylist.txt              # 1. Spalte = Symbol, Header "symbol,proxy"
       OUTDIR: data/processed/eq_template
       SITE_OUT: site/eq
-      PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}
+      PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}    # z.B. https://pub-xxxxx.r2.dev
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,48 +24,27 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            pip-${{ runner.os }}-
-
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt || true
-          pip install pandas yfinance requests python-dateutil jinja2
+          pip install pandas yfinance requests python-dateutil jq
 
       - name: Ensure folders
         run: |
           mkdir -p "$OUTDIR" "$SITE_OUT" site
 
-      - name: Normalize watchlist
-        id: wl
+      - name: Build symbol list from watchlist
+        id: make_list
         shell: bash
         run: |
-          set -e
-          WL="${WATCHLIST:-watchlists/mylist.txt}"
-          if [ ! -f "$WL" ]; then
-            echo "symbol_proxy"            > watchlists/mylist.txt
-            printf "AAPL,US_IG\nMSFT,US_IG\n" >> watchlists/mylist.txt
-            WL="watchlists/mylist.txt"
-          fi
-          HEAD="$(head -n1 "$WL" | tr -d '\r')"
-          if echo "$HEAD" | grep -qiE 'symbol|proxy|ticker'; then
-            TAIL="tail -n +2"
-          else
-            TAIL="cat"
-          fi
-          TMP=/tmp/syms.txt
-          eval "$TAIL \"$WL\"" | cut -d',' -f1 | tr -d '\r ' | tr '[:lower:]' '[:upper:]' \
-            | awk 'NF>0' | sort -u > "$TMP"
-          echo "list=$TMP"   >> "$GITHUB_OUTPUT"
-          echo "count=$(wc -l < $TMP | tr -d ' ')" >> "$GITHUB_OUTPUT"
-          echo "Using watchlist $WL with $(wc -l < $TMP) symbols:"
-          head -n 20 "$TMP" || true
+          set -euo pipefail
+          SYMLIST="symbols.list"
+          # Header überspringen, nur 1. Spalte, CR entfernen, leere Zeilen filtern
+          tail -n +2 "$WATCHLIST" | cut -d',' -f1 | tr -d '\r' | awk 'NF>0' > "$SYMLIST"
+          echo "SYMLIST=$SYMLIST" >> "$GITHUB_ENV"
+          echo "Vorschau:"
+          head -n 20 "$SYMLIST" || true
 
       - name: Loop watchlist and render
         env:
@@ -86,30 +57,35 @@ jobs:
           set -euo pipefail
           INDEX_JSON="$OUTDIR/index.json"
           echo "[]" > "$INDEX_JSON"
+
           n=0
           while read -r SYM; do
             [ -z "$SYM" ] && continue
             echo "== Build $SYM =="
+
             python scripts/analyze_equity_template.py \
               --symbol "$SYM" \
               --out-json "$OUTDIR/${SYM}.json" \
               --out-html "$SITE_OUT/${SYM}.html" \
-              --public-base "${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}"
+              --public-base "${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}" || true
+
             gzip -f -9 "$OUTDIR/${SYM}.json" || true
 
-            # in index.json aufnehmen (Heredoc korrekt quoten!)
-            python - "$INDEX_JSON" "$SYM" << 'PY'
-import json, sys
-p = sys.argv[1]; sym = sys.argv[2]
-data = json.load(open(p))
-data = [d for d in data if d.get("symbol") == sym]
-data.append({"symbol": sym, "json": f"{sym}.json.gz", "html": f"{sym}.html"})
-open(p, "w").write(json.dumps(sorted(data, key=lambda x: x["symbol"]), indent=2))
-PY
-            n=$((n+1))
-          done < "${{ steps.wl.outputs.list }}"
+            # Index mit jq erweitern (keine YAML/HereDoc-Fallen)
+            tmp="$(mktemp)"
+            jq --arg s "$SYM" '
+              . + [{"symbol":$s,"json":($s+".json.gz"),"html":($s+".html")}]
+              | sort_by(.symbol)
+            ' "$INDEX_JSON" > "$tmp"
+            mv "$tmp" "$INDEX_JSON"
 
-          # einfache Liste als HTML (Heredoc korrekt quoten!)
+            n=$((n+1))
+          done < "$SYMLIST"
+
+          echo "Anzahl gerenderter Symbole: $n"
+          gzip -f -9 "$INDEX_JSON" || true
+
+          # einfache Indexseite
           cat > site/index.html << 'HTML'
 <!doctype html><meta charset="utf-8">
 <title>Equity Templates</title>
@@ -123,25 +99,27 @@ ul{columns:3;gap:24px}li{margin:6px 0}
 </style>
 <div class="card">
   <h1>Equity Templates</h1>
-  <div class="muted">Ticker-Liste aus der Watchlist.</div>
+  <div class="muted">Ticker aus der Watchlist</div>
   <ul>
 HTML
-          awk '{print "    <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "${{ steps.wl.outputs.list }}" >> site/index.html
+          awk '{print "    <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "$SYMLIST" >> site/index.html
           echo "  </ul>" >> site/index.html
           echo "</div>"  >> site/index.html
 
-          # JSON-Index gzippen
-          gzip -f -9 "$INDEX_JSON" || true
-
-      - name: Upload to R2 (public)
-        if: ${{ secrets.CF_R2_BUCKET && secrets.CF_R2_ACCESS_KEY_ID && secrets.CF_R2_SECRET_ACCESS_KEY && secrets.CF_R2_ENDPOINT }}
+      - name: Upload to R2 (analysis-pro bucket)
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
           CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
+        shell: bash
         run: |
           set -e
+          if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
+             [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
+            echo "R2 Secrets fehlen → Upload übersprungen."
+            exit 0
+          fi
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
           [r2]
@@ -150,21 +128,18 @@ HTML
           access_key_id = ${CF_R2_ACCESS_KEY_ID}
           secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
           endpoint = ${CF_R2_ENDPOINT}
-          acl = public-read
           force_path_style = true
           no_check_bucket = true
           EOF
-          rclone copy "data/processed/eq_template" "r2:${CF_R2_BUCKET}/analysis/eq_template" \
-            --config rclone.conf --s3-no-check-bucket -v --include "*.json.gz" --include "index.json.gz"
-          rclone copy "site" "r2:${CF_R2_BUCKET}/site" \
-            --config rclone.conf --s3-no-check-bucket -v --exclude ".DS_Store"
-          rclone lsf "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket | head -n 50 || true
+          rclone copy "$OUTDIR"   "r2:${CF_R2_BUCKET}/analysis/eq_template" --config rclone.conf --s3-no-check-bucket -v
+          rclone copy "$SITE_OUT" "r2:${CF_R2_BUCKET}/site/eq"               --config rclone.conf --s3-no-check-bucket -v
+          rclone copy site/index.html "r2:${CF_R2_BUCKET}/site"              --config rclone.conf --s3-no-check-bucket -v
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: eq-templates
-          path: |
-            data/processed/eq_template/**
-            site/**
+      - name: Commit small artifacts
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/index.html || true
+          git commit -m "Add Equity Templates index (site/index.html)" || echo "Nothing to commit"
+          git push || true

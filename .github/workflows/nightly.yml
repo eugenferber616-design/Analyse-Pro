@@ -218,6 +218,7 @@ jobs:
           head -n 40 data/processed/options_signals.csv || true
 
       # -------------------- COT 20y Pulls ---------------------------
+
       - name: Pull COT 20y – Disaggregated (F+O Combined)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
@@ -253,15 +254,12 @@ jobs:
         run: |
           set -euo pipefail
           echo "== Socrata Probe (TFF) =="
-          # optionaler Header, falls Token vorhanden
-          hdr=()
-          if [ -n "${CFTC_APP_TOKEN:-}" ]; then hdr=(-H "X-App-Token: ${CFTC_APP_TOKEN}"); fi
           for i in 1 2 3; do
             if curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
                  --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
                  --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
                  --data-urlencode '$limit=1' \
-                 "${hdr[@]}" | jq .; then
+                 -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then
               break
             fi
             echo "probe failed (try $i) – sleep 10s"; sleep 10
@@ -278,6 +276,7 @@ jobs:
           zcat data/processed/cot_20y_tff.csv.gz | head -n 2 || true
 
       # -------------------- HV (historische Volatilität) ---------------------
+
       - name: Build HV summary (Stooq → hv20/hv60, mit yfinance-Fallback)
         run: |
           python scripts/build_hv_summary.py \
@@ -290,6 +289,7 @@ jobs:
           zcat data/processed/hv_summary.csv.gz | head -n 10 || true
 
       # ===================== RiskIndex Inputs (Core) =========================
+
       - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)
         run: |
           python scripts/fetch_market_core.py
@@ -317,6 +317,7 @@ jobs:
           zcat data/processed/fred_oas.csv.gz  | head -n 5 || true
 
       # -------------------- CDS Proxy aus OAS/ETF ----------------------------
+
       - name: Build CDS proxy (v2) from OAS/ETF
         run: |
           python scripts/build_cds_proxy_v2.py \
@@ -379,14 +380,17 @@ jobs:
           endpoint = ${CF_R2_ENDPOINT}
           acl = private
           force_path_style = true
+          no_check_bucket = true
           EOF
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" \
-            --config rclone.conf --fast-list --checksum --update --include "*.gz" --exclude "*"
+            --config rclone.conf --fast-list --checksum --update --include "*.gz" --exclude "*" \
+            --s3-no-check-bucket -vv
           rclone sync docs "r2:${CF_R2_BUCKET}/docs" \
-            --config rclone.conf --fast-list --checksum --update --include "*.gz" --exclude "*"
-          rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50 || true
+            --config rclone.conf --fast-list --checksum --update --include "*.gz" --exclude "*" \
+            --s3-no-check-bucket -vv
+          rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket | head -n 50 || true
 
-      # === Sichtbarer Marker + Preflight + lauter Sync zu "forcast" ===
+      # === Sichtbarer Marker + Diagnose + Sync zu "forcast"
       - name: Add marker file to site
         run: |
           mkdir -p site
@@ -397,7 +401,7 @@ jobs:
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID_FORKAST }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY_FORKAST }}
-          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET_FORKAST }}   # ← soll "forcast" sein
+          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET_FORKAST }}   # forcast
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT_FORKAST }}
         shell: bash
         run: |
@@ -413,10 +417,11 @@ jobs:
           secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
           endpoint = ${CF_R2_ENDPOINT}
           force_path_style = true
+          no_check_bucket = true
           EOF
-          # Bucket-scoped Tokens: ListBuckets kann fehlschlagen -> ignorieren
-          echo "== list buckets =="; rclone lsd r2f: --config rclone.conf || true
-          echo "== check target prefix =="; rclone --config rclone.conf --s3-no-check-bucket lsf "r2f:${CF_R2_BUCKET}/" || true
+          # Buckets auflisten kann mit bucket-scoped Keys fehlschlagen -> ignorieren
+          echo "== check target prefix =="
+          rclone --config rclone.conf --s3-no-check-bucket lsf "r2f:${CF_R2_BUCKET}/" || true
 
       - name: Sync Prompter site to R2 (forcast)
         env:
@@ -437,13 +442,14 @@ jobs:
           endpoint = ${CF_R2_ENDPOINT}
           acl = public-read
           force_path_style = true
+          no_check_bucket = true
           EOF
           echo "== Local site files =="; find site -maxdepth 2 -type f -printf "%P\n" | sed 's/^/  /' || true
           echo "== Sync to r2://${CF_R2_BUCKET}/${FORKAST_SUBDIR} =="
           rclone sync site "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" \
-            --config rclone.conf --fast-list --checksum --update -vv \
-            --s3-no-check-bucket
-          echo "== Remote listing =="; rclone --config rclone.conf --s3-no-check-bucket lsf "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" || true
+            --config rclone.conf --fast-list --checksum --update -vv --s3-no-check-bucket
+          echo "== Remote listing =="; rclone lsf "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" \
+            --config rclone.conf --s3-no-check-bucket || true
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
       - name: Purge heavy local files before commit

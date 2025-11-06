@@ -458,17 +458,40 @@ jobs:
           access_key_id = ${CF_R2_ACCESS_KEY_ID}
           secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
           endpoint = ${CF_R2_ENDPOINT}
-          acl = public-read
           force_path_style = true
           no_check_bucket = true
           EOF
-          # Nur syncen, wenn site/eq existiert UND nicht leer ist
+
+          # Skippen, wenn site/eq leer ist
           if [ ! -d "site/eq" ] || [ -z "$(ls -A site/eq 2>/dev/null)" ]; then
             echo "site/eq ist leer – skip Upload."
             exit 0
           fi
-          rclone sync site/eq "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket -v
-          rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" --config rclone.conf --s3-no-check-bucket -v || true
+
+          echo "== Preflight: Zielpfade anlegen & remote listen =="
+          rclone mkdir "r2:${CF_R2_BUCKET}/site"     --config rclone.conf --s3-no-check-bucket || true
+          rclone mkdir "r2:${CF_R2_BUCKET}/site/eq"  --config rclone.conf --s3-no-check-bucket || true
+          rclone lsf   "r2:${CF_R2_BUCKET}/site"     --config rclone.conf --s3-no-check-bucket || true
+
+          echo "== Lokale Dateien =="
+          find site/eq -type f -maxdepth 2 -printf "%P\n" | sed 's/^/  /'
+
+          echo "== Upload site/eq → r2://${CF_R2_BUCKET}/site/eq =="
+          # Viel Debug, Retries; --ignore-errors verhindert Exit 3 bei wenigen Fehl-Dateien
+          rclone sync site/eq "r2:${CF_R2_BUCKET}/site/eq" \
+            --config rclone.conf --s3-no-check-bucket \
+            -vv --retries 3 --low-level-retries 10 --ignore-errors \
+            --s3-chunk-size 64M --s3-upload-concurrency 4
+
+          echo "== Upload index.html (optional) =="
+          if [ -f site/index.html ]; then
+            rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" \
+              --config rclone.conf --s3-no-check-bucket -vv --retries 3 --ignore-errors
+          fi
+
+          echo "== Remote listing (nach Upload) =="
+          rclone lsf "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket || true
+
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
       - name: Purge heavy local files before commit

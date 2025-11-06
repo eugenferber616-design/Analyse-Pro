@@ -344,17 +344,17 @@ jobs:
           head -n 5 data/processed/riskindex_timeseries.csv || true
           cat data/processed/riskindex_snapshot.json || true
 
-      # ===================== Template-Analyse (neu) ==========================
-      - name: Analyze equities (Template: HTML + JSON)
+      - name: Analyze equities (Template:HTML + JSON)
         env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           SEC_USER_AGENT:  ${{ secrets.SEC_USER_AGENT }}
         shell: bash
         run: |
           set -e
           mkdir -p "${EQ_OUTDIR}" "${EQ_SITE}" site
-          SYMLIST=$(mktemp)
+          SYMLIST="$(mktemp)"
+
           # Spalte 1 (=Symbol) aus Watchlist ziehen (CSV/Plain wird unterstützt)
           if head -n1 "${WATCHLIST_STOCKS}" | grep -qi '^symbol'; then
             tail -n +2 "${WATCHLIST_STOCKS}" | cut -d',' -f1 | tr -d '\r' | awk 'NF>0' > "$SYMLIST"
@@ -376,41 +376,30 @@ jobs:
           done < "$SYMLIST"
           echo "Anzahl generierter Symbole: $n"
 
-          # Index-Manifest (JSON) für schnelle Lookups
-          INDEX_JSON="${EQ_OUTDIR}/index.json"
-          python - << 'PY'
+          # Index-Manifest (JSON)
+          python - <<'PY'
           import os, json
           d = os.getenv("EQ_OUTDIR","data/processed/eq_template")
-          xs = []
-          for f in os.listdir(d):
-            if f.endswith(".json.gz"):
-              s = f[:-8]
-              xs.append({"symbol":s,"json":f"{s}.json.gz","html":f"{s}.html"})
-          xs = sorted(xs, key=lambda x: x["symbol"])
-          open(os.path.join(d,"index.json"),"w").write(json.dumps(xs, indent=2))
+          rows = []
+          for f in sorted(os.listdir(d)):
+              if f.endswith(".json.gz"):
+                  s = f[:-8]  # ohne .json.gz
+                  rows.append({"symbol": s, "json": f"{s}.json.gz", "html": f"{s}.html"})
+          with open(os.path.join(d,"index.json"),"w") as fh:
+              json.dump(rows, fh, indent=2)
           PY
-          gzip -f -9 "${INDEX_JSON}" || true
+          gzip -f -9 "${EQ_OUTDIR}/index.json" || true
 
-          # Einfache HTML-Liste + Redirect
-          cat > site/index.html <<'HTML'
-          <!doctype html><meta charset="utf-8">
-          <title>Equity Templates</title>
-          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-          <style>
-          body{font:14px/1.5 system-ui,Segoe UI,Roboto,Arial;padding:24px;background:#0f1116;color:#e6e6e6}
-          a{color:#7bd4ff;text-decoration:none}a:hover{text-decoration:underline}
-          .card{max-width:900px;margin:0 auto}
-          h1{margin:0 0 8px 0}.muted{color:#98a4ad}
-          ul{columns:3;gap:24px}li{margin:6px 0}
-          </style>
-          <div class="card">
-            <h1>Equity Templates</h1>
-            <div class="muted">Ticker aus der Watchlist</div>
-            <ul>
-          HTML
-          awk '{print "  <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "$SYMLIST" >> site/index.html
-          echo "    </ul>" >> site/index.html
-          echo "  </div>"  >> site/index.html
+          # Einfache HTML-Liste
+          {
+            echo '<!doctype html><meta charset="utf-8"><title>Equity Templates</title>'
+            echo '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+            echo '<style>body{font:14px/1.5 system-ui,Segoe UI,Roboto,Arial;padding:24px;background:#0f1116;color:#e6e6e6}a{color:#7bd4ff;text-decoration:none}a:hover{text-decoration:underline}.card{max-width:900px;margin:0 auto}h1{margin:0 0 8px 0}.muted{color:#98a4ad}ul{columns:3;gap:24px}li{margin:6px 0}</style>'
+            echo '<div class="card"><h1>Equity Templates</h1><div class="muted">Ticker aus der Watchlist</div><ul>'
+            awk '{print "  <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "$SYMLIST"
+            echo '</ul></div>'
+          } > site/index.html
+
 
       # ===================== ALLES KOMPRIMIEREN ====================
       - name: Compress ALL processed & docs to .gz

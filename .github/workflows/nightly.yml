@@ -15,7 +15,7 @@ jobs:
     env:
       WATCHLIST_STOCKS: watchlists/mylist.txt
       WATCHLIST_ETF:    watchlists/etf_sample.txt
-      FORKAST_SUBDIR:   "prompter"   # Ziel-Prefix im Bucket "forcast"
+      SITE_SUBDIR:      "prompter"   # öffentlicher Prefix im SELBEN Bucket
 
       # Kurse/History
       PRICES_DAYS:      "750"
@@ -140,6 +140,7 @@ jobs:
           SIMFIN_API_KEY:       ${{ secrets.SIMFIN_API_KEY }}
           FINNHUB_SLEEP_MS:     ${{ env.FINNHUB_SLEEP_MS }}
         run: |
+          # Schreibt: data/processed/earnings_results.csv (.csv.gz später)
           python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --limit 40
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
@@ -289,7 +290,6 @@ jobs:
           zcat data/processed/hv_summary.csv.gz | head -n 10 || true
 
       # ===================== RiskIndex Inputs (Core) =========================
-
       - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)
         run: |
           python scripts/fetch_market_core.py
@@ -317,7 +317,6 @@ jobs:
           zcat data/processed/fred_oas.csv.gz  | head -n 5 || true
 
       # -------------------- CDS Proxy aus OAS/ETF ----------------------------
-
       - name: Build CDS proxy (v2) from OAS/ETF
         run: |
           python scripts/build_cds_proxy_v2.py \
@@ -355,8 +354,8 @@ jobs:
           echo "== processed after gzip =="; ls -lh data/processed || true
           echo "== docs after gzip =="; ls -lh docs || true
 
-      # ===================== R2 UPLOADS ====================
-      - name: Sync .gz (processed & docs) to R2 (analysis-pro)
+      # ===================== R2 UPLOADS (ein Bucket) ====================
+      - name: Sync .gz (processed & docs) to R2 (private)
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -365,11 +364,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
-             [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
-            echo "R2 (analysis-pro) nicht konfiguriert – Step übersprungen."
-            exit 0
-          fi
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
           [r2]
@@ -390,51 +384,24 @@ jobs:
             --s3-no-check-bucket -vv
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket | head -n 50 || true
 
-      # === Sichtbarer Marker + Diagnose + Sync zu "forcast"
-      - name: Add marker file to site
+      - name: Publish site (HTML/CSV) to same Bucket (public-read)
+        env:
+          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
+          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
+          SITE_SUBDIR:             ${{ env.SITE_SUBDIR }}
+        shell: bash
         run: |
+          set -e
+          # Marker & Beispielseite
           mkdir -p site
           echo "$(date -u) – deploy ok" > site/deploy-ok.txt
           echo "<!doctype html><meta charset='utf-8'><title>OK</title>deploy ok" > site/ok.html
 
-      - name: Diagnose forkast secrets & bucket (forcast)
-        env:
-          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID_FORKAST }}
-          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY_FORKAST }}
-          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET_FORKAST }}   # forcast
-          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT_FORKAST }}
-        shell: bash
-        run: |
-          for k in CF_R2_ACCESS_KEY_ID CF_R2_SECRET_ACCESS_KEY CF_R2_BUCKET CF_R2_ENDPOINT; do
-            if [ -n "${!k}" ]; then echo "$k=SET"; else echo "$k=EMPTY"; fi
-          done
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
-          [r2f]
-          type = s3
-          provider = Cloudflare
-          access_key_id = ${CF_R2_ACCESS_KEY_ID}
-          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
-          endpoint = ${CF_R2_ENDPOINT}
-          force_path_style = true
-          no_check_bucket = true
-          EOF
-          # Buckets auflisten kann mit bucket-scoped Keys fehlschlagen -> ignorieren
-          echo "== check target prefix =="
-          rclone --config rclone.conf --s3-no-check-bucket lsf "r2f:${CF_R2_BUCKET}/" || true
-
-      - name: Sync Prompter site to R2 (forcast)
-        env:
-          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID_FORKAST }}
-          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY_FORKAST }}
-          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET_FORKAST }}   # "forcast"
-          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT_FORKAST }}
-        shell: bash
-        run: |
-          set -e
-          curl -fsSL https://rclone.org/install.sh | sudo bash
-          cat > rclone.conf <<EOF
-          [r2f]
+          [r2pub]
           type = s3
           provider = Cloudflare
           access_key_id = ${CF_R2_ACCESS_KEY_ID}
@@ -445,10 +412,10 @@ jobs:
           no_check_bucket = true
           EOF
           echo "== Local site files =="; find site -maxdepth 2 -type f -printf "%P\n" | sed 's/^/  /' || true
-          echo "== Sync to r2://${CF_R2_BUCKET}/${FORKAST_SUBDIR} =="
-          rclone sync site "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" \
+          echo "== Sync to r2://${CF_R2_BUCKET}/${SITE_SUBDIR} =="
+          rclone sync site "r2pub:${CF_R2_BUCKET}/${SITE_SUBDIR}" \
             --config rclone.conf --fast-list --checksum --update -vv --s3-no-check-bucket
-          echo "== Remote listing =="; rclone lsf "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" \
+          echo "== Remote listing =="; rclone lsf "r2pub:${CF_R2_BUCKET}/${SITE_SUBDIR}" \
             --config rclone.conf --s3-no-check-bucket || true
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
@@ -499,7 +466,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries + CDS/HV/COT/OAS + Prompter deploy" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries + CDS/HV/COT/OAS + site deploy (one bucket)" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

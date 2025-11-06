@@ -56,6 +56,12 @@ jobs:
       # lokale Module auffindbar
       PYTHONPATH: "."
 
+      # ✨ Secrets einmal in env spiegeln → if: kann env.* prüfen
+      CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
+      CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
+      CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+      CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -413,7 +419,7 @@ jobs:
       # ===================== R2 UPLOADS ====================
       # Sync .gz (processed & docs) to R2 (Haupt-Bucket)
       - name: Sync .gz (processed & docs) to R2 (***)
-        if: ${{ (secrets.CF_R2_BUCKET != '') && (secrets.CF_R2_ENDPOINT != '') && (secrets.CF_R2_ACCESS_KEY_ID != '') && (secrets.CF_R2_SECRET_ACCESS_KEY != '') }}
+        if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -438,7 +444,7 @@ jobs:
 
       # NEU: Site/eq in den gleichen Bucket
       - name: Sync eq site to R2 (***)
-        if: ${{ (secrets.CF_R2_BUCKET != '') && (secrets.CF_R2_ENDPOINT != '') && (secrets.CF_R2_ACCESS_KEY_ID != '') && (secrets.CF_R2_SECRET_ACCESS_KEY != '') }}
+        if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}

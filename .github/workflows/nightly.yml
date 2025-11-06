@@ -441,7 +441,7 @@ jobs:
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
           rclone sync docs           "r2:${CF_R2_BUCKET}/docs"           --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
 
-      - name: Sync eq site to R2 (debug)
+      - name: Sync eq site to R2 (debug, full log)
         if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
@@ -462,43 +462,38 @@ jobs:
           no_check_bucket = true
           EOF
 
-          echo "Endpoint: ${CF_R2_ENDPOINT}"
-          echo "Bucket:   ${CF_R2_BUCKET}"
-
-          # Quelle leer? -> sauber skippen
+          # Quelle leer? -> skip
           if [ ! -d "site/eq" ] || [ -z "$(ls -A site/eq 2>/dev/null)" ]; then
             echo "site/eq ist leer – skip Upload."
             exit 0
           fi
 
-          echo "== Preflight: Zielpfade/Listing =="
-          rclone mkdir "r2:${CF_R2_BUCKET}/site"    --config rclone.conf --s3-no-check-bucket || true
+          echo "== Preflight =="
           rclone mkdir "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket || true
-          rclone lsd   "r2:${CF_R2_BUCKET}"         --config rclone.conf --s3-no-check-bucket || true
-          rclone lsf   "r2:${CF_R2_BUCKET}/site"    --config rclone.conf --s3-no-check-bucket || true
+          rclone lsd "r2:${CF_R2_BUCKET}"           --config rclone.conf --s3-no-check-bucket || true
+          find site/eq -type f -printf "%P\n" | sed 's/^/  /' || true
 
-          echo "== Lokale Dateien =="
-          find site/eq -type f -printf "%P\n" | sed 's/^/  /'
+          # DRYRUN=1 → Probe ohne Upload
+          [ "${DRYRUN:-0}" = "1" ] && DRY="--dry-run" || DRY=""
 
-          echo "== Upload site/eq → r2://${CF_R2_BUCKET}/site/eq =="
+          echo "== Upload (verbose) =="
           set +e
           rclone sync site/eq "r2:${CF_R2_BUCKET}/site/eq" \
             --config rclone.conf --s3-no-check-bucket \
-            -vv --retries 3 --low-level-retries 10 --ignore-errors \
-            --s3-chunk-size 64M --s3-upload-concurrency 4
+            -vv --log-file rclone.log --retries 3 --low-level-retries 10 --ignore-errors \
+            --s3-chunk-size 64M --s3-upload-concurrency 4 $DRY
           RC=$?
-          echo "rclone exit code: $RC"
 
-          echo "== index.html (optional) =="
           if [ -f site/index.html ]; then
             rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" \
-              --config rclone.conf --s3-no-check-bucket -vv --retries 3 --ignore-errors
+              --config rclone.conf --s3-no-check-bucket \
+              -vv --log-file rclone.log --retries 3 --ignore-errors $DRY
           fi
 
-          echo "== Remote listing nach Upload =="
-          rclone lsf "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket || true
+          echo "== rclone LOG (tail) =="
+          tail -n 200 rclone.log || true
 
-          # Exit 3 = partial errors -> Pipeline nicht killen
+          # Exit 3 = partial errors -> Workflow nicht failen
           if [ $RC -ne 0 ] && [ $RC -ne 3 ]; then exit $RC; fi
 
 

@@ -2,50 +2,141 @@
 name: Analyze watchlist (Template)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      WATCHLIST_PATH:
+        description: "Pfad zur Watchlist (optional)"
+        required: false
+        default: "watchlists/mylist.txt"
 
 permissions:
   contents: write
+
+concurrency:
+  group: analyze-watchlist
+  cancel-in-progress: false
 
 jobs:
   batch:
     runs-on: ubuntu-latest
     env:
-      WATCHLIST: watchlists/mylist.txt
+      WATCHLIST: ${{ inputs.WATCHLIST_PATH }}
       OUTDIR: data/processed/eq_template
       SITE_OUT: site/eq
       PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt || true
-          pip install pandas yfinance requests python-dateutil
+          pip install pandas yfinance requests python-dateutil jinja2
+
       - name: Ensure folders
-        run: mkdir -p "$OUTDIR" "$SITE_OUT" site
+        run: |
+          mkdir -p "$OUTDIR" "$SITE_OUT" site
+          echo "public_base=${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}" >> $GITHUB_OUTPUT
+
+      - name: Normalize watchlist
+        id: wl
+        shell: bash
+        run: |
+          set -e
+          WL="${WATCHLIST:-watchlists/mylist.txt}"
+          if [ ! -f "$WL" ]; then
+            echo "symbol_proxy"            > watchlists/mylist.txt
+            printf "AAPL,US_IG\nMSFT,US_IG\n" >> watchlists/mylist.txt
+            WL="watchlists/mylist.txt"
+          fi
+          # Erster Eintrag als Header? -> prüfen
+          HEAD="$(head -n1 "$WL" | tr -d '\r')"
+          if echo "$HEAD" | grep -qiE 'symbol|proxy|ticker'; then
+            TAIL="tail -n +2"
+          else
+            TAIL="cat"
+          fi
+          # Spalte 1 extrahieren (vor Komma) und Uppercase
+          TMP=/tmp/syms.txt
+          eval "$TAIL \"$WL\"" | cut -d',' -f1 | tr -d '\r ' | tr '[:lower:]' '[:upper:]' \
+            | awk 'NF>0' | sort -u > "$TMP"
+          echo "list=$TMP" >> "$GITHUB_OUTPUT"
+          echo "count=$(wc -l < $TMP | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "Using watchlist $WL with $(wc -l < $TMP) symbols:"
+          head -n 20 "$TMP" || true
+
       - name: Loop watchlist and render
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           SEC_USER_AGENT:  ${{ secrets.SEC_USER_AGENT }}
+          PUBLIC_BASE:     ${{ steps.wl.outputs.public_base }}
         shell: bash
         run: |
-          # erste Spalte = Symbol, Header überspringen
-          tail -n +2 "$WATCHLIST" | cut -d',' -f1 | tr -d '\r' | while read -r SYM; do
+          set -e
+          INDEX_JSON="$OUTDIR/index.json"
+          echo "[]" > "$INDEX_JSON"
+          n=0
+          while read -r SYM; do
             [ -z "$SYM" ] && continue
             echo "== Build $SYM =="
             python scripts/analyze_equity_template.py \
               --symbol "$SYM" \
               --out-json "$OUTDIR/${SYM}.json" \
               --out-html "$SITE_OUT/${SYM}.html" \
-              --public-base "${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}" || true
+              --public-base "${PUBLIC_BASE}"
             gzip -f -9 "$OUTDIR/${SYM}.json" || true
-          done
-          echo "<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='0; url=eq/${SYM}.html'>" > site/index.html
-      - name: Upload to R2
+
+            # in index.json aufnehmen
+            python - "$INDEX_JSON" "$SYM" << 'PY'
+import json,sys
+p=sys.argv[1]; sym=sys.argv[2]
+data=json.load(open(p))
+data=[d for d in data if d.get("symbol")!=sym]
+data.append({"symbol":sym,"json":f"{sym}.json.gz","html":f"{sym}.html"})
+open(p,"w").write(json.dumps(sorted(data,key=lambda x:x["symbol"]),indent=2))
+PY
+            n=$((n+1))
+          done < "${{ steps.wl.outputs.list }}"
+
+          # einfache Liste als HTML
+          cat > site/index.html <<HTML
+<!doctype html><meta charset="utf-8">
+<title>Equity Templates</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<style>body{font:14px/1.5 system-ui,Segoe UI,Roboto,Arial;padding:24px;background:#0f1116;color:#e6e6e6}
+a{color:#7bd4ff;text-decoration:none}a:hover{text-decoration:underline}
+.card{max-width:900px;margin:0 auto}
+h1{margin:0 0 8px 0} .muted{color:#9aa4ad}
+ul{columns:3;gap:24px} li{margin:6px 0}
+</style>
+<div class="card">
+  <h1>Equity Templates</h1>
+  <div class="muted">Ticker-Liste aus der Watchlist (n=${n}).</div>
+  <ul>
+$(awk '{print "    <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "${{ steps.wl.outputs.list }}")
+  </ul>
+</div>
+HTML
+
+          # JSON-Index gzippen
+          gzip -f -9 "$INDEX_JSON" || true
+
+      - name: Upload to R2 (public)
         if: ${{ secrets.CF_R2_BUCKET != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
@@ -53,6 +144,7 @@ jobs:
           CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
           CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
         run: |
+          set -e
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
           [r2]
@@ -61,9 +153,24 @@ jobs:
           access_key_id = ${CF_R2_ACCESS_KEY_ID}
           secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
           endpoint = ${CF_R2_ENDPOINT}
+          acl = public-read
           force_path_style = true
           no_check_bucket = true
           EOF
-          rclone copy "data/processed/eq_template" "r2:${CF_R2_BUCKET}/analysis/eq_template" --config rclone.conf --s3-no-check-bucket -v
-          rclone copy "site/eq"                     "r2:${CF_R2_BUCKET}/site/eq"            --config rclone.conf --s3-no-check-bucket -v
-          rclone copy site/index.html               "r2:${CF_R2_BUCKET}/site"               --config rclone.conf --s3-no-check-bucket -v
+          echo "== Upload JSON(.gz) index & files =="
+          rclone copy "data/processed/eq_template" "r2:${CF_R2_BUCKET}/analysis/eq_template" \
+            --config rclone.conf --s3-no-check-bucket -v --include "*.json.gz" --include "index.json.gz"
+          echo "== Upload HTML site =="
+          rclone copy "site" "r2:${CF_R2_BUCKET}/site" \
+            --config rclone.conf --s3-no-check-bucket -v --exclude ".DS_Store"
+          echo "Listing (site/eq/*):"
+          rclone lsf "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket | head -n 50 || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eq-templates
+          path: |
+            data/processed/eq_template/**
+            site/**

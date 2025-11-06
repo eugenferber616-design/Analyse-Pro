@@ -15,6 +15,7 @@ jobs:
     env:
       WATCHLIST_STOCKS: watchlists/mylist.txt
       WATCHLIST_ETF:    watchlists/etf_sample.txt
+      FORKAST_SUBDIR:   "prompter"   # wohin im zweiten Bucket (forkast) die HTMLs landen
 
       # Kurse/History
       PRICES_DAYS:      "750"
@@ -37,7 +38,7 @@ jobs:
       COT_DISAGG_DATASET_ID: "kh3c-gbw2"
       COT_TFF_DATASET_ID:    "yw9f-hn96"
       COT_YEARS:             "20"
-      COT_MARKETS_MODE:      "SMART"        # "ALL" | "FILE" | "LIST"
+      COT_MARKETS_MODE:      "SMART"        # "ALL" | "FILE" | "LIST" | "SMART"
       COT_MARKETS_FILE:      watchlists/cot_markets.txt
       SOC_TIMEOUT:           "120"
       SOC_RETRIES:           "8"
@@ -351,8 +352,8 @@ jobs:
           echo "== processed after gzip =="; ls -lh data/processed || true
           echo "== docs after gzip =="; ls -lh docs || true
 
-      # ===================== R2 UPLOAD (nur .gz) ====================
-      - name: Sync .gz (processed & docs) to R2
+      # ===================== R2 UPLOADS ====================
+      - name: Sync .gz (processed & docs) to R2 (analysis-pro)
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -363,7 +364,8 @@ jobs:
           set -e
           if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
              [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
-            echo "R2 nicht konfiguriert – Step übersprungen."; exit 0
+            echo "R2 (analysis-pro) nicht konfiguriert – Step übersprungen."
+            exit 0
           fi
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
@@ -377,12 +379,39 @@ jobs:
           force_path_style = true
           EOF
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" \
-            --config rclone.conf --fast-list --checksum --update \
-            --include "*.gz" --exclude "*"
+            --config rclone.conf --fast-list --checksum --update --include "*.gz" --exclude "*"
           rclone sync docs "r2:${CF_R2_BUCKET}/docs" \
-            --config rclone.conf --fast-list --checksum --update \
-            --include "*.gz" --exclude "*"
+            --config rclone.conf --fast-list --checksum --update --include "*.gz" --exclude "*"
           rclone ls "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf | head -n 50 || true
+
+      - name: Sync Prompter site to R2 (forkast)
+        env:
+          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID_FORKAST }}
+          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY_FORKAST }}
+          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET_FORKAST }}
+          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT_FORKAST }}
+        shell: bash
+        run: |
+          set -e
+          if [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ] || \
+             [ -z "${CF_R2_ENDPOINT}" ] || [ -z "${CF_R2_BUCKET}" ]; then
+            echo "R2 (forkast) nicht konfiguriert – Step übersprungen."
+            exit 0
+          fi
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          cat > rclone.conf <<EOF
+          [r2f]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${CF_R2_ACCESS_KEY_ID}
+          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
+          endpoint = ${CF_R2_ENDPOINT}
+          acl = public-read
+          force_path_style = true
+          EOF
+          # statische Site synchronisieren (site/** → /prompter)
+          rclone sync site "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" \
+            --config rclone.conf --fast-list --checksum --update
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
       - name: Purge heavy local files before commit
@@ -432,7 +461,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries + CDS/HV/COT/OAS" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (No LLM) + RiskIndex snapshot/timeseries + CDS/HV/COT/OAS + Prompter deploy" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fetch_earnings_results.py – robuste Historie von Earnings (EPS/Revenue + Surprise)
+fetch_earnings_v2.py – robuste Historie von Earnings (EPS/Revenue + Surprise)
 
 Ziele:
 - Mehrquellen-Ansatz mit Fallbacks:

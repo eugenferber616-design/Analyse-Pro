@@ -49,11 +49,6 @@ jobs:
       # FRED
       FRED_START: "2003-01-01"
 
-      # Template-Analyse (neu)
-      EQ_OUTDIR:  data/processed/eq_template
-      EQ_SITE:    site/eq
-      PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}
-
       # lokale Module auffindbar
       PYTHONPATH: "."
 
@@ -85,8 +80,6 @@ jobs:
           pip install --upgrade yfinance pandas_datareader
           # parquet-Engines optional
           pip install --upgrade pyarrow fastparquet matplotlib
-          # für Template-Analyse
-          pip install --upgrade pandas requests python-dateutil
 
       - name: Init cache DB
         run: |
@@ -350,62 +343,6 @@ jobs:
           head -n 5 data/processed/riskindex_timeseries.csv || true
           cat data/processed/riskindex_snapshot.json || true
 
-      - name: Analyze equities (Template:HTML + JSON)
-        env:
-          FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-          SEC_USER_AGENT:  ${{ secrets.SEC_USER_AGENT }}
-        shell: bash
-        run: |
-          set -e
-          mkdir -p "${EQ_OUTDIR}" "${EQ_SITE}" site
-          SYMLIST="$(mktemp)"
-
-          # Spalte 1 (=Symbol) aus Watchlist ziehen (CSV/Plain wird unterstützt)
-          if head -n1 "${WATCHLIST_STOCKS}" | grep -qi '^symbol'; then
-            tail -n +2 "${WATCHLIST_STOCKS}" | cut -d',' -f1 | tr -d '\r' | awk 'NF>0' > "$SYMLIST"
-          else
-            sed 's/\r//g' "${WATCHLIST_STOCKS}" | awk 'NF>0' > "$SYMLIST"
-          fi
-
-          n=0
-          while read -r SYM; do
-            [ -z "$SYM" ] && continue
-            echo "== Build Template for $SYM =="
-            python scripts/analyze_equity_template.py \
-              --symbol "$SYM" \
-              --out-json "${EQ_OUTDIR}/${SYM}.json" \
-              --out-html "${EQ_SITE}/${SYM}.html" \
-              --public-base "${PUBLIC_BASE:-https://pub-CHANGE-ME.r2.dev}" || true
-            if [ -s "${EQ_OUTDIR}/${SYM}.json" ]; then gzip -f -9 "${EQ_OUTDIR}/${SYM}.json" || true; fi
-            n=$((n+1))
-          done < "$SYMLIST"
-          echo "Anzahl generierter Symbole: $n"
-
-          # Index-Manifest (JSON)
-          python - <<'PY'
-          import os, json
-          d = os.getenv("EQ_OUTDIR","data/processed/eq_template")
-          rows = []
-          for f in sorted(os.listdir(d)):
-              if f.endswith(".json.gz"):
-                  s = f[:-8]  # ohne .json.gz
-                  rows.append({"symbol": s, "json": f"{s}.json.gz", "html": f"{s}.html"})
-          with open(os.path.join(d,"index.json"),"w") as fh:
-              json.dump(rows, fh, indent=2)
-          PY
-          gzip -f -9 "${EQ_OUTDIR}/index.json" || true
-
-          # Einfache HTML-Liste
-          {
-            echo '<!doctype html><meta charset="utf-8"><title>Equity Templates</title>'
-            echo '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-            echo '<style>body{font:14px/1.5 system-ui,Segoe UI,Roboto,Arial;padding:24px;background:#0f1116;color:#e6e6e6}a{color:#7bd4ff;text-decoration:none}a:hover{text-decoration:underline}.card{max-width:900px;margin:0 auto}h1{margin:0 0 8px 0}.muted{color:#98a4ad}ul{columns:3;gap:24px}li{margin:6px 0}</style>'
-            echo '<div class="card"><h1>Equity Templates</h1><div class="muted">Ticker aus der Watchlist</div><ul>'
-            awk '{print "  <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "$SYMLIST"
-            echo '</ul></div>'
-          } > site/index.html
-
       # ===================== ALLES KOMPRIMIEREN ====================
       - name: Compress ALL processed & docs to .gz
         shell: bash
@@ -442,62 +379,6 @@ jobs:
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
           rclone sync docs           "r2:${CF_R2_BUCKET}/docs"           --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
 
-      - name: Sync eq site to R2 (debug, full log)
-        if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' }}
-        env:
-          CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
-          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
-          CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
-          CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
-        run: |
-          set -e
-          curl -fsSL https://rclone.org/install.sh | sudo bash
-          cat > rclone.conf <<EOF
-          [r2]
-          type = s3
-          provider = Cloudflare
-          access_key_id = ${CF_R2_ACCESS_KEY_ID}
-          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
-          endpoint = ${CF_R2_ENDPOINT}
-          force_path_style = true
-          no_check_bucket = true
-          EOF
-
-          # Quelle leer? -> skip
-          if [ ! -d "site/eq" ] || [ -z "$(ls -A site/eq 2>/dev/null)" ]; then
-            echo "site/eq ist leer – skip Upload."
-            exit 0
-          fi
-
-          echo "== Preflight =="
-          rclone mkdir "r2:${CF_R2_BUCKET}/site/eq" --config rclone.conf --s3-no-check-bucket || true
-          rclone lsd "r2:${CF_R2_BUCKET}"           --config rclone.conf --s3-no-check-bucket || true
-          find site/eq -type f -printf "%P\n" | sed 's/^/  /' || true
-
-          echo "== Upload (verbose) =="
-          set +e
-          rclone sync site/eq "r2:${CF_R2_BUCKET}/site/eq" \
-            --config rclone.conf --s3-no-check-bucket \
-            -vv --log-file rclone.log --retries 3 --low-level-retries 10 --ignore-errors \
-            --s3-chunk-size 64M --s3-upload-concurrency 4
-          RC=$?
-
-          # index.html mitkopieren (Fehler hier ignorieren)
-          if [ -f site/index.html ]; then
-            rclone copy site/index.html "r2:${CF_R2_BUCKET}/site" \
-              --config rclone.conf --s3-no-check-bucket -vv --log-file rclone.log || true
-          fi
-
-          echo "== rclone LOG (tail) =="
-          tail -n 200 rclone.log || true
-
-          # Exit 3 = partial errors -> NICHT fehlschlagen lassen
-          if [ "$RC" -eq 0 ] || [ "$RC" -eq 3 ]; then
-            exit 0
-          else
-            exit "$RC"
-          fi
-
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
       - name: Purge heavy local files before commit
         shell: bash
@@ -530,8 +411,7 @@ jobs:
               "hv_summary":           "/data/processed/hv_summary.csv.gz",
               "cds_proxy":            "/data/processed/cds_proxy.csv.gz",
               "riskindex_snapshot":   "/data/processed/riskindex_snapshot.json.gz",
-              "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz",
-              "eq_templates_index":   "/data/processed/eq_template/index.json.gz"
+              "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz"
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
@@ -547,7 +427,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (No LLM) + RiskIndex + CDS/HV/COT/OAS + Eq Templates + deploy" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (No LLM) + RiskIndex + CDS/HV/COT/OAS + deploy datasets manifest" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

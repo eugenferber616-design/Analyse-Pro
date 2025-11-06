@@ -1,37 +1,31 @@
 <!doctype html>
+<html lang="de">
 <meta charset="utf-8">
-<title>Equity Summary Prompter</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prompter Summary</title>
 <style>
-  body{font:16px/1.35 system-ui,Segoe UI,Arial;color:#e8e8e8;background:#121212;margin:24px}
-  textarea{width:100%;min-height:280px;background:#1d1d1d;color:#e8e8e8;border:1px solid #333;border-radius:10px;padding:12px}
-  .row{max-width:920px;margin:auto}
-  .hint{opacity:.7;margin:.5rem 0 1rem}
-  input{width:320px;padding:6px 10px;border-radius:8px;border:1px solid #333;background:#1d1d1d;color:#e8e8e8}
+  body{margin:0;background:#0f1116;color:#e6e6e6;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial}
+  .wrap{max-width:780px;margin:28px auto;padding:16px}
+  .card{border:1px solid #2a2f3a;border-radius:12px;padding:16px;background:#121622;box-shadow:0 4px 16px rgba(0,0,0,.25)}
+  h1{font-size:18px;margin:0 0 8px}
+  .muted{color:#9aa4b2}
+  .row{margin:8px 0}
+  a{color:#8ab4ff;text-decoration:none}
 </style>
-<div class="row">
-  <h1>Equity-Summary Prompt</h1>
-  <div class="hint">Symbol per Query übergeben: <code>?symbol=PLTR</code></div>
-  <label>Symbol:&nbsp;<input id="sym" value=""></label>
-  <textarea id="out"></textarea>
-  <p class="hint">Tipp: „Alles kopieren“ in ChatGPT einfügen.</p>
+<div class="wrap">
+  <div class="card">
+    <h1>Prompter – Summary</h1>
+    <div class="row">Symbol: <b id="sym">—</b></div>
+    <div class="row muted">Übergebe das Symbol per <code>?symbol=PLTR</code>.</div>
+    <div class="row" id="tip"></div>
+  </div>
 </div>
 <script>
-const q = new URLSearchParams(location.search);
-const def = (q.get('symbol')||'AAPL').toUpperCase();
-document.getElementById('sym').value = def;
-function build(sym){
-return `Erstelle eine prägnante Aktien-Zusammenfassung für ${sym}:
-1) Geschäftsmodell & Segmentmix (1–2 Sätze)
-2) Kennzahlen (TTM): Umsatz, EBIT-Marge, Netto-Marge, FCF-Marge, Verschuldung/EBITDA, Beta
-3) Qualität: ROIC, ROE, Wachstum 3J/5J (Umsatz/FCF), Bruttomarge-Trend
-4) Bewertung: EV/Sales, EV/EBIT, P/E (TTM & NTM), FCF-Yield, Peer-Vergleich
-5) Risiken (3–5 Punkte): Wettbewerb, Konzentration, zyklisch, Regulierung
-6) Katalysatoren/Near-Term (1–3 Punkte)
-7) Technisch (Daily/Weekly): Trend, Momentum, 200d-Abstand, Relative Stärke vs SPY
-8) Verdict: Bullisch/Neutral/Bärisch mit 2-3 Gründen
-Kompakt, stichpunktartig, ohne Marketingfloskeln.`;
-}
-const out = document.getElementById('out');
-out.value = build(def);
-document.getElementById('sym').addEventListener('input', e => out.value = build(e.target.value.toUpperCase()));
+  const p=new URLSearchParams(location.search), s=(p.get('symbol')||'').trim().toUpperCase();
+  document.getElementById('sym').textContent = s || '—';
+  document.getElementById('tip').innerHTML = s
+    ? `Beispiel-Links: <a target="_blank" href="https://www.gurufocus.com/stock/${s}/summary">GuruFocus</a>  ·
+       <a target="_blank" href="https://www.zacks.com/stock/quote/${s}">Zacks</a>`
+    : 'Kein Symbol übergeben.';
 </script>
+</html>

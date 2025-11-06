@@ -1,10 +1,10 @@
 {
-  "ts": "2025-11-06T11:55:00.466005Z",
+  "ts": "2025-11-06T20:58:32.672641Z",
   "watchlist": "watchlists/mylist.txt",
   "symbols": 19,
-  "rows_summary": 173,
-  "rows_by_expiry": 173,
-  "rows_by_strike": 2300,
+  "rows_summary": 193,
+  "rows_by_expiry": 193,
+  "rows_by_strike": 2382,
   "errors": [
     {
       "symbol": "SAP.DE",
@@ -55,11 +55,6 @@
       "symbol": "IFX.DE",
       "stage": "options_list",
       "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "AMZN",
-      "stage": "aggregate",
-      "msg": "no OI after parsing; skipped"
     }
   ]
 }

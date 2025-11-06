@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Pfade
       WATCHLIST: watchlists/mylist.txt
       OUTDIR:    data/processed/eq_template
       SITE_OUT:  site/eq
@@ -58,7 +57,6 @@ jobs:
             echo "${{ github.event.inputs.symbol }}" | tr -d '\r' >> "$SYMLIST"
           else
             if [ -f "$WATCHLIST" ]; then
-              # 1. Spalte = Symbol (Header "symbol" o.ä. wird übersprungen)
               tail -n +2 "$WATCHLIST" | cut -d',' -f1 | tr -d '\r' | awk 'NF>0' >> "$SYMLIST"
             else
               echo "Watchlist nicht gefunden: $WATCHLIST" >&2
@@ -66,7 +64,6 @@ jobs:
             fi
           fi
 
-          # ggf. limit
           if [ -n "${{ github.event.inputs.limit }}" ] && [ "${{ github.event.inputs.limit }}" -gt 0 ]; then
             head -n "${{ github.event.inputs.limit }}" "$SYMLIST" > /tmp/symlist_limited.txt
             mv /tmp/symlist_limited.txt "$SYMLIST"
@@ -115,7 +112,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          # statisches Gerüst
           cat > site/index.html <<'HTML'
           <!doctype html>
           <meta charset="utf-8">
@@ -133,16 +129,11 @@ jobs:
             <div class="muted">Ticker aus der Watchlist</div>
             <ul>
           HTML
-
-          # Liste der Links einfügen
           awk '{print "  <li><a href=\"eq/"$0".html\">" $0 "</a></li>"}' "$SYMLIST" >> site/index.html
-
-          # schließen
           echo "  </ul>"   >> site/index.html
           echo "</div>"    >> site/index.html
 
       - name: Upload to R2 (analysis-pro bucket)
-        if: ${{ secrets.CF_R2_BUCKET != '' && secrets.CF_R2_ENDPOINT != '' && secrets.CF_R2_ACCESS_KEY_ID != '' && secrets.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -151,6 +142,13 @@ jobs:
         shell: bash
         run: |
           set -e
+          # Secrets prüfen – sonst sauber skippen
+          if [ -z "${CF_R2_BUCKET}" ] || [ -z "${CF_R2_ENDPOINT}" ] || \
+             [ -z "${CF_R2_ACCESS_KEY_ID}" ] || [ -z "${CF_R2_SECRET_ACCESS_KEY}" ]; then
+            echo "R2 nicht konfiguriert – Upload wird übersprungen."
+            exit 0
+          fi
+
           curl -fsSL https://rclone.org/install.sh | sudo bash
           cat > rclone.conf <<EOF
           [r2]

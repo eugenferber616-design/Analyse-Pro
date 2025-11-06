@@ -1,3 +1,4 @@
+# .github/workflows/analyze_signale.yml
 name: Nightly Data Pull and Cache (No LLM)
 
 on:
@@ -496,7 +497,6 @@ jobs:
           else
             exit "$RC"
           fi
-
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
       - name: Purge heavy local files before commit

@@ -140,7 +140,6 @@ jobs:
           SIMFIN_API_KEY:       ${{ secrets.SIMFIN_API_KEY }}
           FINNHUB_SLEEP_MS:     ${{ env.FINNHUB_SLEEP_MS }}
         run: |
-          # Schreibt: data/processed/earnings_results.csv (.csv.gz später)
           python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --limit 40
           test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
 
@@ -254,12 +253,15 @@ jobs:
         run: |
           set -euo pipefail
           echo "== Socrata Probe (TFF) =="
+          # optionaler Header, falls Token vorhanden
+          hdr=()
+          if [ -n "${CFTC_APP_TOKEN:-}" ]; then hdr=(-H "X-App-Token: ${CFTC_APP_TOKEN}"); fi
           for i in 1 2 3; do
             if curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
                  --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
                  --data-urlencode '$order=report_date_as_yyyy_mm_dd DESC' \
                  --data-urlencode '$limit=1' \
-                 -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then
+                 "${hdr[@]}" | jq .; then
               break
             fi
             echo "probe failed (try $i) – sleep 10s"; sleep 10
@@ -412,8 +414,9 @@ jobs:
           endpoint = ${CF_R2_ENDPOINT}
           force_path_style = true
           EOF
+          # Bucket-scoped Tokens: ListBuckets kann fehlschlagen -> ignorieren
           echo "== list buckets =="; rclone lsd r2f: --config rclone.conf || true
-          echo "== check target prefix =="; rclone lsf "r2f:${CF_R2_BUCKET}/" --config rclone.conf || true
+          echo "== check target prefix =="; rclone --config rclone.conf --s3-no-check-bucket lsf "r2f:${CF_R2_BUCKET}/" || true
 
       - name: Sync Prompter site to R2 (forcast)
         env:
@@ -437,11 +440,10 @@ jobs:
           EOF
           echo "== Local site files =="; find site -maxdepth 2 -type f -printf "%P\n" | sed 's/^/  /' || true
           echo "== Sync to r2://${CF_R2_BUCKET}/${FORKAST_SUBDIR} =="
-
           rclone sync site "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" \
-            --config rclone.conf --fast-list --checksum --update -vv
-
-          echo "== Remote listing =="; rclone lsf "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" --config rclone.conf || true
+            --config rclone.conf --fast-list --checksum --update -vv \
+            --s3-no-check-bucket
+          echo "== Remote listing =="; rclone --config rclone.conf --s3-no-check-bucket lsf "r2f:${CF_R2_BUCKET}/${FORKAST_SUBDIR}" || true
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
       - name: Purge heavy local files before commit

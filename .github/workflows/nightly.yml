@@ -55,6 +55,7 @@ jobs:
 
       # lokale Module auffindbar
       PYTHONPATH: "."
+      
 
     steps:
       - name: Checkout

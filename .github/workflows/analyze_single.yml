@@ -40,10 +40,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt || true
           pip install pandas yfinance requests python-dateutil
+          # Gemini (Google AI API)
+          pip install google-genai
 
       - name: Ensure folders
         run: |
-          mkdir -p "$OUTDIR" "$SITE_OUT" site
+          mkdir -p "$OUTDIR" "$SITE_OUT" site scripts/ai
 
       - name: Build symbol list (SYMLIST)
         id: syms
@@ -133,6 +135,120 @@ jobs:
           echo "  </ul>"   >> site/index.html
           echo "</div>"    >> site/index.html
 
+      # ---------- Gemini: kleines Analyse-Skript einchecken, falls nicht vorhanden ----------
+      - name: Write Gemini analyzer (if missing)
+        shell: bash
+        run: |
+          set -e
+          if [ ! -f scripts/ai/analyze_with_gemini.py ]; then
+            cat > scripts/ai/analyze_with_gemini.py << 'PY'
+          #!/usr/bin/env python3
+          # -*- coding: utf-8 -*-
+          import os, sys, json, gzip, time, pathlib
+          from typing import Dict, Any
+          from google import genai
+
+          def load_json_any(path:str)->Dict[str,Any]:
+            p = pathlib.Path(path)
+            if p.suffix == ".gz":
+              with gzip.open(p, "rt", encoding="utf-8") as f: return json.load(f)
+            return json.load(open(p, "r", encoding="utf-8"))
+
+          def main():
+            import argparse
+            ap = argparse.ArgumentParser()
+            ap.add_argument("--watchlist", required=True)
+            ap.add_argument("--eqdir", default="data/processed/eq_template")
+            ap.add_argument("--out", default="data/processed/ai_analysis.jsonl")
+            ap.add_argument("--limit", type=int, default=0)
+            ap.add_argument("--model", default="gemini-2.5-pro")
+            args = ap.parse_args()
+
+            api_key = os.getenv("GOOGLE_API_KEY","")
+            if not api_key:
+              print("NO GOOGLE_API_KEY provided; skipping.", file=sys.stderr)
+              open(args.out, "w").close()
+              return
+
+            client = genai.Client(api_key=api_key)
+
+            syms = [s.strip() for s in open(args.watchlist,encoding="utf-8").read().splitlines() if s.strip()]
+            if args.limit and args.limit>0: syms = syms[:args.limit]
+
+            out = open(args.out, "w", encoding="utf-8")
+            for i, sym in enumerate(syms, 1):
+              jpath_gz = f"{args.eqdir}/{sym}.json.gz"
+              jpath = f"{args.eqdir}/{sym}.json"
+              src = jpath_gz if os.path.exists(jpath_gz) else jpath
+              if not os.path.exists(src):
+                print(f"[skip] no template for {sym}", file=sys.stderr); continue
+
+              try:
+                data = load_json_any(src)
+                brief = {
+                  "symbol": sym,
+                  "name": data.get("profile",{}).get("name") or data.get("symbol", sym),
+                  "sector": data.get("profile",{}).get("sector"),
+                  "market": data.get("profile",{}).get("exchange"),
+                  "key": {
+                    "cds_proxy": data.get("credit",{}).get("cds_proxy"),
+                    "next_earnings": data.get("earnings",{}).get("next"),
+                    "options_bias": data.get("options",{}).get("bias"),
+                  }
+                }
+                prompt = (
+                  "You are an equity analyst. In ~6 bullet points, summarize opportunities and risks.\n"
+                  "Input is a compact JSON excerpt from my dataset (credit proxy, options bias, next earnings).\n"
+                  "Return JSON with keys: summary (markdown), stance (one of: Bullish, Neutral, Bearish), "
+                  "confidence (0..100).\n"
+                  f"INPUT:\n{json.dumps(brief, ensure_ascii=False)}"
+                )
+                resp = client.models.generate_content(
+                  model=args.model,
+                  contents=prompt,
+                )
+                txt = (resp.text or "").strip()
+                try:
+                  # try to parse JSON from model; otherwise wrap as summary
+                  parsed = json.loads(txt)
+                except Exception:
+                  parsed = {"summary": txt, "stance": "Neutral", "confidence": 50}
+
+                row = {
+                  "ts": int(time.time()),
+                  "symbol": sym,
+                  "input_path": src,
+                  "model": args.model,
+                  "result": parsed
+                }
+                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+                out.flush()
+                time.sleep(0.2)  # kleine Pause gegen 429
+              except Exception as e:
+                row = {"ts": int(time.time()), "symbol": sym, "error": str(e)}
+                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+            out.close()
+
+          if __name__ == "__main__":
+            main()
+          PY
+            chmod +x scripts/ai/analyze_with_gemini.py
+          fi
+
+      - name: Gemini AI analysis (JSONL)
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        shell: bash
+        run: |
+          set -e
+          python scripts/ai/analyze_with_gemini.py \
+            --watchlist "$SYMLIST" \
+            --eqdir "data/processed/eq_template" \
+            --out "data/processed/ai_analysis.jsonl" \
+            --limit "${{ github.event.inputs.limit || 0 }}"
+          gzip -f -9 data/processed/ai_analysis.jsonl || true
+          echo "AI analysis ready → data/processed/ai_analysis.jsonl.gz"
+
       - name: Upload to R2 (analysis-pro bucket)
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
@@ -164,6 +280,10 @@ jobs:
           rclone copy "site/eq"                     "r2:${CF_R2_BUCKET}/site/eq"                      --config rclone.conf --s3-no-check-bucket -v
           rclone copy "site/index.html"             "r2:${CF_R2_BUCKET}/site"                         --config rclone.conf --s3-no-check-bucket -v
           rclone copy "site/eq_index.json"          "r2:${CF_R2_BUCKET}/site"                         --config rclone.conf --s3-no-check-bucket -v
+          # AI Output zusätzlich hochladen
+          if [ -f "data/processed/ai_analysis.jsonl.gz" ]; then
+            rclone copy "data/processed/ai_analysis.jsonl.gz" "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket -v
+          fi
 
       - name: Upload artifacts
         if: always()
@@ -173,3 +293,4 @@ jobs:
           path: |
             site/**
             data/processed/eq_template/**
+            data/processed/ai_analysis.jsonl.gz

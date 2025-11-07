@@ -7,4 +7,3 @@ VOW3.DE,VOW3,no-data
 ADS.DE,ADS,no-data
 IFX.DE,IFX,no-data
 SPY,SPY,no-data
-GLD,GLD,no-data

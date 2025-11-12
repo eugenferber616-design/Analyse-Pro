@@ -86,21 +86,21 @@ jobs:
         run: |
           mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/market/core data/processed data/reports data/history docs watchlists scripts
           python - <<'PY'
-import os, sqlite3
-db_path = os.path.join('data','cache','cache.db')
-os.makedirs(os.path.dirname(db_path), exist_ok=True)
-con = sqlite3.connect(db_path)
-cur = con.cursor()
-cur.execute("""
-CREATE TABLE IF NOT EXISTS kv (
-  k  TEXT PRIMARY KEY,
-  v  TEXT NOT NULL,
-  ts INTEGER DEFAULT (strftime('%s','now'))
-)""")
-cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
-con.commit(); con.close()
-print("cache DB ready at", db_path)
-PY
+          import os, sqlite3
+          db_path = os.path.join('data','cache','cache.db')
+          os.makedirs(os.path.dirname(db_path), exist_ok=True)
+          con = sqlite3.connect(db_path)
+          cur = con.cursor()
+          cur.execute("""
+          CREATE TABLE IF NOT EXISTS kv (
+          k  TEXT PRIMARY KEY,
+          v  TEXT NOT NULL,
+          ts INTEGER DEFAULT (strftime('%s','now'))
+          )""")
+          cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
+          con.commit(); con.close()
+          print("cache DB ready at", db_path)
+          PY
 
       - name: Prepare env and watchlists
         id: prep
@@ -224,45 +224,52 @@ PY
         run: |
           set -euo pipefail
           if [ -f "scripts/build_direction_signal.py" ]; then
-            python scripts/build_direction_signal.py
+          python scripts/build_direction_signal.py
           else
-            cat > /tmp/build_direction_signal.py <<'PY'
-import os, pandas as pd, numpy as np
-base = "data/processed"
-def rd(p):
-    if os.path.exists(p):
+          cat > /tmp/build_direction_signal.py <<'PY'
+          import os
+          import pandas as pd
+          import numpy as np
+
+          base = "data/processed"
+
+    def rd(p):
+        if os.path.exists(p):
         try:
             return pd.read_csv(p, compression="infer")
         except Exception:
             return None
-    return None
-sig = rd(f"{base}/options_signals.csv") or rd(f"{base}/options_signals.csv.gz")
-if sig is None or sig.empty:
-    raise SystemExit("options_signals fehlt – direction_signal Fallback kann nicht bauen")
-out = []
-for _, r in sig.iterrows():
-    sym = str(r.get("symbol", "")).upper()
-    dv  = r.get("dir", r.get("direction", 0))
+            return None
+
+          sig = rd(f"{base}/options_signals.csv") or rd(f"{base}/options_signals.csv.gz")
+    if sig is None or sig.empty:
+          raise SystemExit("options_signals fehlt – direction_signal Fallback kann nicht bauen")
+
+        out = []
+    for _, r in sig.iterrows():
+        sym = str(r.get("symbol", "")).upper()
+        dv = r.get("dir", r.get("direction", 0))
     try:
         dv = int(np.sign(float(dv)))
-    except Exception:
+        except Exception:
         dv = 0
-    sc  = r.get("strength", r.get("score", 0))
+        sc = r.get("strength", r.get("score", 0))
     try:
         sc = float(sc)
-    except Exception:
+        except Exception:
         sc = 0.0
-    out.append({"symbol": sym, "dir": dv, "strength": sc})
-import pandas as pd
+        out.append({"symbol": sym, "dir": dv, "strength": sc})
+
 df = pd.DataFrame(out).drop_duplicates("symbol")
 os.makedirs(base, exist_ok=True)
 df.to_csv(f"{base}/direction_signal.csv", index=False)
 print("wrote", f"{base}/direction_signal.csv", "rows", len(df))
 PY
-            python /tmp/build_direction_signal.py
-          fi
-          test -s data/processed/direction_signal.csv || (echo "direction_signal leer!" && exit 1)
-          head -n 40 data/processed/direction_signal.csv || true
+      python /tmp/build_direction_signal.py
+    fi
+    test -s data/processed/direction_signal.csv || (echo "direction_signal leer!" && exit 1)
+    head -n 40 data/processed/direction_signal.csv || true
+
 
       # -------------------- PREISDATEN (OHLC) FÜR WATCHLIST -------------------
       - name: Fetch OHLC prices for watchlist (yfinance)

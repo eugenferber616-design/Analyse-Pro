@@ -84,22 +84,22 @@ jobs:
       - name: Init cache DB
         run: |
           mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/market/core data/processed data/reports data/history docs watchlists scripts
-          python - << 'PY'
-          import os, sqlite3
-          db_path = os.path.join('data','cache','cache.db')
-          os.makedirs(os.path.dirname(db_path), exist_ok=True)
-          con = sqlite3.connect(db_path)
-          cur = con.cursor()
-          cur.execute("""
-          CREATE TABLE IF NOT EXISTS kv (
-          k  TEXT PRIMARY KEY,
-          v  TEXT NOT NULL,
-          ts INTEGER DEFAULT (strftime('%s','now'))
-          )""")
-          cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
-          con.commit(); con.close()
-          print("cache DB ready at", db_path)
-          PY
+          python - <<'PY'
+import os, sqlite3
+db_path = os.path.join('data','cache','cache.db')
+os.makedirs(os.path.dirname(db_path), exist_ok=True)
+con = sqlite3.connect(db_path)
+cur = con.cursor()
+cur.execute("""
+CREATE TABLE IF NOT EXISTS kv (
+  k  TEXT PRIMARY KEY,
+  v  TEXT NOT NULL,
+  ts INTEGER DEFAULT (strftime('%s','now'))
+)""")
+cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
+con.commit(); con.close()
+print("cache DB ready at", db_path)
+PY
 
       - name: Prepare env and watchlists
         id: prep
@@ -231,7 +231,7 @@ jobs:
           if [ -f "scripts/build_direction_signal.py" ]; then
             python scripts/build_direction_signal.py
           else
-            cat > /tmp/build_direction_signal.py <<'PY'
+            python - <<'PY'
 import os, pandas as pd, numpy as np
 base = "data/processed"
 
@@ -266,7 +266,6 @@ os.makedirs(base, exist_ok=True)
 df.to_csv(f"{base}/direction_signal.csv", index=False)
 print("wrote", f"{base}/direction_signal.csv", "rows", len(df))
 PY
-            python /tmp/build_direction_signal.py
           fi
           test -s data/processed/direction_signal.csv || (echo "direction_signal leer!" && exit 1)
           head -n 40 data/processed/direction_signal.csv || true
@@ -274,7 +273,7 @@ PY
       # -------------------- PREISDATEN (OHLC) FÜR WATCHLIST -------------------
       - name: Fetch OHLC prices for watchlist (yfinance)
         run: |
-          python - << 'PY'
+          python - <<'PY'
 import os, pandas as pd, yfinance as yf
 from datetime import datetime, timedelta
 days = int(os.getenv("PRICES_DAYS","750"))
@@ -304,7 +303,7 @@ PY
       # -------------------- SHORT INTEREST (Rohdaten) -------------------------
       - name: Create scripts/fetch_short_interest.py
         run: |
-          cat > scripts/fetch_short_interest.py << 'PY'
+          cat > scripts/fetch_short_interest.py <<'PY'
 import os, time, json, pandas as pd, requests
 from datetime import datetime, timedelta
 BASE="https://finnhub.io/api/v1"
@@ -369,7 +368,7 @@ PY
       # -------------------- INSIDER-TRANSAKTIONEN (Rohdaten) -----------------
       - name: Create scripts/fetch_insider_tx.py
         run: |
-          cat > scripts/fetch_insider_tx.py << 'PY'
+          cat > scripts/fetch_insider_tx.py <<'PY'
 import os, time, pandas as pd, requests
 BASE="https://finnhub.io/api/v1"
 TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
@@ -422,7 +421,7 @@ PY
       # -------------------- FUND-OWNERSHIP (Institutionelle) -----------------
       - name: Create scripts/fetch_fund_ownership.py
         run: |
-          cat > scripts/fetch_fund_ownership.py << 'PY'
+          cat > scripts/fetch_fund_ownership.py <<'PY'
 import os, time, pandas as pd, requests
 BASE="https://finnhub.io/api/v1"
 TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
@@ -471,7 +470,7 @@ PY
       # -------------------- FINANZBERICHTE (Quarterly Timeseries) ------------
       - name: Create scripts/fetch_financials_ts.py
         run: |
-          cat > scripts/fetch_financials_ts.py << 'PY'
+          cat > scripts/fetch_financials_ts.py <<'PY'
 import os, time, pandas as pd, requests
 BASE="https://finnhub.io/api/v1"
 TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
@@ -527,7 +526,7 @@ PY
       # -------------------- PEERS (für Wettbewerbsvergleich) ------------------
       - name: Create scripts/fetch_peers.py
         run: |
-          cat > scripts/fetch_peers.py << 'PY'
+          cat > scripts/fetch_peers.py <<'PY'
 import os, time, pandas as pd, requests
 BASE="https://finnhub.io/api/v1"
 TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
@@ -567,7 +566,7 @@ PY
       # -------------------- COMPANY NEWS (NDJSON) -----------------------------
       - name: Create scripts/fetch_company_news.py
         run: |
-          cat > scripts/fetch_company_news.py << 'PY'
+          cat > scripts/fetch_company_news.py <<'PY'
 import os, time, json, pandas as pd, requests
 from datetime import datetime, timedelta
 BASE="https://finnhub.io/api/v1"
@@ -682,7 +681,7 @@ PY
         run: |
           python scripts/fetch_market_core.py
           zcat data/processed/market_core.csv.gz | head -n 5 || true
-          python - << 'PY'
+          python - <<'PY'
 import pandas as pd
 try:
     df = pd.read_csv("data/processed/market_core.csv.gz", compression="gzip")
@@ -726,7 +725,7 @@ PY
       # -------------------- Corporate Actions (reine Rohdaten) ---------------
       - name: Fetch Dividends & Splits (yfinance, Rohdaten)
         run: |
-          python - << 'PY'
+          python - <<'PY'
 import os, pandas as pd, yfinance as yf
 os.makedirs("data/processed", exist_ok=True)
 def read_list(p):
@@ -759,7 +758,7 @@ PY
       # -------------------- Equity MASTER (RAW Merge, keine Scores) ----------
       - name: Build Equity MASTER (raw merge)
         run: |
-          cat > scripts/build_equity_master.py << 'PY'
+          cat > scripts/build_equity_master.py <<'PY'
 #!/usr/bin/env python3
 import os, json, pandas as pd
 PROC, DOCS = "data/processed", "docs"
@@ -913,7 +912,7 @@ PY
 
       # ===================== R2 UPLOADS (ein Bucket) ====================
       - name: Sync .gz (processed & docs) to R2
-        if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '') }}
+        if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
           CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
           CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
@@ -922,7 +921,7 @@ PY
         run: |
           set -e
           curl -fsSL https://rclone.org/install.sh | sudo bash
-          cat > rclone.conf <<EOF
+          cat > rclone.conf <<'EOF'
 [r2]
 type = s3
 provider = Cloudflare
@@ -949,7 +948,7 @@ EOF
           PUBLIC_BASE: ${{ vars.CF_R2_PUBLIC_BASE }}
         run: |
           mkdir -p docs
-          python - << 'PY'
+          python - <<'PY'
 import json, os, pathlib
 base = os.getenv("PUBLIC_BASE", "https://pub-CHANGE-ME.r2.dev")
 manifest = {

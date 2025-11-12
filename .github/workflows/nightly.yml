@@ -277,7 +277,7 @@ jobs:
             os.makedirs(base, exist_ok=True)
             df.to_csv(f"{base}/direction_signal.csv", index=False)
             print("wrote", f"{base}/direction_signal.csv", "rows", len(df))
-PY
+          PY
           fi
           test -s data/processed/direction_signal.csv || (echo "direction_signal leer!" && exit 1)
           head -n 40 data/processed/direction_signal.csv || true

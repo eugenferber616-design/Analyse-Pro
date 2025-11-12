@@ -232,55 +232,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f "scripts/build_direction_signal.py" ]; then
-            echo "⚙️ Nutze scripts/build_direction_signal.py"
-            python scripts/build_direction_signal.py
+
+          # Hauptskript aus scripts/ nutzen
+          python scripts/build_direction_signal.py
+
+          # Robust: akzeptiere .csv **oder** .csv.gz als Output
+          if [ -s data/processed/direction_signal.csv ]; then
+            echo "✔ direction_signal.csv gefunden"
+            head -n 40 data/processed/direction_signal.csv || true
+          elif [ -s data/processed/direction_signal.csv.gz ]; then
+            echo "✔ direction_signal.csv.gz gefunden"
+            zcat data/processed/direction_signal.csv.gz | head -n 40 || true
           else
-            echo "⚠️ build_direction_signal.py fehlt – nutze Fallback-Inline-Skript"
-            python - <<'PY'
-            import os
-            import pandas as pd
-            import numpy as np
-
-            base = "data/processed"
-
-            def rd(p):
-                if os.path.exists(p):
-                    try:
-                        return pd.read_csv(p, compression="infer")
-                    except Exception:
-                        return None
-                return None
-
-            sig = rd(f"{base}/options_signals.csv") or rd(f"{base}/options_signals.csv.gz")
-            if sig is None or sig.empty:
-                raise SystemExit("options_signals fehlt – direction_signal Fallback kann nicht bauen")
-
-            out = []
-            for _, r in sig.iterrows():
-                sym = str(r.get("symbol", "")).upper()
-                if not sym:
-                    continue
-                dv = r.get("dir", r.get("direction", 0))
-                try:
-                    dv = int(np.sign(float(dv)))
-                except Exception:
-                    dv = 0
-                sc = r.get("strength", r.get("score", 0))
-                try:
-                    sc = float(sc)
-                except Exception:
-                    sc = 0.0
-                out.append({"symbol": sym, "dir": dv, "strength": sc})
-
-            df = pd.DataFrame(out).drop_duplicates("symbol")
-            os.makedirs(base, exist_ok=True)
-            df.to_csv(f"{base}/direction_signal.csv", index=False)
-            print("wrote", f"{base}/direction_signal.csv", "rows", len(df))
-          PY
+            echo "❌ direction_signal leer oder fehlt!" >&2
+            exit 1
           fi
-          test -s data/processed/direction_signal.csv || (echo "direction_signal leer!" && exit 1)
-          head -n 40 data/processed/direction_signal.csv || true
+
+
+          # Robust: akzeptiere .csv oder .csv.gz
+          if [ -s data/processed/direction_signal.csv ]; then
+            echo "✔ direction_signal.csv gefunden"
+            head -n 40 data/processed/direction_signal.csv || true
+          elif [ -s data/processed/direction_signal.csv.gz ]; then
+            echo "✔ direction_signal.csv.gz gefunden"
+            zcat data/processed/direction_signal.csv.gz | head -n 40 || true
+          else
+            echo "❌ direction_signal leer!" >&2
+            exit 1
+          fi
+
+
 
       # -------------------- PREISDATEN (OHLC) FÜR WATCHLIST -------------------
       - name: Fetch OHLC prices for watchlist (yfinance)

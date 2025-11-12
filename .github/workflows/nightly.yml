@@ -67,10 +67,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install jq
+      - name: Install jq + rclone
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq
+          sudo apt-get install -y jq rclone
 
       - name: Install dependencies
         run: |
@@ -93,9 +93,9 @@ jobs:
           cur = con.cursor()
           cur.execute("""
           CREATE TABLE IF NOT EXISTS kv (
-          k  TEXT PRIMARY KEY,
-          v  TEXT NOT NULL,
-          ts INTEGER DEFAULT (strftime('%s','now'))
+            k  TEXT PRIMARY KEY,
+            v  TEXT NOT NULL,
+            ts INTEGER DEFAULT (strftime('%s','now'))
           )""")
           cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
           con.commit(); con.close()
@@ -116,11 +116,15 @@ jobs:
             exit 1
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
+
+          # Aktien-Watchlist normalisieren
           if [ ! -f "$WATCHLIST_STOCKS" ]; then
             printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
             echo "WATCHLIST_STOCKS=watchlists/mylist.csv" >> "$GITHUB_ENV"
           fi
           echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
+
+          # ETF-Watchlist normalisieren
           if [ ! -f "$WATCHLIST_ETF" ]; then
             printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
           fi
@@ -183,6 +187,7 @@ jobs:
           tmp=/tmp/options_watchlist.txt
           {
             if [ -f "${WATCHLIST_STOCKS}" ]; then
+              # CSV: erste Spalte Ticker
               tail -n +2 "${WATCHLIST_STOCKS}" | cut -d',' -f1 | tr -d '\r'
             fi
             if [ -f "${WATCHLIST_ETF}" ]; then
@@ -193,10 +198,14 @@ jobs:
               fi
             fi
           } | awk 'NF>0' | sort -u > "$tmp"
+
+          echo "== Options Watchlist =="; cat "$tmp" | head -n 40
+
           python scripts/fetch_options_oi.py --watchlist "$tmp"
           test -s data/processed/options_oi_summary.csv      || (echo "options_oi_summary leer!" && exit 1)
           test -s data/processed/options_oi_by_expiry.csv    || (echo "options_oi_by_expiry leer!" && exit 1)
           test -s data/processed/options_oi_totals.csv       || (echo "options_oi_totals leer!" && exit 1)
+
           head -n 40 data/processed/options_oi_summary.csv   || true
           head -n 40 data/processed/options_oi_by_expiry.csv || true
           head -n 40 data/processed/options_oi_totals.csv    || true
@@ -224,52 +233,54 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f "scripts/build_direction_signal.py" ]; then
-          python scripts/build_direction_signal.py
+            echo "⚙️ Nutze scripts/build_direction_signal.py"
+            python scripts/build_direction_signal.py
           else
-          cat > /tmp/build_direction_signal.py <<'PY'
-          import os
-          import pandas as pd
-          import numpy as np
+            echo "⚠️ build_direction_signal.py fehlt – nutze Fallback-Inline-Skript"
+            python - <<'PY'
+import os
+import pandas as pd
+import numpy as np
 
-          base = "data/processed"
+base = "data/processed"
 
-    def rd(p):
-        if os.path.exists(p):
+def rd(p):
+    if os.path.exists(p):
         try:
             return pd.read_csv(p, compression="infer")
         except Exception:
             return None
-            return None
+    return None
 
-          sig = rd(f"{base}/options_signals.csv") or rd(f"{base}/options_signals.csv.gz")
-    if sig is None or sig.empty:
-          raise SystemExit("options_signals fehlt – direction_signal Fallback kann nicht bauen")
+sig = rd(f"{base}/options_signals.csv") or rd(f"{base}/options_signals.csv.gz")
+if sig is None or sig.empty:
+    raise SystemExit("options_signals fehlt – direction_signal Fallback kann nicht bauen")
 
-        out = []
-    for _, r in sig.iterrows():
-        sym = str(r.get("symbol", "")).upper()
-        dv = r.get("dir", r.get("direction", 0))
+out = []
+for _, r in sig.iterrows():
+    sym = str(r.get("symbol", "")).upper()
+    if not sym:
+        continue
+    dv = r.get("dir", r.get("direction", 0))
     try:
         dv = int(np.sign(float(dv)))
-        except Exception:
+    except Exception:
         dv = 0
-        sc = r.get("strength", r.get("score", 0))
+    sc = r.get("strength", r.get("score", 0))
     try:
         sc = float(sc)
-        except Exception:
+    except Exception:
         sc = 0.0
-        out.append({"symbol": sym, "dir": dv, "strength": sc})
+    out.append({"symbol": sym, "dir": dv, "strength": sc})
 
 df = pd.DataFrame(out).drop_duplicates("symbol")
 os.makedirs(base, exist_ok=True)
 df.to_csv(f"{base}/direction_signal.csv", index=False)
 print("wrote", f"{base}/direction_signal.csv", "rows", len(df))
 PY
-      python /tmp/build_direction_signal.py
-    fi
-    test -s data/processed/direction_signal.csv || (echo "direction_signal leer!" && exit 1)
-    head -n 40 data/processed/direction_signal.csv || true
-
+          fi
+          test -s data/processed/direction_signal.csv || (echo "direction_signal leer!" && exit 1)
+          head -n 40 data/processed/direction_signal.csv || true
 
       # -------------------- PREISDATEN (OHLC) FÜR WATCHLIST -------------------
       - name: Fetch OHLC prices for watchlist (yfinance)
@@ -277,15 +288,19 @@ PY
           python - <<'PY'
 import os, pandas as pd, yfinance as yf
 from datetime import datetime, timedelta
+
 days = int(os.getenv("PRICES_DAYS","750"))
 os.makedirs("data/prices", exist_ok=True)
+
 def read_list(p):
     if not p or not os.path.exists(p): return []
     df = pd.read_csv(p)
     col = "symbol" if "symbol" in df.columns else df.columns[0]
     return [str(s).strip().upper() for s in df[col].dropna().tolist()]
+
 wl = sorted(set(read_list(os.getenv("WATCHLIST_STOCKS")) + read_list(os.getenv("WATCHLIST_ETF"))))
 start = (datetime.utcnow() - timedelta(days=days*1.2)).strftime("%Y-%m-%d")
+
 for sym in wl:
     try:
         df = yf.download(sym, start=start, auto_adjust=False, progress=False)
@@ -296,6 +311,7 @@ for sym in wl:
           .to_csv(f"data/prices/{sym}.csv", index=False)
     except Exception:
         pass
+
 print("saved", len([f for f in os.listdir('data/prices') if f.endswith('.csv')]), "files to data/prices")
 PY
 
@@ -307,6 +323,7 @@ import os, time, json, pandas as pd, requests
 from datetime import datetime, timedelta
 BASE="https://finnhub.io/api/v1"
 TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+
 def q(url, params):
     params = dict(params or {})
     if TOKEN: params["token"]=TOKEN
@@ -317,10 +334,12 @@ def q(url, params):
         except Exception: pass
         time.sleep(1+2*i)
     return None
+
 def read_symbols(p):
     if not p or not os.path.exists(p): return []
     df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
     return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+
 def main():
     wl=set(read_symbols(os.getenv("WATCHLIST_STOCKS"))+read_symbols(os.getenv("WATCHLIST_ETF")))
     out="data/processed/short_interest.csv"
@@ -354,6 +373,7 @@ def main():
         })
     pd.DataFrame(rows).to_csv(out, index=False)
     print("wrote", out, "rows", len(rows))
+
 if __name__=="__main__": main()
 PY
 
@@ -372,6 +392,7 @@ PY
 import os, time, pandas as pd, requests
 BASE="https://finnhub.io/api/v1"
 TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+
 def q(url, params):
     params=dict(params or {}); 
     if TOKEN: params["token"]=TOKEN
@@ -382,10 +403,12 @@ def q(url, params):
         except Exception: pass
         time.sleep(1+2*i)
     return None
+
 def read_symbols(p):
     if not p or not os.path.exists(p): return []
     df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
     return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+
 def main():
     wl=set(read_symbols(os.getenv("WATCHLIST_STOCKS"))+read_symbols(os.getenv("WATCHLIST_ETF")))
     out="data/processed/insider_tx.csv"
@@ -408,6 +431,7 @@ def main():
             })
     pd.DataFrame(rows).to_csv(out, index=False)
     print("wrote", out, "rows", len(rows))
+
 if __name__=="__main__": main()
 PY
 
@@ -426,6 +450,7 @@ PY
 import os, time, pandas as pd, requests
 BASE="https://finnhub.io/api/v1"
 TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+
 def q(url, params):
     params=dict(params or {}); 
     if TOKEN: params["token"]=TOKEN
@@ -436,10 +461,12 @@ def q(url, params):
         except Exception: pass
         time.sleep(1+2*i)
     return None
+
 def read_symbols(p):
     if not p or not os.path.exists(p): return []
     df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
     return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+
 def main():
     wl=set(read_symbols(os.getenv("WATCHLIST_STOCKS"))+read_symbols(os.getenv("WATCHLIST_ETF")))
     out="data/processed/fund_ownership.csv"
@@ -458,6 +485,7 @@ def main():
             })
     pd.DataFrame(rows).to_csv(out, index=False)
     print("wrote", out, "rows", len(rows))
+
 if __name__=="__main__": main()
 PY
 
@@ -481,6 +509,7 @@ KEYS = {
     "bs": ["totalAssets","totalLiabilities","totalDebt","cashAndCashEquivalents","shareholdersEquity","inventory"],
     "cf": ["operatingCashFlow","capitalExpenditure","freeCashFlow","depreciationAndAmortization"]
 }
+
 def q(url, params):
     params=dict(params or {}); 
     if TOKEN: params["token"]=TOKEN
@@ -491,10 +520,12 @@ def q(url, params):
         except Exception: pass
         time.sleep(1+2*i)
     return None
+
 def read_symbols(p):
     if not p or not os.path.exists(p): return []
     df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
     return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+
 def pull_statement(sym, stmt):
     r=q(BASE+"/stock/financials", {"symbol":sym,"statement":stmt,"freq":"quarterly"}) or {}
     data=r.get("data") or []
@@ -505,6 +536,7 @@ def pull_statement(sym, stmt):
             if k in it:
                 rows.append({"symbol":sym,"statement":stmt,"period":period,"metric":k,"value":it.get(k)})
     return rows
+
 def main():
     wl=set(read_symbols(os.getenv("WATCHLIST_STOCKS"))+read_symbols(os.getenv("WATCHLIST_ETF")))
     out="data/processed/financials_timeseries.csv"
@@ -515,6 +547,7 @@ def main():
             except Exception: pass
     pd.DataFrame(rows).to_csv(out, index=False)
     print("wrote", out, "rows", len(rows))
+
 if __name__=="__main__": main()
 PY
 
@@ -533,6 +566,7 @@ PY
 import os, time, pandas as pd, requests
 BASE="https://finnhub.io/api/v1"
 TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+
 def q(url, params):
     params=dict(params or {}); 
     if TOKEN: params["token"]=TOKEN
@@ -543,10 +577,12 @@ def q(url, params):
         except Exception: pass
         time.sleep(1+2*i)
     return None
+
 def read_symbols(p):
     if not p or not os.path.exists(p): return []
     df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
     return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+
 def main():
     wl=set(read_symbols(os.getenv("WATCHLIST_STOCKS"))+read_symbols(os.getenv("WATCHLIST_ETF")))
     out="data/processed/peers.csv"; rows=[]
@@ -556,6 +592,7 @@ def main():
             rows.append({"symbol":sym,"peer":str(p).upper()})
     pd.DataFrame(rows).to_csv(out, index=False)
     print("wrote", out, "rows", len(rows))
+
 if __name__=="__main__": main()
 PY
 
@@ -566,51 +603,6 @@ PY
         run: |
           python scripts/fetch_peers.py
           head -n 10 data/processed/peers.csv || true
-
-      # -------------------- COMPANY NEWS (NDJSON) -----------------------------
-      - name: Create scripts/fetch_company_news.py
-        run: |
-          cat > scripts/fetch_company_news.py <<'PY'
-import os, time, json, pandas as pd, requests
-from datetime import datetime, timedelta
-BASE="https://finnhub.io/api/v1"
-TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
-WINDOW=int(os.getenv("WINDOW_DAYS","30"))
-def q(url, params):
-    params=dict(params or {}); 
-    if TOKEN: params["token"]=TOKEN
-    for i in range(3):
-        try:
-            r=requests.get(url, params=params, timeout=30)
-            if r.status_code==200: return r.json()
-        except Exception: pass
-        time.sleep(1+2*i)
-    return None
-def read_symbols(p):
-    if not p or not os.path.exists(p): return []
-    df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
-    return [str(x).strip().upper() for x in df[col].dropna().tolist()]
-def main():
-    wl=set(read_symbols(os.getenv("WATCHLIST_STOCKS"))+read_symbols(os.getenv("WATCHLIST_ETF")))
-    os.makedirs("data/processed", exist_ok=True)
-    out="data/processed/company_news.ndjson"
-    fr=(datetime.utcnow()-timedelta(days=WINDOW)).strftime("%Y-%m-%d")
-    to=datetime.utcnow().strftime("%Y-%m-%d")
-    with open(out,"w",encoding="utf-8") as f:
-        for sym in sorted(wl):
-            arr=q(BASE+"/company-news", {"symbol":sym,"from":fr,"to":to}) or []
-            for n in arr or []:
-                f.write(json.dumps({
-                    "symbol":sym,
-                    "datetime":n.get("datetime"),
-                    "headline":n.get("headline"),
-                    "summary":n.get("summary"),
-                    "source":n.get("source"),
-                    "url":n.get("url")
-                }, ensure_ascii=False)+"\n")
-    print("wrote", out)
-if __name__=="__main__": main()
-PY
 
       - name: Fetch company news (Finnhub → NDJSON)
         env:

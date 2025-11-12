@@ -116,20 +116,17 @@ PY
             exit 1
           fi
           echo "token_present=true" >> "$GITHUB_OUTPUT"
-
           if [ ! -f "$WATCHLIST_STOCKS" ]; then
             printf "symbol\nAAPL\nMSFT\nNVDA\nSPY\n" > watchlists/mylist.csv
             echo "WATCHLIST_STOCKS=watchlists/mylist.csv" >> "$GITHUB_ENV"
           fi
           echo "== Aktien Watchlist =="; head -n 10 "${WATCHLIST_STOCKS}" || true
-
           if [ ! -f "$WATCHLIST_ETF" ]; then
             printf "SPY\nQQQ\nIWM\nGLD\nHYG\nXLF\nXLK\nXLE\n" > watchlists/etf_sample.txt
           fi
           echo "== ETF Sample =="; head -n 10 "${WATCHLIST_ETF}" || true
 
       # ---------------- Earnings / Fundamentals / Optionen -------------------
-
       - name: Pull earnings CALENDAR (optional)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -164,14 +161,12 @@ PY
 
       - name: Pull FUNDAMENTALS (profile2 + metrics, mit Fallbacks)
         env:
-          FINNHUB_API_KEY:  ${{ secrets.FINNHUB_API_KEY }}
-          FINNHUB_TOKEN:    ${{ secrets.FINNHUB_TOKEN }}
-          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
-          SIMFIN_API_KEY:   ${{ secrets.SIMFIN_API_KEY }}
+          FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:         ${{ secrets.FINNHUB_TOKEN }}
+          ALPHAVANTAGE_API_KEY:  ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          SIMFIN_API_KEY:        ${{ secrets.SIMFIN_API_KEY }}
         run: |
-          python scripts/fetch_fundamentals.py \
-            --watchlist "${WATCHLIST_STOCKS}" \
-            --sleep_ms 200 || true
+          python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --sleep_ms 200 || true
           head -n 20 data/processed/fundamentals_core.csv || true
 
       - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
@@ -198,14 +193,13 @@ PY
               fi
             fi
           } | awk 'NF>0' | sort -u > "$tmp"
-
           python scripts/fetch_options_oi.py --watchlist "$tmp"
-          test -s data/processed/options_oi_summary.csv     || (echo "options_oi_summary leer!" && exit 1)
-          test -s data/processed/options_oi_by_expiry.csv   || (echo "options_oi_by_expiry leer!" && exit 1)
-          test -s data/processed/options_oi_totals.csv      || (echo "options_oi_totals leer!" && exit 1)
-          head -n 40 data/processed/options_oi_summary.csv  || true
-          head -n 40 data/processed/options_oi_by_expiry.csv|| true
-          head -n 40 data/processed/options_oi_totals.csv   || true
+          test -s data/processed/options_oi_summary.csv      || (echo "options_oi_summary leer!" && exit 1)
+          test -s data/processed/options_oi_by_expiry.csv    || (echo "options_oi_by_expiry leer!" && exit 1)
+          test -s data/processed/options_oi_totals.csv       || (echo "options_oi_totals leer!" && exit 1)
+          head -n 40 data/processed/options_oi_summary.csv   || true
+          head -n 40 data/processed/options_oi_by_expiry.csv || true
+          head -n 40 data/processed/options_oi_totals.csv    || true
 
       - name: Build max OI strike per symbol
         run: |
@@ -235,7 +229,6 @@ PY
             cat > /tmp/build_direction_signal.py <<'PY'
 import os, pandas as pd, numpy as np
 base = "data/processed"
-
 def rd(p):
     if os.path.exists(p):
         try:
@@ -243,11 +236,9 @@ def rd(p):
         except Exception:
             return None
     return None
-
 sig = rd(f"{base}/options_signals.csv") or rd(f"{base}/options_signals.csv.gz")
 if sig is None or sig.empty:
     raise SystemExit("options_signals fehlt – direction_signal Fallback kann nicht bauen")
-
 out = []
 for _, r in sig.iterrows():
     sym = str(r.get("symbol", "")).upper()
@@ -262,7 +253,7 @@ for _, r in sig.iterrows():
     except Exception:
         sc = 0.0
     out.append({"symbol": sym, "dir": dv, "strength": sc})
-
+import pandas as pd
 df = pd.DataFrame(out).drop_duplicates("symbol")
 os.makedirs(base, exist_ok=True)
 df.to_csv(f"{base}/direction_signal.csv", index=False)
@@ -281,20 +272,17 @@ import os, pandas as pd, yfinance as yf
 from datetime import datetime, timedelta
 days = int(os.getenv("PRICES_DAYS","750"))
 os.makedirs("data/prices", exist_ok=True)
-
 def read_list(p):
     if not p or not os.path.exists(p): return []
     df = pd.read_csv(p)
     col = "symbol" if "symbol" in df.columns else df.columns[0]
     return [str(s).strip().upper() for s in df[col].dropna().tolist()]
-
 wl = sorted(set(read_list(os.getenv("WATCHLIST_STOCKS")) + read_list(os.getenv("WATCHLIST_ETF"))))
 start = (datetime.utcnow() - timedelta(days=days*1.2)).strftime("%Y-%m-%d")
-
 for sym in wl:
     try:
         df = yf.download(sym, start=start, auto_adjust=False, progress=False)
-        if df is None or df.empty: 
+        if df is None or df.empty:
             continue
         df.index = df.index.tz_localize(None)
         df.reset_index().rename(columns={"Date":"date","Open":"open","High":"high","Low":"low","Close":"close","Adj Close":"adj_close","Volume":"volume"}) \
@@ -361,6 +349,7 @@ def main():
     print("wrote", out, "rows", len(rows))
 if __name__=="__main__": main()
 PY
+
       - name: Fetch short interest (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -414,6 +403,7 @@ def main():
     print("wrote", out, "rows", len(rows))
 if __name__=="__main__": main()
 PY
+
       - name: Fetch insider transactions (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -463,6 +453,7 @@ def main():
     print("wrote", out, "rows", len(rows))
 if __name__=="__main__": main()
 PY
+
       - name: Fetch fund ownership (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -519,6 +510,7 @@ def main():
     print("wrote", out, "rows", len(rows))
 if __name__=="__main__": main()
 PY
+
       - name: Fetch financial statements timeseries (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -559,6 +551,7 @@ def main():
     print("wrote", out, "rows", len(rows))
 if __name__=="__main__": main()
 PY
+
       - name: Fetch peers (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -611,6 +604,7 @@ def main():
     print("wrote", out)
 if __name__=="__main__": main()
 PY
+
       - name: Fetch company news (Finnhub → NDJSON)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -626,7 +620,7 @@ PY
         shell: bash
         run: |
           set -euo pipefail
-          echo "== Socrata Probe (Disaggregated) =="; \
+          echo "== Socrata Probe (Disaggregated) =="
           for i in 1 2 3; do
             if curl -fsS -G "${CFTC_API_BASE}/${COT_DISAGG_DATASET_ID}.json" \
                  --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
@@ -635,7 +629,7 @@ PY
                  -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then break; fi
             echo "probe failed (try $i) – sleep 10s"; sleep 10
           done
-          echo "== Pull 20y Disaggregated =="; \
+          echo "== Pull 20y Disaggregated =="
           if ! python -u scripts/fetch_cot_20y.py \
                 --dataset "${COT_DISAGG_DATASET_ID}" \
                 --out "data/processed/cot_20y_disagg.csv.gz"; then
@@ -650,7 +644,7 @@ PY
         shell: bash
         run: |
           set -euo pipefail
-          echo "== Socrata Probe (TFF) =="; \
+          echo "== Socrata Probe (TFF) =="
           for i in 1 2 3; do
             if curl -fsS -G "${CFTC_API_BASE}/${COT_TFF_DATASET_ID}.json" \
                  --data-urlencode '$select=report_date_as_yyyy_mm_dd' \
@@ -659,7 +653,7 @@ PY
                  -H "X-App-Token: ${CFTC_APP_TOKEN}" | jq .; then break; fi
             echo "probe failed (try $i) – sleep 10s"; sleep 10
           done
-          echo "== Pull 20y TFF =="; \
+          echo "== Pull 20y TFF =="
           if ! python -u scripts/fetch_cot_20y.py \
                 --dataset "${COT_TFF_DATASET_ID}" \
                 --out "data/processed/cot_20y_tff.csv.gz"; then
@@ -861,7 +855,7 @@ PY
           head -n 5 data/processed/riskindex_timeseries.csv || true
           cat data/processed/riskindex_snapshot.json || true
 
-      # ===================== ALLES KOMPRIMIEREN ====================
+      # ===================== ALLES KOMPRIMIEREN ===============================
       - name: Compress ALL processed & docs to .gz
         shell: bash
         run: |
@@ -914,7 +908,7 @@ PY
             data/processed/**/*.gz
             data/history/**/*.gz
 
-      # ===================== R2 UPLOADS (ein Bucket) ====================
+      # ===================== R2 UPLOADS (ein Bucket) ==========================
       - name: Sync .gz (processed & docs) to R2
         if: ${{ env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' }}
         env:
@@ -940,7 +934,7 @@ EOF
           rclone sync data/history   "r2:${CF_R2_BUCKET}/data/history"   --config rclone.conf --s3-no-check-bucket -v --include "**/*.gz" --exclude "*"
           rclone sync docs           "r2:${CF_R2_BUCKET}/docs"           --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
 
-      # ===================== REPO AUFRÄUMEN & COMMIT ========================
+      # ===================== REPO AUFRÄUMEN & COMMIT =========================
       - name: Purge heavy local files before commit
         shell: bash
         run: |

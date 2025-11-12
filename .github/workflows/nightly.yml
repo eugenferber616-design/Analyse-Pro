@@ -85,21 +85,21 @@ jobs:
         run: |
           mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/market/core data/processed data/reports data/history docs watchlists scripts
           python - << 'PY'
-import os, sqlite3
-db_path = os.path.join('data','cache','cache.db')
-os.makedirs(os.path.dirname(db_path), exist_ok=True)
-con = sqlite3.connect(db_path)
-cur = con.cursor()
-cur.execute("""
-CREATE TABLE IF NOT EXISTS kv (
-  k  TEXT PRIMARY KEY,
-  v  TEXT NOT NULL,
-  ts INTEGER DEFAULT (strftime('%s','now'))
-)""")
-cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
-con.commit(); con.close()
-print("cache DB ready at", db_path)
-PY
+          import os, sqlite3
+          db_path = os.path.join('data','cache','cache.db')
+          os.makedirs(os.path.dirname(db_path), exist_ok=True)
+          con = sqlite3.connect(db_path)
+          cur = con.cursor()
+          cur.execute("""
+          CREATE TABLE IF NOT EXISTS kv (
+          k  TEXT PRIMARY KEY,
+          v  TEXT NOT NULL,
+          ts INTEGER DEFAULT (strftime('%s','now'))
+          )""")
+          cur.execute("CREATE INDEX IF NOT EXISTS ix_kv_ts ON kv(ts)")
+          con.commit(); con.close()
+          print("cache DB ready at", db_path)
+          PY
 
       - name: Prepare env and watchlists
         id: prep

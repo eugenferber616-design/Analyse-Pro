@@ -76,14 +76,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Fallbacks/Extras
-          pip install --upgrade yfinance pandas_datareader
+          # Zusätzliche Pakete, die in Inline-Skripten genutzt werden
+          pip install --upgrade yfinance pandas_datareader requests
           # parquet-Engines optional
           pip install --upgrade pyarrow fastparquet matplotlib
 
       - name: Init cache DB
         run: |
-          mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/market/core data/processed data/reports docs watchlists scripts
+          mkdir -p data/cache data/earnings data/macro/fred data/macro/ecb data/market/stooq data/market/core data/processed data/reports data/history docs watchlists scripts
           python - << 'PY'
           import os, sqlite3
           db_path = os.path.join('data','cache','cache.db')
@@ -224,8 +224,381 @@ jobs:
           test -s data/processed/options_signals.csv || (echo "options_signals leer!" && exit 1)
           head -n 40 data/processed/options_signals.csv || true
 
-      # -------------------- COT 20y Pulls ---------------------------
+      - name: Build direction_signal (kompakte Overlay-Datei)
+        run: |
+          if [ -f "scripts/build_direction_signal.py" ]; then
+            python scripts/build_direction_signal.py
+          else
+            python - << 'PY'
+            import os, pandas as pd, numpy as np
+            base="data/processed"
+            def rd(p):
+                if os.path.exists(p):
+                    return pd.read_csv(p, compression="infer")
+            sig = rd(f"{base}/options_signals.csv") or rd(f"{base}/options_signals.csv.gz")
+            if sig is None or sig.empty:
+                raise SystemExit("options_signals fehlt – direction_signal Fallback kann nicht bauen")
+            out=[]
+            for _,r in sig.iterrows():
+                sym=str(r.get("symbol","")).upper()
+                d=r.get("dir", r.get("direction",0))
+                try: d=int(np.sign(float(d)))
+                except Exception: d=0
+                s=r.get("strength", r.get("score",0))
+                try: s=float(s)
+                except Exception: s=0.0
+                out.append({"symbol":sym,"dir":d,"strength":s})
+            df=pd.DataFrame(out).drop_duplicates("symbol")
+            os.makedirs(base, exist_ok=True)
+            df.to_csv(f"{base}/direction_signal.csv", index=False)
+            print("wrote", f"{base}/direction_signal.csv", "rows", len(df))
+            PY
+          fi
+          test -s data/processed/direction_signal.csv || (echo "direction_signal leer!" && exit 1)
+          head -n 40 data/processed/direction_signal.csv || true
 
+      # -------------------- PREISDATEN (OHLC) FÜR WATCHLIST -------------------
+      - name: Fetch OHLC prices for watchlist (yfinance)
+        run: |
+          python - << 'PY'
+          import os, pandas as pd, yfinance as yf
+          from datetime import datetime, timedelta
+          days = int(os.getenv("PRICES_DAYS","750"))
+          os.makedirs("data/prices", exist_ok=True)
+          def read_list(p):
+            if not p or not os.path.exists(p): return []
+            df = pd.read_csv(p)
+            col = "symbol" if "symbol" in df.columns else df.columns[0]
+            return [str(s).strip().upper() for s in df[col].dropna().tolist()]
+          wl = sorted(set(read_list("${{ env.WATCHLIST_STOCKS }}") + read_list("${{ env.WATCHLIST_ETF }}")))
+          start = (datetime.utcnow() - timedelta(days=days*1.2)).strftime("%Y-%m-%d")
+          for sym in wl:
+            try:
+              df = yf.download(sym, start=start, auto_adjust=False, progress=False)
+              if df is None or df.empty: continue
+              df.index = df.index.tz_localize(None)
+              df.reset_index().rename(columns={"Date":"date","Open":"open","High":"high","Low":"low","Close":"close","Adj Close":"adj_close","Volume":"volume"}) \
+                .to_csv(f"data/prices/{sym}.csv", index=False)
+            except Exception: pass
+          print("saved", len(os.listdir("data/prices")), "files to data/prices")
+          PY
+
+      # -------------------- SHORT INTEREST (Rohdaten) -------------------------
+      - name: Create scripts/fetch_short_interest.py
+        run: |
+          cat > scripts/fetch_short_interest.py << 'PY'
+          import os, time, json, pandas as pd, requests
+          from datetime import datetime, timedelta
+          BASE="https://finnhub.io/api/v1"
+          TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+          def q(url, params):
+              params = dict(params or {})
+              if TOKEN: params["token"]=TOKEN
+              for i in range(3):
+                  try:
+                      r = requests.get(url, params=params, timeout=30)
+                      if r.status_code==200: return r.json()
+                  except Exception: pass
+                  time.sleep(1+2*i)
+              return None
+          def read_symbols(p):
+              if not p or not os.path.exists(p): return []
+              df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
+              return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+          def main():
+              wl=set(read_symbols("${{ env.WATCHLIST_STOCKS }}")+read_symbols("${{ env.WATCHLIST_ETF }}"))
+              out="data/processed/short_interest.csv"
+              os.makedirs("data/processed", exist_ok=True)
+              rows=[]
+              fr=(datetime.utcnow()-timedelta(days=400)).strftime("%Y-%m-%d")
+              to=datetime.utcnow().strftime("%Y-%m-%d")
+              for sym in sorted(wl):
+                  si = q(BASE+"/stock/short-interest", {"symbol":sym, "from":fr, "to":to}) or {}
+                  si_data = si.get("data") if isinstance(si, dict) else None
+                  si_last = (si_data or [{}])[-1] if si_data else {}
+                  br = q(BASE+"/stock/borrow", {"symbol":sym}) or {}
+                  br_last = (br.get("data") or [{}])[-1] if isinstance(br, dict) else {}
+                  fl = q(BASE+"/stock/float", {"symbol":sym}) or {}
+                  float_sh = fl.get("floatShares") if isinstance(fl, dict) else None
+                  si_sh = si_last.get("shortInterest") or si_last.get("short_interest")
+                  si_dt = si_last.get("date") or si_last.get("t")
+                  pct_float = None
+                  try:
+                      if float_sh and si_sh: pct_float = 100.0*float(si_sh)/float(float_sh)
+                  except Exception: pct_float=None
+                  rows.append({
+                      "symbol": sym,
+                      "si_date": si_dt,
+                      "si_shares": si_sh,
+                      "float_shares": float_sh,
+                      "si_pct_float": pct_float,
+                      "borrow_date": br_last.get("date") or br_last.get("t"),
+                      "borrow_rate": br_last.get("rate") or br_last.get("feeRate") or br_last.get("fr"),
+                      "borrow_avail": br_last.get("available") or br_last.get("shares"),
+                  })
+              pd.DataFrame(rows).to_csv(out, index=False)
+              print("wrote", out, "rows", len(rows))
+          if __name__=="__main__": main()
+          PY
+      - name: Fetch short interest (Finnhub)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python scripts/fetch_short_interest.py
+          head -n 10 data/processed/short_interest.csv || true
+
+      # -------------------- INSIDER-TRANSAKTIONEN (Rohdaten) -----------------
+      - name: Create scripts/fetch_insider_tx.py
+        run: |
+          cat > scripts/fetch_insider_tx.py << 'PY'
+          import os, time, pandas as pd, requests
+          BASE="https://finnhub.io/api/v1"
+          TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+          def q(url, params):
+              params=dict(params or {}); 
+              if TOKEN: params["token"]=TOKEN
+              for i in range(3):
+                  try:
+                      r=requests.get(url, params=params, timeout=30)
+                      if r.status_code==200: return r.json()
+                  except Exception: pass
+                  time.sleep(1+2*i)
+              return None
+          def read_symbols(p):
+              if not p or not os.path.exists(p): return []
+              df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
+              return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+          def main():
+              wl=set(read_symbols("${{ env.WATCHLIST_STOCKS }}")+read_symbols("${{ env.WATCHLIST_ETF }}"))
+              out="data/processed/insider_tx.csv"
+              rows=[]
+              for sym in sorted(wl):
+                  r=q(BASE+"/stock/insider-transactions", {"symbol":sym, "from":"2018-01-01"})
+                  data = (r or {}).get("data") or []
+                  for it in data:
+                      it = it or {}
+                      rows.append({
+                          "symbol": sym,
+                          "name": it.get("name"),
+                          "position": it.get("position"),
+                          "transaction_code": it.get("transactionCode") or it.get("code"),
+                          "share": it.get("share"),
+                          "change": it.get("change"),
+                          "transaction_price": it.get("transactionPrice") or it.get("price"),
+                          "filing_date": it.get("filingDate"),
+                          "transaction_date": it.get("transactionDate"),
+                      })
+              pd.DataFrame(rows).to_csv(out, index=False)
+              print("wrote", out, "rows", len(rows))
+          if __name__=="__main__": main()
+          PY
+      - name: Fetch insider transactions (Finnhub)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python scripts/fetch_insider_tx.py
+          head -n 10 data/processed/insider_tx.csv || true
+
+      # -------------------- FUND-OWNERSHIP (Institutionelle) -----------------
+      - name: Create scripts/fetch_fund_ownership.py
+        run: |
+          cat > scripts/fetch_fund_ownership.py << 'PY'
+          import os, time, pandas as pd, requests
+          BASE="https://finnhub.io/api/v1"
+          TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+          def q(url, params):
+              params=dict(params or {}); 
+              if TOKEN: params["token"]=TOKEN
+              for i in range(3):
+                  try:
+                      r=requests.get(url, params=params, timeout=30)
+                      if r.status_code==200: return r.json()
+                  except Exception: pass
+                  time.sleep(1+2*i)
+              return None
+          def read_symbols(p):
+              if not p or not os.path.exists(p): return []
+              df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
+              return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+          def main():
+              wl=set(read_symbols("${{ env.WATCHLIST_STOCKS }}")+read_symbols("${{ env.WATCHLIST_ETF }}"))
+              out="data/processed/fund_ownership.csv"
+              rows=[]
+              for sym in sorted(wl):
+                  r=q(BASE+"/stock/fund-ownership", {"symbol":sym, "limit":200})
+                  data = (r or {}).get("ownership") or []
+                  for it in data:
+                      rows.append({
+                          "symbol": sym,
+                          "owner": it.get("owner") or it.get("holder"),
+                          "percent": it.get("percent"),
+                          "reported_date": it.get("reportedDate") or it.get("reportDate"),
+                          "position": it.get("position"),
+                          "avg_price": it.get("avgPrice"),
+                      })
+              pd.DataFrame(rows).to_csv(out, index=False)
+              print("wrote", out, "rows", len(rows))
+          if __name__=="__main__": main()
+          PY
+      - name: Fetch fund ownership (Finnhub)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python scripts/fetch_fund_ownership.py
+          head -n 10 data/processed/fund_ownership.csv || true
+
+      # -------------------- FINANZBERICHTE (Quarterly Timeseries) ------------
+      - name: Create scripts/fetch_financials_ts.py
+        run: |
+          cat > scripts/fetch_financials_ts.py << 'PY'
+          import os, time, pandas as pd, requests
+          BASE="https://finnhub.io/api/v1"
+          TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+          KEYS = {
+              "ic": ["revenue","grossProfit","operatingIncome","netIncome","eps","epsDiluted","researchAndDevelopment"],
+              "bs": ["totalAssets","totalLiabilities","totalDebt","cashAndCashEquivalents","shareholdersEquity","inventory"],
+              "cf": ["operatingCashFlow","capitalExpenditure","freeCashFlow","depreciationAndAmortization"]
+          }
+          def q(url, params):
+              params=dict(params or {}); 
+              if TOKEN: params["token"]=TOKEN
+              for i in range(3):
+                  try:
+                      r=requests.get(url, params=params, timeout=40)
+                      if r.status_code==200: return r.json()
+                  except Exception: pass
+                  time.sleep(1+2*i)
+              return None
+          def read_symbols(p):
+              if not p or not os.path.exists(p): return []
+              df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
+              return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+          def pull_statement(sym, stmt):
+              r=q(BASE+"/stock/financials", {"symbol":sym,"statement":stmt,"freq":"quarterly"}) or {}
+              data=r.get("data") or []
+              rows=[]
+              for it in data:
+                  period=it.get("period") or it.get("calendarDate") or it.get("reportDate")
+                  for k in KEYS[stmt]:
+                      if k in it:
+                          rows.append({"symbol":sym,"statement":stmt,"period":period,"metric":k,"value":it.get(k)})
+              return rows
+          def main():
+              wl=set(read_symbols("${{ env.WATCHLIST_STOCKS }}")+read_symbols("${{ env.WATCHLIST_ETF }}"))
+              out="data/processed/financials_timeseries.csv"
+              rows=[]
+              for sym in sorted(wl):
+                  for stmt in ["ic","bs","cf"]:
+                      try: rows.extend(pull_statement(sym, stmt))
+                      except Exception: pass
+              pd.DataFrame(rows).to_csv(out, index=False)
+              print("wrote", out, "rows", len(rows))
+          if __name__=="__main__": main()
+          PY
+      - name: Fetch financial statements timeseries (Finnhub)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python scripts/fetch_financials_ts.py
+          head -n 10 data/processed/financials_timeseries.csv || true
+
+      # -------------------- PEERS (für Wettbewerbsvergleich) ------------------
+      - name: Create scripts/fetch_peers.py
+        run: |
+          cat > scripts/fetch_peers.py << 'PY'
+          import os, time, pandas as pd, requests
+          BASE="https://finnhub.io/api/v1"
+          TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+          def q(url, params):
+              params=dict(params or {}); 
+              if TOKEN: params["token"]=TOKEN
+              for i in range(3):
+                  try:
+                      r=requests.get(url, params=params, timeout=20)
+                      if r.status_code==200: return r.json()
+                  except Exception: pass
+                  time.sleep(1+2*i)
+              return None
+          def read_symbols(p):
+              if not p or not os.path.exists(p): return []
+              df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
+              return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+          def main():
+              wl=set(read_symbols("${{ env.WATCHLIST_STOCKS }}")+read_symbols("${{ env.WATCHLIST_ETF }}"))
+              out="data/processed/peers.csv"; rows=[]
+              for sym in sorted(wl):
+                  arr = q(BASE+"/stock/peers", {"symbol":sym}) or []
+                  for p in arr or []:
+                      rows.append({"symbol":sym,"peer":str(p).upper()})
+              pd.DataFrame(rows).to_csv(out, index=False)
+              print("wrote", out, "rows", len(rows))
+          if __name__=="__main__": main()
+          PY
+      - name: Fetch peers (Finnhub)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python scripts/fetch_peers.py
+          head -n 10 data/processed/peers.csv || true
+
+      # -------------------- COMPANY NEWS (NDJSON) -----------------------------
+      - name: Create scripts/fetch_company_news.py
+        run: |
+          cat > scripts/fetch_company_news.py << 'PY'
+          import os, time, json, pandas as pd, requests
+          from datetime import datetime, timedelta
+          BASE="https://finnhub.io/api/v1"
+          TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+          WINDOW=int(os.getenv("WINDOW_DAYS","30"))
+          def q(url, params):
+              params=dict(params or {}); 
+              if TOKEN: params["token"]=TOKEN
+              for i in range(3):
+                  try:
+                      r=requests.get(url, params=params, timeout=30)
+                      if r.status_code==200: return r.json()
+                  except Exception: pass
+                  time.sleep(1+2*i)
+              return None
+          def read_symbols(p):
+              if not p or not os.path.exists(p): return []
+              df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
+              return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+          def main():
+              wl=set(read_symbols("${{ env.WATCHLIST_STOCKS }}")+read_symbols("${{ env.WATCHLIST_ETF }}"))
+              os.makedirs("data/processed", exist_ok=True)
+              out="data/processed/company_news.ndjson"
+              fr=(datetime.utcnow()-timedelta(days=WINDOW)).strftime("%Y-%m-%d")
+              to=datetime.utcnow().strftime("%Y-%m-%d")
+              with open(out,"w",encoding="utf-8") as f:
+                  for sym in sorted(wl):
+                      arr=q(BASE+"/company-news", {"symbol":sym,"from":fr,"to":to}) or []
+                      for n in arr or []:
+                          f.write(json.dumps({
+                              "symbol":sym,
+                              "datetime":n.get("datetime"),
+                              "headline":n.get("headline"),
+                              "summary":n.get("summary"),
+                              "source":n.get("source"),
+                              "url":n.get("url")
+                          }, ensure_ascii=False)+"\n")
+              print("wrote", out)
+          if __name__=="__main__": main()
+          PY
+      - name: Fetch company news (Finnhub → NDJSON)
+        env:
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          python scripts/fetch_company_news.py
+          head -n 5 data/processed/company_news.ndjson || true
+
+      # -------------------- COT 20y Pulls ---------------------------
       - name: Pull COT 20y – Disaggregated (F+O Combined)
         env:
           CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
@@ -275,7 +648,6 @@ jobs:
           zcat data/processed/cot_20y_tff.csv.gz | head -n 2 || true
 
       # -------------------- HV (historische Volatilität) ---------------------
-
       - name: Build HV summary (Stooq → hv20/hv60, mit yfinance-Fallback)
         run: |
           python scripts/build_hv_summary.py \
@@ -288,7 +660,6 @@ jobs:
           zcat data/processed/hv_summary.csv.gz | head -n 10 || true
 
       # ===================== RiskIndex Inputs (Core) =========================
-
       - name: Fetch market core quotes (VIX/DXY/HYG/LQD/…)
         run: |
           python scripts/fetch_market_core.py
@@ -316,7 +687,6 @@ jobs:
           zcat data/processed/fred_oas.csv.gz  | head -n 5 || true
 
       # -------------------- CDS Proxy aus OAS/ETF ----------------------------
-
       - name: Build CDS proxy (v2) from OAS/ETF
         run: |
           python scripts/build_cds_proxy_v2.py \
@@ -335,6 +705,134 @@ jobs:
             python scripts/build_prices_parquet.py || true
           fi
 
+      # -------------------- Corporate Actions (reine Rohdaten) ---------------
+      - name: Fetch Dividends & Splits (yfinance, Rohdaten)
+        run: |
+          python - << 'PY'
+          import os, pandas as pd, yfinance as yf
+          os.makedirs("data/processed", exist_ok=True)
+          def read_list(p):
+              if not p or not os.path.exists(p): return []
+              df = pd.read_csv(p)
+              col = "symbol" if "symbol" in df.columns else df.columns[0]
+              return [str(s).strip().upper() for s in df[col].dropna().tolist()]
+          wl = sorted(set(read_list("${{ env.WATCHLIST_STOCKS }}")+ "${{ env.WATCHLIST_ETF }}".split() if False else read_list("${{ env.WATCHLIST_ETF }}")))
+          wl = sorted(set(read_list("${{ env.WATCHLIST_STOCKS }}") + read_list("${{ env.WATCHLIST_ETF }}")))
+          div_rows, split_rows = [], []
+          for sym in wl:
+              try:
+                  t = yf.Ticker(sym)
+                  div = t.dividends
+                  if div is not None and len(div):
+                      for dt,val in div.sort_index().items():
+                          div_rows.append({"symbol":sym,"date":str(dt.date()),"dividend":float(val)})
+                  sp = t.splits
+                  if sp is not None and len(sp):
+                      for dt,val in sp.sort_index().items():
+                          split_rows.append({"symbol":sym,"date":str(dt.date()),"split_ratio":float(val)})
+              except Exception:
+                  pass
+          pd.DataFrame(div_rows).to_csv("data/processed/dividends.csv", index=False)
+          pd.DataFrame(split_rows).to_csv("data/processed/splits.csv", index=False)
+          print("dividends rows:", len(div_rows), "splits rows:", len(split_rows))
+          PY
+          test -f data/processed/dividends.csv && head -n 10 data/processed/dividends.csv || true
+          test -f data/processed/splits.csv && head -n 10 data/processed/splits.csv || true
+
+      # -------------------- Equity MASTER (RAW Merge, keine Scores) ----------
+      - name: Build Equity MASTER (raw merge)
+        run: |
+          cat > scripts/build_equity_master.py << 'PY'
+          #!/usr/bin/env python3
+          import os, json, pandas as pd
+          PROC, DOCS = "data/processed", "docs"
+          def rd_csv(*c):
+              for p in c:
+                  if p and os.path.exists(p):
+                      try: return pd.read_csv(p, compression="infer")
+                      except: pass
+              return None
+          def rd_json(*c):
+              for p in c:
+                  if p and os.path.exists(p):
+                      try:
+                          j=json.load(open(p,"r",encoding="utf-8"))
+                          if isinstance(j,list): return pd.DataFrame(j)
+                          if isinstance(j,dict):
+                              return pd.DataFrame(j.get("items",[])) if "items" in j else pd.DataFrame([j])
+                      except: pass
+              return None
+          def norm(df):
+              if df is not None and "symbol" in df.columns:
+                  df["symbol"]=df["symbol"].astype(str).str.upper().str.strip()
+              return df
+          def left(m,df,cols=None,ren=None):
+              if df is None or df.empty: return m
+              if ren: df=df.rename(columns=ren)
+              if cols: df=df[[c for c in cols if c in df.columns]].copy()
+              return m.merge(df, how="left", on="symbol")
+          def build(out):
+              sets=[]
+              dirsig = norm(rd_csv(f"{PROC}/direction_signal.csv", f"{PROC}/direction_signal.csv.gz"));  sets+=[dirsig[["symbol"]]] if dirsig is not None else []
+              optsig = norm(rd_csv(f"{PROC}/options_signals.csv", f"{PROC}/options_signals.csv.gz"));  sets+=[optsig[["symbol"]]] if optsig is not None else []
+              bystrk = norm(rd_csv(f"{PROC}/options_oi_by_strike.csv", f"{PROC}/options_oi_by_strike.csv.gz")); sets+=[bystrk[["symbol"]]] if bystrk is not None else []
+              hv     = norm(rd_csv(f"{PROC}/hv_summary.csv", f"{PROC}/hv_summary.csv.gz"));               sets+=[hv[["symbol"]]] if hv is not None else []
+              fnda   = norm(rd_csv(f"{PROC}/fundamentals_core.csv", f"{PROC}/fundamentals_core.csv.gz")); sets+=[fnda[["symbol"]]] if fnda is not None else []
+              cds    = norm(rd_csv(f"{PROC}/cds_proxy.csv", f"{PROC}/cds_proxy.csv.gz", f"{PROC}/cds_proxy_v3.csv", f"{PROC}/cds_proxy_v3.csv.gz")); sets+=[cds[["symbol"]]] if cds is not None else []
+              rev    = norm(rd_csv(f"{PROC}/revisions.csv", f"{PROC}/revisions.csv.gz"))
+              earn   = norm(rd_json(f"{DOCS}/earnings_next.json", f"{DOCS}/earnings_next.json.gz"))
+              si     = norm(rd_csv(f"{PROC}/short_interest.csv", f"{PROC}/short_interest.csv.gz"))
+              peers  = norm(rd_csv(f"{PROC}/peers.csv", f"{PROC}/peers.csv.gz"))
+              if not sets: raise SystemExit("keine Inputs gefunden")
+              uni = pd.concat([s for s in sets if s is not None], ignore_index=True).drop_duplicates()
+              master = uni.drop_duplicates("symbol").copy()
+              if dirsig is not None:
+                  ren={"focus_strike_7":"fs7","focus_strike_30":"fs30","focus_strike_60":"fs60"}
+                  master = left(master, dirsig, cols=[c for c in ["symbol","dir","strength","next_expiry","nearest_dte","focus_strike_7","focus_strike_30","focus_strike_60"] if c in dirsig.columns], ren=ren)
+              if optsig is not None:
+                  ren={"direction":"dir"}
+                  cols=[c for c in ["symbol","dir","strength","expiry","strike","direction"] if c in optsig.columns]
+                  master = left(master, optsig, cols=cols, ren=ren)
+              if bystrk is not None:
+                  bs = bystrk.copy()
+                  if "focus_strike" in bs.columns: bs=bs.rename(columns={"focus_strike":"focus_strike_general"})
+                  cols=[c for c in ["symbol","focus_strike_general","expiry","dte"] if c in bs.columns]
+                  master = left(master, bs, cols=cols)
+              if hv is not None:
+                  hv=hv.rename(columns={c:c.lower() for c in hv.columns})
+                  cols=[c for c in ["symbol","hv10","hv20","hv30","hv60"] if c in hv.columns]
+                  master = left(master, hv, cols=cols)
+              if fnda is not None:
+                  keep=[c for c in ["symbol","name","sector","industry","currency","marketcap","sharesoutstanding","pe","pb","ps","ev_ebitda","beta"] if c in fnda.columns]
+                  master = left(master, fnda, cols=keep)
+              if earn is not None:
+                  ren={"next_date":"earnings_next"} if "next_date" in earn.columns else None
+                  cols=[c for c in ["symbol","earnings_next","next_date"] if c in earn.columns]
+                  master = left(master, earn, cols=cols, ren=ren)
+              if cds is not None:
+                  ren={"proxy_spread":"cds_proxy"} if "proxy_spread" in cds.columns else None
+                  cols=[c for c in ["symbol","cds_proxy","proxy_spread"] if c in cds.columns]
+                  master = left(master, cds, cols=cols, ren=ren)
+              if rev is not None:
+                  keep=[c for c in ["symbol","eps_rev_3m","rev_rev_3m","eps_surprise","rev_surprise"] if c in rev.columns]
+                  master = left(master, rev, cols=keep)
+              if si is not None:
+                  keep=[c for c in ["symbol","si_date","si_shares","float_shares","si_pct_float","borrow_rate","borrow_avail"] if c in si.columns]
+                  master = left(master, si, cols=keep)
+              if peers is not None and "peer" in peers.columns:
+                  pc = peers.groupby("symbol")["peer"].nunique().reset_index().rename(columns={"peer":"peers_count"})
+                  master = left(master, pc, cols=["symbol","peers_count"])
+              master.to_csv(out, index=False)
+              print("✅ wrote", out, "rows", len(master), "cols", len(master.columns))
+          if __name__=="__main__":
+              build_out = os.getenv("OUT","data/processed/equity_master.csv")
+              build(build_out)
+          PY
+          python scripts/build_equity_master.py
+          test -s data/processed/equity_master.csv || (echo "equity_master leer!" && exit 1)
+          head -n 20 data/processed/equity_master.csv || true
+
+      # -------------------- RiskIndex snapshot & timeseries -------------------
       - name: Build RiskIndex snapshot & timeseries
         run: |
           python scripts/build_riskindex.py
@@ -353,6 +851,48 @@ jobs:
           for f in docs/*.{json,csv}; do [ -f "$f" ] && gzip -f -9 "$f" || true; done
           echo "== processed after gzip =="; ls -lh data/processed || true
           echo "== docs after gzip =="; ls -lh docs || true
+
+      # -------------------- DAILY SNAPSHOTS ARCHIVIEREN ----------------------
+      - name: Archive daily snapshots to data/history
+        shell: bash
+        run: |
+          set -e
+          ts=$(date -u +%F)
+          dest="data/history/$ts"
+          mkdir -p "$dest"
+          copy() { [ -f "$1" ] && cp -f "$1" "$dest/"; }
+          # Wichtige Dateien konservieren
+          copy data/processed/equity_master.csv.gz
+          copy data/processed/options_signals.csv.gz
+          copy data/processed/direction_signal.csv.gz
+          copy data/processed/options_oi_by_expiry.csv.gz
+          copy data/processed/options_oi_by_strike.csv.gz
+          copy data/processed/options_oi_totals.csv.gz
+          copy data/processed/short_interest.csv.gz
+          copy data/processed/insider_tx.csv.gz
+          copy data/processed/fund_ownership.csv.gz
+          copy data/processed/financials_timeseries.csv.gz
+          copy data/processed/company_news.ndjson.gz
+          copy data/processed/hv_summary.csv.gz
+          copy data/processed/fred_core.csv.gz
+          copy data/processed/fred_oas.csv.gz
+          copy data/processed/market_core.csv.gz
+          copy data/processed/cds_proxy.csv.gz
+          copy data/processed/revisions.csv.gz
+          copy data/processed/dividends.csv.gz
+          copy data/processed/splits.csv.gz
+          echo "archived to $dest:"
+          ls -lh "$dest" || true
+
+      # Wenn kein R2 konfiguriert ist → processed als Artifact sichern
+      - name: Upload processed (artifact when no R2)
+        if: ${{ !(env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: processed-gz
+          path: |
+            data/processed/**/*.gz
+            data/history/**/*.gz
 
       # ===================== R2 UPLOADS (ein Bucket) ====================
       - name: Sync .gz (processed & docs) to R2
@@ -377,6 +917,7 @@ jobs:
           no_check_bucket = true
           EOF
           rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
+          rclone sync data/history   "r2:${CF_R2_BUCKET}/data/history"   --config rclone.conf --s3-no-check-bucket -v --include "**/*.gz" --exclude "*"
           rclone sync docs           "r2:${CF_R2_BUCKET}/docs"           --config rclone.conf --s3-no-check-bucket -v --include "*.gz" --exclude "*"
 
       # ===================== REPO AUFRÄUMEN & COMMIT ========================
@@ -397,21 +938,30 @@ jobs:
           manifest = {
             "base": base,
             "datasets": {
-              "cot_20y_disagg":       "/data/processed/cot_20y_disagg.csv.gz",
-              "cot_20y_tff":          "/data/processed/cot_20y_tff.csv.gz",
-              "options_by_expiry":    "/data/processed/options_oi_by_expiry.csv.gz",
-              "options_totals":       "/data/processed/options_oi_totals.csv.gz",
-              "options_by_strike":    "/data/processed/options_oi_by_strike.csv.gz",
-              "options_strike_max":   "/data/processed/options_oi_strike_max.csv.gz",
-              "options_signals":      "/data/processed/options_signals.csv.gz",
-              "direction_signal":     "/data/processed/direction_signal.csv.gz",
-              "fred_core":            "/data/processed/fred_core.csv.gz",
-              "fred_oas":             "/data/processed/fred_oas.csv.gz",
-              "market_core":          "/data/processed/market_core.csv.gz",
-              "hv_summary":           "/data/processed/hv_summary.csv.gz",
-              "cds_proxy":            "/data/processed/cds_proxy.csv.gz",
-              "riskindex_snapshot":   "/data/processed/riskindex_snapshot.json.gz",
-              "riskindex_timeseries": "/data/processed/riskindex_timeseries.csv.gz"
+              "cot_20y_disagg":        "/data/processed/cot_20y_disagg.csv.gz",
+              "cot_20y_tff":           "/data/processed/cot_20y_tff.csv.gz",
+              "options_by_expiry":     "/data/processed/options_oi_by_expiry.csv.gz",
+              "options_totals":        "/data/processed/options_oi_totals.csv.gz",
+              "options_by_strike":     "/data/processed/options_oi_by_strike.csv.gz",
+              "options_strike_max":    "/data/processed/options_oi_strike_max.csv.gz",
+              "options_signals":       "/data/processed/options_signals.csv.gz",
+              "direction_signal":      "/data/processed/direction_signal.csv.gz",
+              "short_interest":        "/data/processed/short_interest.csv.gz",
+              "insider_tx":            "/data/processed/insider_tx.csv.gz",
+              "fund_ownership":        "/data/processed/fund_ownership.csv.gz",
+              "financials_timeseries": "/data/processed/financials_timeseries.csv.gz",
+              "company_news":          "/data/processed/company_news.ndjson.gz",
+              "peers":                 "/data/processed/peers.csv.gz",
+              "dividends":             "/data/processed/dividends.csv.gz",
+              "splits":                "/data/processed/splits.csv.gz",
+              "fred_core":             "/data/processed/fred_core.csv.gz",
+              "fred_oas":              "/data/processed/fred_oas.csv.gz",
+              "market_core":           "/data/processed/market_core.csv.gz",
+              "hv_summary":            "/data/processed/hv_summary.csv.gz",
+              "cds_proxy":             "/data/processed/cds_proxy.csv.gz",
+              "equity_master":         "/data/processed/equity_master.csv.gz",
+              "riskindex_snapshot":    "/data/processed/riskindex_snapshot.json.gz",
+              "riskindex_timeseries":  "/data/processed/riskindex_timeseries.csv.gz"
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)
@@ -427,7 +977,7 @@ jobs:
           git add data/ docs/ \
             ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
             ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (No LLM) + RiskIndex + CDS/HV/COT/OAS + deploy datasets manifest" || echo "Nothing to commit"
+          git commit -m "Nightly cache update (No LLM) + RAW data expansion (SI/Insider/Fund/Financials/Peers/News/Div&Splits) + Equity MASTER + RiskIndex/CDS/HV/COT/OAS + History" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

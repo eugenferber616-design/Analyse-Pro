@@ -738,7 +738,7 @@ jobs:
 
           def rd_json(*c):
               for p in c:
-                  if p and os.path.exists(p):
+                  if os.path.exists(p):
                       try:
                           j = json.load(open(p, "r", encoding="utf-8"))
                           if isinstance(j, list):
@@ -875,21 +875,35 @@ jobs:
               # ---------- options_oi_totals (Summe über alle Verfälle) ----------
               if opttot is not None and not opttot.empty:
                   t = opttot.copy()
-                  if "call_oi" in t.columns:
-                      t["call_oi"] = pd.to_numeric(t["call_oi"], errors="coerce")
-                  if "put_oi" in t.columns:
-                      t["put_oi"] = pd.to_numeric(t["put_oi"], errors="coerce")
-                  agg = t.groupby("symbol", as_index=False).agg({
-                      "call_oi":"sum",
-                      "put_oi":"sum"
-                  })
-                  agg = agg.rename(columns={
-                      "call_oi":"tot_call_oi_all",
-                      "put_oi":"tot_put_oi_all"
-                  })
-                  if "tot_call_oi_all" in agg.columns and "tot_put_oi_all" in agg.columns:
-                      agg["tot_put_call_ratio_all"] = agg["tot_put_oi_all"] / agg["tot_call_oi_all"].replace(0, pd.NA)
-                  master = left(master, agg, cols=agg.columns.tolist())
+                  cl = {c.lower(): c for c in t.columns}
+
+                  call_candidates = ["call_oi","total_call_oi","call_oi_all","calloi","call_oi_total"]
+                  put_candidates  = ["put_oi","total_put_oi","put_oi_all","putoi","put_oi_total"]
+
+                  call_col = next((cl[x] for x in call_candidates if x in cl), None)
+                  put_col  = next((cl[x] for x in put_candidates  if x in cl), None)
+
+                  if call_col and put_col:
+                      t[call_col] = pd.to_numeric(t[call_col], errors="coerce")
+                      t[put_col]  = pd.to_numeric(t[put_col],  errors="coerce")
+
+                      if "symbol" in t.columns and t["symbol"].nunique() < len(t):
+                          agg = t.groupby("symbol", as_index=False).agg({
+                              call_col: "sum",
+                              put_col:  "sum",
+                          })
+                      else:
+                          agg = t[["symbol", call_col, put_col]].drop_duplicates("symbol")
+
+                      agg = agg.rename(columns={
+                          call_col: "tot_call_oi_all",
+                          put_col:  "tot_put_oi_all",
+                      })
+                      if "tot_call_oi_all" in agg.columns and "tot_put_oi_all" in agg.columns:
+                          agg["tot_put_call_ratio_all"] = agg["tot_put_oi_all"] / agg["tot_call_oi_all"].replace(0, pd.NA)
+
+                      master = left(master, agg, cols=agg.columns.tolist())
+                  # wenn keine passenden Spalten gefunden wurden: einfach überspringen
 
               # ---------- HV ----------------------------------------------------
               if hv is not None:
@@ -978,6 +992,7 @@ jobs:
           python scripts/build_equity_master.py
           test -s data/processed/equity_master.csv || (echo "equity_master leer!" && exit 1)
           head -n 20 data/processed/equity_master.csv || true
+
 
 
       # -------------------- RiskIndex snapshot & timeseries -------------------

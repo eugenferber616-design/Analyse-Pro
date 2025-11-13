@@ -532,13 +532,6 @@ jobs:
           if __name__=="__main__": main()
           PY
 
-      - name: Fetch financial statements timeseries (Finnhub)
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-        run: |
-          python scripts/fetch_financials_ts.py
-          head -n 10 data/processed/financials_timeseries.csv || true
 
       # -------------------- PEERS (für Wettbewerbsvergleich) ------------------
       - name: Create scripts/fetch_peers.py
@@ -847,7 +840,16 @@ jobs:
           ts=$(date -u +%F)
           dest="data/history/$ts"
           mkdir -p "$dest"
-          copy() { [ -f "$1" ] && cp -f "$1" "$dest/"; }
+
+          copy() {
+            local f="$1"
+            if [ -f "$f" ]; then
+              cp -f "$f" "$dest/"
+            else
+              echo "skip missing $f"
+            fi
+          }
+
           # Wichtige Dateien konservieren
           copy data/processed/equity_master.csv.gz
           copy data/processed/options_signals.csv.gz
@@ -858,8 +860,6 @@ jobs:
           copy data/processed/short_interest.csv.gz
           copy data/processed/insider_tx.csv.gz
           copy data/processed/fund_ownership.csv.gz
-          copy data/processed/financials_timeseries.csv.gz
-          copy data/processed/company_news.ndjson.gz
           copy data/processed/hv_summary.csv.gz
           copy data/processed/fred_core.csv.gz
           copy data/processed/fred_oas.csv.gz
@@ -868,8 +868,10 @@ jobs:
           copy data/processed/revisions.csv.gz
           copy data/processed/dividends.csv.gz
           copy data/processed/splits.csv.gz
+
           echo "archived to $dest:"
           ls -lh "$dest" || true
+
 
       # Wenn kein R2 konfiguriert ist → processed als Artifact sichern
       - name: Upload processed (artifact when no R2)
@@ -936,7 +938,6 @@ jobs:
               "short_interest":        "/data/processed/short_interest.csv.gz",
               "insider_tx":            "/data/processed/insider_tx.csv.gz",
               "fund_ownership":        "/data/processed/fund_ownership.csv.gz",
-              "financials_timeseries": "/data/processed/financials_timeseries.csv.gz",
               "company_news":          "/data/processed/company_news.ndjson.gz",
               "peers":                 "/data/processed/peers.csv.gz",
               "dividends":             "/data/processed/dividends.csv.gz",

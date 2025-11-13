@@ -585,13 +585,6 @@ jobs:
           python scripts/fetch_peers.py
           head -n 10 data/processed/peers.csv || true
 
-      - name: Fetch company news (Finnhub → NDJSON)
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-        run: |
-          python scripts/fetch_company_news.py
-          head -n 5 data/processed/company_news.ndjson || true
 
       # -------------------- COT 20y Pulls ---------------------------
       - name: Pull COT 20y – Disaggregated (F+O Combined)

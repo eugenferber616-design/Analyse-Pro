@@ -31,8 +31,8 @@ ALIASES = {
     # Börsen / Schreibweisen
     "COMEX": ["COMEX", "COMMODITY EXCHANGE INC"],
     "NYMEX": ["NYMEX", "NEW YORK MERCANTILE EXCHANGE"],
-    "CBOT":  ["CBOT", "CHICAGO BOARD OF TRADE"],
-    "KCBT":  ["KANSAS CITY BOARD OF TRADE", "KANSAS CITY B O T"],
+    "CBOT":  ["CHICAGO BOARD OF TRADE", "CBOT"],
+    "KCBT":  ["KANSAS CITY BOARD OF TRADE", "KANSAS CITY B O T", "KCBT"],
     "MGEX":  ["MINNEAPOLIS GRAIN EXCHANGE", "MGE", "MGEX"],
     "CFE":   ["CBOE FUTURES EXCHANGE", "CFE", "CBOE FUTURES EXCH"],
     "CME":   ["CHICAGO MERCANTILE EXCHANGE", "CME"],
@@ -43,32 +43,37 @@ ALIASES = {
     "WHEAT_HRS": ["HARD RED SPRING WHEAT", "HRS"],
     "COPPER":    ["COPPER", "COPPER, HIGH GRADE"],
 
-    # --- NEU: Energie-Familien ---
-    "CRUDE_OIL": [
+    # --- NEU: Energy-Familien für robustes Matching (WTI/RBOB/Heating/NatGas) ---
+    # WTI / Crude Oil (Light Sweet)
+    "CRUDE_OIL_WTI": [
         "CRUDE OIL",
-        "LIGHT SWEET CRUDE OIL",
+        "CRUDE OIL LIGHT SWEET",
         "CRUDE OIL, LIGHT SWEET",
         "WTI CRUDE OIL",
-        "WTI LIGHT SWEET CRUDE OIL"
+        "LIGHT SWEET CRUDE OIL",
+        "WTI CRUDE"
     ],
-    "NAT_GAS": [
+    # Natural Gas
+    "NATGAS": [
         "NATURAL GAS",
-        "HENRY HUB NATURAL GAS"
+        "HENRY HUB NATURAL GAS",
+        "NATURAL GAS HENRY HUB"
     ],
-    "RBOB": [
+    # RBOB Gasoline
+    "RBOB_GASOLINE": [
         "RBOB GASOLINE",
-        "REFORMULATED GASOLINE BLENDSTOCK FOR OXYGENATE BLENDING"
+        "GASOLINE RBOB",
+        "RBOB UNLEADED GASOLINE",
+        "RBOB"
     ],
-    "HEAT_OIL": [
+    # Heating Oil / ULSD
+    "HEATING_OIL": [
         "HEATING OIL",
-        "ULTRA LOW SULFUR DIESEL",
-        "NY HARBOR ULSD"
-    ],
-    "BRENT": [
-        "BRENT CRUDE OIL",
-        "BRENT CRUDE OIL LAST DAY",
-        "BRENT CRUDE OIL - ICE FUTURES EUROPE",
-        "NORTH SEA BRENT CRUDE OIL"
+        "HEATING OIL NY HARBOR",
+        "HEATING OIL- NY HARBOR ULSD",
+        "ULSD NY HARBOR",
+        "ULSD NYH",
+        "ULSD"
     ],
 }
 
@@ -94,7 +99,8 @@ def make_session():
     )
     s.mount("https://", HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10))
     headers = {"Accept":"application/json"}
-    if APP_TOKEN: headers["X-App-Token"] = APP_TOKEN
+    if APP_TOKEN:
+        headers["X-App-Token"] = APP_TOKEN
     s.headers.update(headers)
     return s
 
@@ -107,11 +113,13 @@ def sget(url, params):
 
 # -------- Helfer --------
 def read_lines(path):
-    if not os.path.exists(path): return []
+    if not os.path.exists(path):
+        return []
     with open(path, "r", encoding="utf-8") as f:
         return [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith(("#","//"))]
 
-def soql_quote(s): return "'" + s.replace("'", "''") + "'"
+def soql_quote(s):
+    return "'" + s.replace("'", "''") + "'"
 
 def like_expr(token):
     t = token.upper()
@@ -119,20 +127,21 @@ def like_expr(token):
 
 def expand_aliases(raw_line):
     """
-    Nimmt z.B. 'COPPER - COMMODITY EXCHANGE INC.' oder
-    'CRUDE OIL, LIGHT SWEET - NEW YORK MERCANTILE EXCHANGE'
-    und baut Variantenlisten.
+    Nimmt z.B. 'COPPER - COMMODITY EXCHANGE INC.' und baut Variantenlisten.
     -> Rückgabe: Liste von Tokenlisten; jede Tokenliste wird mit AND verknüpft.
+
+    NEU: robuste Energy-Logik:
+      - CRUDE OIL / WTI → ALIASES['CRUDE_OIL_WTI']
+      - NATURAL GAS     → ALIASES['NATGAS']
+      - RBOB GASOLINE   → ALIASES['RBOB_GASOLINE']
+      - HEATING OIL     → ALIASES['HEATING_OIL']
     """
     line = raw_line.upper()
     parts = [p.strip() for p in line.split(" - ", 1)]
-    material = parts[0]                     # z.B. "CRUDE OIL, LIGHT SWEET"
+    material = parts[0]
     exch = parts[1] if len(parts) > 1 else ""
 
-    # Material minimalisieren (alles nach dem ersten Komma abschneiden)
-    base_mat = material.split(",", 1)[0].strip()  # "CRUDE OIL, LIGHT SWEET" -> "CRUDE OIL"
-
-    # --- Material-Varianten / Familien ---
+    # ---- Material-Varianten ----
     if "WHEAT" in material:
         if "HARD RED WINTER" in material:
             mats = ALIASES["WHEAT_HRW"]
@@ -142,37 +151,43 @@ def expand_aliases(raw_line):
             mats = ALIASES["WHEAT_SRW"]
     elif "COPPER" in material:
         mats = ALIASES["COPPER"]
-    elif "CRUDE OIL" in material and "SOYBEAN" not in material:
-        # WTI / Light Sweet Crude etc.
-        mats = ALIASES["CRUDE_OIL"]
-    elif "NATURAL GAS" in material:
-        mats = ALIASES["NAT_GAS"]
-    elif "RBOB" in material or "GASOLINE" in material:
-        mats = ALIASES["RBOB"]
-    elif "HEATING OIL" in material or "ULTRA LOW SULFUR" in material or "ULSD" in material:
-        mats = ALIASES["HEAT_OIL"]
-    elif "BRENT" in material:
-        mats = ALIASES["BRENT"]
-    else:
-        # Fallback: generischer Basis-Name (z.B. "SOYBEAN OIL", "COCOA")
-        mats = [base_mat]
 
-    # --- Exchange-Varianten ---
+    # --- NEU: Energy-Mapping ---
+    elif "CRUDE OIL" in material or "WTI" in material:
+        # z.B. "CRUDE OIL, LIGHT SWEET", "WTI CRUDE OIL"
+        mats = ALIASES["CRUDE_OIL_WTI"]
+    elif "NATURAL GAS" in material or "NAT GAS" in material or "NATURAL GAS" in line:
+        mats = ALIASES["NATGAS"]
+    elif "RBOB" in material or "GASOLINE" in material:
+        # z.B. "RBOB GASOLINE", "GASOLINE RBOB"
+        mats = ALIASES["RBOB_GASOLINE"]
+    elif "HEATING OIL" in material or "ULSD" in material:
+        mats = ALIASES["HEATING_OIL"]
+    else:
+        # Fallback: direkt den Material-String benutzen
+        mats = [material]
+
+    # ---- Exchange-Varianten ----
     exchs = []
     for key in ("COMEX","NYMEX","CBOT","KCBT","MGEX","CFE","CME"):
-        if key in exch or any(x in exch for x in ALIASES[key]):
-            exchs = ALIASES[key]
+        alias_list = ALIASES.get(key, [])
+        if key in exch or any(x in exch for x in alias_list):
+            exchs = alias_list
             break
+
     if not exchs and exch:
+        # keine bekannte Exchange-Familie erkannt → original-Exchange als Token
         exchs = [exch]
     if not exchs:
-        exchs = [""]  # keine Exchange-Bindung
+        # komplett ohne Exchange-Bindung (nur Material)
+        exchs = [""]
 
     combos = []
     for m in mats:
         for e in exchs:
-            tokens = [m] + ([e] if e else [])
-            combos.append([t for t in tokens if t])
+            tokens = [t for t in [m, e] if t]
+            if tokens:
+                combos.append(tokens)
     return combos
 
 def build_where_any_of(combos):
@@ -195,7 +210,13 @@ def chunk_date_ranges(start_date, end_date, chunk_years):
     cur_from = _to_date(start_date)
     end_date = _to_date(end_date)
     while cur_from <= end_date:
-        nxt = cur_from.replace(year=cur_from.year + chunk_years)
+        year = cur_from.year + chunk_years
+        # Bei 29.02. auf nicht-Schaltjahr aufpassen
+        try:
+            nxt = cur_from.replace(year=year)
+        except ValueError:
+            # 29.02. → 28.02. im Zieljahr
+            nxt = cur_from.replace(year=year, day=28)
         if nxt > end_date:
             nxt = end_date
         out.append((cur_from, nxt))
@@ -211,7 +232,7 @@ def fetch_range(dataset_id, date_from, date_to, mode, markets, chunk_years, batc
     rows_all = []
     # Datumschunks (500s/503s vermeiden)
     for d_from, d_to in chunk_date_ranges(date_from, date_to, chunk_years):
-        base = f"report_date_as_yyyy_mm_dd between '{d_from}' and '{d_to}'"  # date → ISO-String
+        base = f"report_date_as_yyyy_mm_dd between '{d_from}' and '{d_to}'"
         if mode == "ALL":
             where = base
             rows_all += _paged_pull(dataset_id, where)
@@ -235,12 +256,18 @@ def fetch_range(dataset_id, date_from, date_to, mode, markets, chunk_years, batc
 
 def _paged_pull(dataset_id, where):
     acc, offset = [], 0
-    params_base = {"$where": where, "$order": "report_date_as_yyyy_mm_dd ASC", "$limit": SOC_LIMIT}
+    params_base = {
+        "$where": where,
+        "$order": "report_date_as_yyyy_mm_dd ASC",
+        "$limit": SOC_LIMIT,
+    }
     while True:
         chunk = sget(f"{API_BASE}/{dataset_id}.json", dict(params_base, **{"$offset": offset}))
-        if not chunk: break
+        if not chunk:
+            break
         acc += chunk
-        if len(chunk) < SOC_LIMIT: break
+        if len(chunk) < SOC_LIMIT:
+            break
         offset += SOC_LIMIT
         time.sleep(0.12)  # höflich bleiben
     return acc
@@ -281,13 +308,15 @@ def main():
 
     rep = {
         "ts": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "dataset": args.dataset, "years": args.years, "mode": args.mode,
+        "dataset": args.dataset,
+        "years": args.years,
+        "mode": args.mode,
         "rows": int(len(df)),
         "date_from": str(date_from),
         "date_to": str(date_to),
         "watchlist": (len(markets or [])),
         "chunk_years": args.chunk_years,
-        "batch_markets": args.batch_markets
+        "batch_markets": args.batch_markets,
     }
     os.makedirs("data/reports", exist_ok=True)
     with open("data/reports/cot_20y_report.json","w",encoding="utf-8") as f:

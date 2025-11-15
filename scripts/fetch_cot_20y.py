@@ -42,6 +42,34 @@ ALIASES = {
     "WHEAT_HRW": ["HARD RED WINTER WHEAT", "HRW"],
     "WHEAT_HRS": ["HARD RED SPRING WHEAT", "HRS"],
     "COPPER":    ["COPPER", "COPPER, HIGH GRADE"],
+
+    # --- NEU: Energie-Familien ---
+    "CRUDE_OIL": [
+        "CRUDE OIL",
+        "LIGHT SWEET CRUDE OIL",
+        "CRUDE OIL, LIGHT SWEET",
+        "WTI CRUDE OIL",
+        "WTI LIGHT SWEET CRUDE OIL"
+    ],
+    "NAT_GAS": [
+        "NATURAL GAS",
+        "HENRY HUB NATURAL GAS"
+    ],
+    "RBOB": [
+        "RBOB GASOLINE",
+        "REFORMULATED GASOLINE BLENDSTOCK FOR OXYGENATE BLENDING"
+    ],
+    "HEAT_OIL": [
+        "HEATING OIL",
+        "ULTRA LOW SULFUR DIESEL",
+        "NY HARBOR ULSD"
+    ],
+    "BRENT": [
+        "BRENT CRUDE OIL",
+        "BRENT CRUDE OIL LAST DAY",
+        "BRENT CRUDE OIL - ICE FUTURES EUROPE",
+        "NORTH SEA BRENT CRUDE OIL"
+    ],
 }
 
 # -------- Argumente --------
@@ -91,29 +119,50 @@ def like_expr(token):
 
 def expand_aliases(raw_line):
     """
-    Nimmt z.B. 'COPPER - COMMODITY EXCHANGE INC.' und baut Variantenlisten.
+    Nimmt z.B. 'COPPER - COMMODITY EXCHANGE INC.' oder
+    'CRUDE OIL, LIGHT SWEET - NEW YORK MERCANTILE EXCHANGE'
+    und baut Variantenlisten.
     -> Rückgabe: Liste von Tokenlisten; jede Tokenliste wird mit AND verknüpft.
     """
     line = raw_line.upper()
     parts = [p.strip() for p in line.split(" - ", 1)]
-    material = parts[0]
+    material = parts[0]                     # z.B. "CRUDE OIL, LIGHT SWEET"
     exch = parts[1] if len(parts) > 1 else ""
 
-    # Material-Varianten
+    # Material minimalisieren (alles nach dem ersten Komma abschneiden)
+    base_mat = material.split(",", 1)[0].strip()  # "CRUDE OIL, LIGHT SWEET" -> "CRUDE OIL"
+
+    # --- Material-Varianten / Familien ---
     if "WHEAT" in material:
-        if "HARD RED WINTER" in material: mats = ALIASES["WHEAT_HRW"]
-        elif "HARD RED SPRING" in material: mats = ALIASES["WHEAT_HRS"]
-        else: mats = ALIASES["WHEAT_SRW"]
+        if "HARD RED WINTER" in material:
+            mats = ALIASES["WHEAT_HRW"]
+        elif "HARD RED SPRING" in material:
+            mats = ALIASES["WHEAT_HRS"]
+        else:
+            mats = ALIASES["WHEAT_SRW"]
     elif "COPPER" in material:
         mats = ALIASES["COPPER"]
+    elif "CRUDE OIL" in material and "SOYBEAN" not in material:
+        # WTI / Light Sweet Crude etc.
+        mats = ALIASES["CRUDE_OIL"]
+    elif "NATURAL GAS" in material:
+        mats = ALIASES["NAT_GAS"]
+    elif "RBOB" in material or "GASOLINE" in material:
+        mats = ALIASES["RBOB"]
+    elif "HEATING OIL" in material or "ULTRA LOW SULFUR" in material or "ULSD" in material:
+        mats = ALIASES["HEAT_OIL"]
+    elif "BRENT" in material:
+        mats = ALIASES["BRENT"]
     else:
-        mats = [material]
+        # Fallback: generischer Basis-Name (z.B. "SOYBEAN OIL", "COCOA")
+        mats = [base_mat]
 
-    # Exchange-Varianten
+    # --- Exchange-Varianten ---
     exchs = []
     for key in ("COMEX","NYMEX","CBOT","KCBT","MGEX","CFE","CME"):
         if key in exch or any(x in exch for x in ALIASES[key]):
-            exchs = ALIASES[key]; break
+            exchs = ALIASES[key]
+            break
     if not exchs and exch:
         exchs = [exch]
     if not exchs:

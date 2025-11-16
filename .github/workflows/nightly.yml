@@ -296,75 +296,206 @@ jobs:
           print("saved", len([f for f in os.listdir('data/prices') if f.endswith('.csv')]), "files to data/prices")
           PY
 
-      # -------------------- SHORT INTEREST (Rohdaten) -------------------------
+      # -------------------- SHORT INTEREST (Rohdaten via Website) -----------#
       - name: Create scripts/fetch_short_interest.py
         run: |
           cat > scripts/fetch_short_interest.py <<'PY'
-          import os, time, json, pandas as pd, requests
-          from datetime import datetime, timedelta
-          BASE="https://finnhub.io/api/v1"
-          TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+          import os
+          import time
+          import json
+          from datetime import datetime
+          from typing import List, Dict, Any
 
-          def q(url, params):
-              params = dict(params or {})
-              if TOKEN: params["token"]=TOKEN
-              for i in range(3):
-                  try:
-                      r = requests.get(url, params=params, timeout=30)
-                      if r.status_code==200: return r.json()
-                  except Exception: pass
-                  time.sleep(1+2*i)
-              return None
+          import requests
+          import pandas as pd
 
-          def read_symbols(p):
-              if not p or not os.path.exists(p): return []
-              df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
-              return [str(x).strip().upper() for x in df[col].dropna().tolist()]
+
+          BASE_URL = "https://iborrowdesk.com/api/ticker/"
+          OUT_PATH = "data/processed/short_interest.csv"
+
+
+          def read_watchlist_csv(path: str) -> List[str]:
+              if not path or not os.path.exists(path):
+                  return []
+              df = pd.read_csv(path)
+              col = "symbol" if "symbol" in df.columns else df.columns[0]
+              return (
+                  df[col]
+                  .dropna()
+                  .astype(str)
+                  .str.upper()
+                  .str.strip()
+                  .tolist()
+              )
+
+
+          def read_watchlist_txt(path: str) -> List[str]:
+              if not path or not os.path.exists(path):
+                  return []
+              out = []
+              with open(path, "r", encoding="utf-8") as f:
+                  for line in f:
+                      s = line.strip()
+                      if not s:
+                          continue
+                      if s.lower().startswith("symbol"):
+                          continue
+                      out.append(s.upper())
+              return out
+
+
+          def build_universe() -> List[str]:
+              wl_stocks = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.csv")
+              wl_etf    = os.getenv("WATCHLIST_ETF",    "watchlists/etf_sample.txt")
+
+              universe = set()
+
+              if wl_stocks.endswith(".txt"):
+                  universe.update(read_watchlist_txt(wl_stocks))
+              else:
+                  universe.update(read_watchlist_csv(wl_stocks))
+
+              if wl_etf.endswith(".txt"):
+                  universe.update(read_watchlist_txt(wl_etf))
+              else:
+                  universe.update(read_watchlist_csv(wl_etf))
+
+              return sorted(universe)
+
+
+          def fetch_iborrowdesk(sym: str) -> Dict[str, Any]:
+              """
+              Holt die Borrow-Daten von der Website (JSON-Endpoint).
+              Gibt nur den letzten (aktuellsten) Daily-Datensatz zurück.
+              """
+              url = BASE_URL + sym.upper()
+              headers = {
+                  "User-Agent": (
+                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0 Safari/537.36"
+                  ),
+                  "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
+                  "Referer": "https://www.iborrowdesk.com/",
+              }
+              try:
+                  r = requests.get(url, headers=headers, timeout=20)
+              except Exception as e:
+                  return {
+                      "symbol": sym,
+                      "si_source": "iborrowdesk",
+                      "si_date": None,
+                      "si_shares": None,
+                      "float_shares": None,
+                      "si_pct_float": None,
+                      "borrow_rate": None,
+                      "borrow_avail": None,
+                      "ibd_status": f"error_request:{e}",
+                  }
+
+              if not r.ok:
+                  return {
+                      "symbol": sym,
+                      "si_source": "iborrowdesk",
+                      "si_date": None,
+                      "si_shares": None,
+                      "float_shares": None,
+                      "si_pct_float": None,
+                      "borrow_rate": None,
+                      "borrow_avail": None,
+                      "ibd_status": f"http_{r.status_code}",
+                  }
+
+              try:
+                  j = r.json()
+              except Exception as e:
+                  return {
+                      "symbol": sym,
+                      "si_source": "iborrowdesk",
+                      "si_date": None,
+                      "si_shares": None,
+                      "float_shares": None,
+                      "si_pct_float": None,
+                      "borrow_rate": None,
+                      "borrow_avail": None,
+                      "ibd_status": f"json_error:{e}",
+                  }
+
+              daily = j.get("daily") or []
+              if not daily:
+                  return {
+                      "symbol": sym,
+                      "si_source": "iborrowdesk",
+                      "si_date": None,
+                      "si_shares": None,
+                      "float_shares": None,
+                      "si_pct_float": None,
+                      "borrow_rate": None,
+                      "borrow_avail": None,
+                      "ibd_status": "no_daily_data",
+                  }
+
+              last = daily[-1] or {}
+              # Fallbacks
+              date  = last.get("date")
+              avail = last.get("available")
+              fee   = last.get("fee")
+              rebate = last.get("rebate")
+
+              row = {
+                  "symbol": sym,
+                  "si_source": "iborrowdesk",
+                  "si_date": date,
+                  # klassisches Short Interest / Float haben wir hier NICHT
+                  "si_shares": None,
+                  "float_shares": None,
+                  "si_pct_float": None,
+                  # Borrow-Infos
+                  "borrow_rate": fee,        # Jahresgebühr in %
+                  "borrow_avail": avail,     # verfügbare Shares zum Shorten
+                  # Extra-Felder aus iBorrowDesk (optional)
+                  "ibd_rebate": rebate,
+                  "ibd_high_available": last.get("high_available"),
+                  "ibd_low_available": last.get("low_available"),
+                  "ibd_high_fee": last.get("high_fee"),
+                  "ibd_low_fee": last.get("low_fee"),
+                  "ibd_high_rebate": last.get("high_rebate"),
+                  "ibd_low_rebate": last.get("low_rebate"),
+                  "ibd_status": "ok",
+              }
+              return row
+
 
           def main():
-              wl=set(read_symbols(os.getenv("WATCHLIST_STOCKS"))+read_symbols(os.getenv("WATCHLIST_ETF")))
-              out="data/processed/short_interest.csv"
-              os.makedirs("data/processed", exist_ok=True)
-              rows=[]
-              fr=(datetime.utcnow()-timedelta(days=400)).strftime("%Y-%m-%d")
-              to=datetime.utcnow().strftime("%Y-%m-%d")
-              for sym in sorted(wl):
-                  si = q(BASE+"/stock/short-interest", {"symbol":sym, "from":fr, "to":to}) or {}
-                  si_data = si.get("data") if isinstance(si, dict) else None
-                  si_last = (si_data or [{}])[-1] if si_data else {}
-                  br = q(BASE+"/stock/borrow", {"symbol":sym}) or {}
-                  br_last = (br.get("data") or [{}])[-1] if isinstance(br, dict) else {}
-                  fl = q(BASE+"/stock/float", {"symbol":sym}) or {}
-                  float_sh = fl.get("floatShares") if isinstance(fl, dict) else None
-                  si_sh = si_last.get("shortInterest") or si_last.get("short_interest")
-                  si_dt = si_last.get("date") or si_last.get("t")
-                  pct_float = None
-                  try:
-                      if float_sh and si_sh: pct_float = 100.0*float(si_sh)/float(float_sh)
-                  except Exception: pct_float=None
-                  rows.append({
-                      "symbol": sym,
-                      "si_date": si_dt,
-                      "si_shares": si_sh,
-                      "float_shares": float_sh,
-                      "si_pct_float": pct_float,
-                      "borrow_date": br_last.get("date") or br_last.get("t"),
-                      "borrow_rate": br_last.get("rate") or br_last.get("feeRate") or br_last.get("fr"),
-                      "borrow_avail": br_last.get("available") or br_last.get("shares"),
-                  })
-              pd.DataFrame(rows).to_csv(out, index=False)
-              print("wrote", out, "rows", len(rows))
+              os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
+              universe = build_universe()
+              if not universe:
+                  print("Keine Symbole in WATCHLIST_STOCKS / WATCHLIST_ETF gefunden.")
+                  return
 
-          if __name__=="__main__": main()
+              rows = []
+              for i, sym in enumerate(universe, start=1):
+                  print(f"[{i}/{len(universe)}] Hole iBorrowDesk für {sym} …")
+                  row = fetch_iborrowdesk(sym)
+                  rows.append(row)
+                  # kleine Pause um die Website nicht zu stressen
+                  time.sleep(0.3)
+
+              df = pd.DataFrame(rows)
+              df.to_csv(OUT_PATH, index=False)
+              print(f"wrote {OUT_PATH} rows={len(df)}")
+
+
+          if __name__ == "__main__":
+              main()
           PY
 
-      - name: Fetch short interest (Finnhub)
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+      - name: Fetch short interest (iBorrowDesk Website)
         run: |
           python scripts/fetch_short_interest.py
-          head -n 10 data/processed/short_interest.csv || true
+          head -n 20 data/processed/short_interest.csv || true
+
+
 
       # -------------------- INSIDER-TRANSAKTIONEN (Rohdaten) -----------------
       - name: Create scripts/fetch_insider_tx.py

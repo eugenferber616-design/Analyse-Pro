@@ -649,6 +649,14 @@ jobs:
           python scripts/build_cot_energy_coverage.py
           head -n 40 data/reports/cot_energy_coverage.csv || true
 
+      - name: Merge COT Energy into 20y Disagg
+        run: |
+          set -euo pipefail
+          python scripts/merge_cot_energy_into_20y.py
+          echo "== Merged COT 20y Disagg (Socrata + Energy TXT) =="
+          ls -lh data/processed/cot_20y_disagg_merged.csv.gz || true
+          zcat data/processed/cot_20y_disagg_merged.csv.gz | head -n 20 || true
+
 
 
       # -------------------- HV (historische Volatilität) ---------------------

@@ -1,5 +1,5 @@
 {
-  "ts": "2025-11-16T00:09:48.335649Z",
+  "ts": "2025-11-16T01:13:46.703772Z",
   "watchlist": "watchlists/mylist.txt",
   "symbols": 19,
   "ok": 19,
@@ -7,6 +7,6 @@
   "out": "data/processed/hv_summary.csv.gz",
   "preview": "data/reports/hv_preview.txt",
   "yf_fallback": true,
-  "t_sec": 3.78,
+  "t_sec": 3.42,
   "fail": []
 }

@@ -1,35 +1,38 @@
+#!/usr/bin/env python3
 # scripts/build_options_signals.py
-# Erzeugt eine schlanke Signaltabelle für den AgenaTrader-Scanner:
-#   symbol, direction(-1/0/+1), expiry(YYYY-MM-DD), strike, side
 #
-# NEU:
-# - side = "C" (Calls > Puts), "P" (Puts > Calls), "N" (neutral)
+# Erzeugt eine schlanke Signaltabelle für den AgenaTrader-Scanner:
+#   symbol, direction(-1/0/+1), expiry(YYYY-MM-DD), side, focus_strike,
+#   call_strike_top, put_strike_top
 #
 # Logik:
-# - Wähle pro Symbol den Verfall mit dem höchsten total_OI innerhalb des Horizonts.
-# - direction = sign(call_OI - put_OI) am gewählten Verfall.
-# - side      = "C"/"P"/"N" abhängig von direction.
-# - strike    = bei direction>0: Strike mit max(call_oi),
-#               bei direction<0: Strike mit max(put_oi),
-#               sonst NaN; Fallback: strike_max (wenn vorhanden).
+# - Quelle: data/processed/options_oi_summary.csv(.gz)
+# - Pro Symbol den Verfall mit dem höchsten (call_oi + put_oi) wählen.
+# - direction = sign(call_oi - put_oi).
+# - side = "C" (Calls > Puts), "P" (Puts > Calls), "N" (neutral/gleich/keine Daten).
+# - call_strike_top / put_strike_top = erster Wert aus call_top_strikes / put_top_strikes.
+# - focus_strike = call_strike_top, wenn side="C";
+#                  put_strike_top,  wenn side="P";
+#                  sonst NaN.
 #
-# Akzeptiert sowohl .csv als auch .csv.gz.
-# Optional: --with-metrics fügt Diagnosefelder an
-#           (call_oi_expiry, put_oi_expiry, total_oi_expiry).
+# Optional: --with-metrics fügt call_oi_expiry, put_oi_expiry, total_oi_expiry an.
 
-import os
-import sys
-import gzip
 import argparse
+import gzip
+import sys
+from pathlib import Path
+from typing import Tuple, List, Optional
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from typing import Tuple
+
+
+# ----------------------------- Helper ----------------------------------------
 
 def read_csv_auto(path: str) -> pd.DataFrame:
     p = Path(path)
     if not p.exists():
-        # try gz variant
+        # try gz-Variante
         if p.suffix != ".gz" and (p.with_suffix(p.suffix + ".gz")).exists():
             p = p.with_suffix(p.suffix + ".gz")
         elif p.suffix == ".gz" and p.with_suffix("").exists():
@@ -42,244 +45,208 @@ def read_csv_auto(path: str) -> pd.DataFrame:
             return pd.read_csv(f)
     return pd.read_csv(p)
 
+
 def to_num(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
+
 
 def to_dt(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s, errors="coerce")
 
-def coalesce(df: pd.DataFrame, names: Tuple[str, ...]) -> pd.Series:
-    for c in names:
-        if c in df.columns:
-            return df[c]
-    # return empty series if none found
-    return pd.Series(index=df.index, dtype="float64")
 
-def ensure_cols(df: pd.DataFrame):
-    # Normalisiere wichtige Spaltennamen; akzeptiere verschiedene Varianten
+def ensure_cols(df: pd.DataFrame) -> pd.DataFrame:
     if "symbol" not in df.columns:
         df.columns = [str(c).strip() for c in df.columns]
     return df
 
-def pick_best_expiry(byex: pd.DataFrame, horizon_days: int) -> pd.DataFrame:
-    """Wählt pro Symbol den Verfall mit maximalem total_OI innerhalb des Horizonts."""
-    df = byex.copy()
-    df = ensure_cols(df)
 
-    # Alias-Spalten
-    call_col = coalesce(df, ("total_call_oi", "call_oi"))
-    put_col  = coalesce(df, ("total_put_oi", "put_oi"))
-    tot_col  = coalesce(df, ("total_oi",))
-
-    # Casts
-    df["__call"] = to_num(call_col).fillna(0)
-    df["__put"]  = to_num(put_col).fillna(0)
-    df["__tot"]  = to_num(tot_col).fillna(df["__call"] + df["__put"])
-    df["expiry"] = to_dt(df.get("expiry", pd.Series(dtype="datetime64[ns]")))
-    df["symbol"] = df.get("symbol", pd.Series(dtype="object")).astype(str).str.upper().str.strip()
-
-    today = pd.Timestamp.today().normalize()
-    df = df[df["expiry"].notna()]
-    df["days"] = (df["expiry"] - today).dt.days
-
-    # optionaler Horizont-Filter
-    if horizon_days is not None and horizon_days > 0:
-        df = df[(df["days"] >= 0) & (df["days"] <= int(horizon_days))]
-    else:
-        df = df[df["days"] >= 0]
-
-    if df.empty:
-        return pd.DataFrame(columns=["symbol", "expiry", "call_oi_expiry", "put_oi_expiry", "total_oi_expiry"])
-
-    # Top expiry nach total OI pro Symbol
-    idx = df.groupby("symbol")["__tot"].idxmax()
-    top = df.loc[idx, ["symbol", "expiry", "__call", "__put", "__tot"]].copy()
-    top.rename(columns={
-        "__call": "call_oi_expiry",
-        "__put":  "put_oi_expiry",
-        "__tot":  "total_oi_expiry"
-    }, inplace=True)
-    return top
-
-def choose_strike(bystr: pd.DataFrame, sym: str, expiry: pd.Timestamp, direction: int) -> float:
-    """Wählt den dominanten Strike für (sym, expiry) abhängig von der Richtung."""
-    if expiry is None or pd.isna(expiry):
+def parse_first_strike(val) -> float:
+    """
+    Versucht aus call_top_strikes / put_top_strikes den ersten Strike als float zu holen.
+    Akzeptiert Formate wie:
+      "[150, 155, 160]"
+      "150,155,160"
+      "150; 155; 160"
+      "150|155|160"
+    """
+    if val is None or (isinstance(val, float) and np.isnan(val)):
         return np.nan
 
-    df = bystr.copy()
-    df = ensure_cols(df)
-    df["symbol"] = df.get("symbol", pd.Series(dtype="object")).astype(str).str.upper().str.strip()
-    df = df[df["symbol"] == sym]
-    df["expiry"] = to_dt(df.get("expiry", pd.Series(dtype="datetime64[ns]")))
-    df = df[df["expiry"].dt.date == expiry.date()]
-    if df.empty:
+    s = str(val).strip()
+    if not s:
         return np.nan
 
-    df["strike"]  = to_num(df.get("strike", pd.Series(dtype=float)))
-    call_col = coalesce(df, ("call_oi", "total_call_oi"))
-    put_col  = coalesce(df, ("put_oi", "total_put_oi"))
-    df["__call"]  = to_num(call_col).fillna(0)
-    df["__put"]   = to_num(put_col).fillna(0)
+    # Klammern entfernen
+    for ch in "[](){}'\"":
+        s = s.replace(ch, " ")
 
-    if direction > 0:
-        # Bullisch → größtes Call OI
-        if df["__call"].notna().any():
-            row = df.loc[df["__call"].idxmax()]
-        else:
-            row = None
-    elif direction < 0:
-        # Bärisch → größtes Put OI
-        if df["__put"].notna().any():
-            row = df.loc[df["__put"].idxmax()]
-        else:
-            row = None
-    else:
+    # Trennzeichen vereinheitlichen
+    for sep in [";", "|"]:
+        s = s.replace(sep, ",")
+
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    if not parts:
         return np.nan
 
-    if row is None:
-        return np.nan
-    return float(row.get("strike", np.nan))
+    for p in parts:
+        try:
+            return float(p)
+        except Exception:
+            continue
+    return np.nan
 
-def main():
-    ap = argparse.ArgumentParser(description="Build compact options_signals.csv for AgenaTrader scanner.")
-    ap.add_argument("--by-expiry", default="data/processed/options_oi_by_expiry.csv",
-                    help="Path to by_expiry CSV or CSV.GZ")
-    ap.add_argument("--by-strike", default="data/processed/options_oi_by_strike.csv",
-                    help="Path to by_strike CSV or CSV.GZ")
-    ap.add_argument("--strike-max", default="data/processed/options_oi_strike_max.csv",
-                    help="Optional fallback CSV/CSV.GZ for strike")
-    ap.add_argument("--out", default="data/processed/options_signals.csv",
-                    help="Output CSV (plain; Workflow gzipt ggf. später)")
-    ap.add_argument("--horizon-days", type=int, default=365,
-                    help="Look-ahead window in days for picking best expiry (<=0 = kein Limit nach oben)")
-    ap.add_argument("--with-metrics", action="store_true",
-                    help="Append diagnostic columns (call_oi_expiry, put_oi_expiry, total_oi_expiry)")
-    args = ap.parse_args()
 
-    # Laden
+# ----------------------------- Kernlogik -------------------------------------
+
+def build_options_signals(
+    summary_path: str,
+    out_path: str,
+    horizon_days: int,
+    with_metrics: bool
+) -> None:
+    # 1) Summary laden
     try:
-        byex = read_csv_auto(args.by_expiry)
+        summ = read_csv_auto(summary_path)
     except Exception as e:
-        print(f"[ERR] cannot read by_expiry: {e}", file=sys.stderr)
+        print(f"[ERR] cannot read {summary_path}: {e}", file=sys.stderr)
         sys.exit(2)
 
-    try:
-        bystr = read_csv_auto(args.by_strike)
-    except Exception as e:
-        print(f"[ERR] cannot read by_strike: {e}", file=sys.stderr)
-        sys.exit(2)
-
-    # optional strike_max (Fallback)
-    strike_max_df = None
-    try:
-        strike_max_df = read_csv_auto(args.strike_max)
-    except Exception:
-        strike_max_df = None  # ok if absent
-
-    # 1) Bester Verfall pro Symbol
-    horizon = args.horizon_days if args.horizon_days is not None else 365
-    if horizon <= 0:
-        horizon = None  # kein oberes Limit
-
-    top = pick_best_expiry(byex, horizon)
-
-    if top.empty:
-        # wenn nichts im Horizont → wähle global besten Verfall (max __tot) ohne Horizon-Filter
-        df = byex.copy()
-        df = ensure_cols(df)
-        df["__call"] = to_num(coalesce(df, ("total_call_oi", "call_oi"))).fillna(0)
-        df["__put"]  = to_num(coalesce(df, ("total_put_oi", "put_oi"))).fillna(0)
-        df["__tot"]  = to_num(coalesce(df, ("total_oi",))).fillna(df["__call"] + df["__put"])
-        df["expiry"] = to_dt(df.get("expiry", pd.Series(dtype="datetime64[ns]")))
-        df["symbol"] = df.get("symbol", pd.Series(dtype="object")).astype(str).str.upper().str.strip()
-        if not df.empty:
-            idx = df.groupby("symbol")["__tot"].idxmax()
-            top = df.loc[idx, ["symbol", "expiry", "__call", "__put", "__tot"]].copy()
-            top.rename(columns={
-                "__call": "call_oi_expiry",
-                "__put":  "put_oi_expiry",
-                "__tot":  "total_oi_expiry"
-            }, inplace=True)
-
-    if top.empty:
-        print("[WARN] no rows selected; writing empty output")
-        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(columns=["symbol", "direction", "expiry", "strike", "side"]).to_csv(args.out, index=False)
-        print("wrote", args.out, "rows=0")
+    if summ is None or summ.empty:
+        print("[WARN] options_oi_summary leer; schreibe leere options_signals.csv")
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=["symbol", "direction", "expiry", "side",
+                              "focus_strike", "call_strike_top", "put_strike_top"]
+                     ).to_csv(out_path, index=False)
         return
 
-    # 2) Richtung bestimmen
-    top["direction"] = np.sign(
-        to_num(top["call_oi_expiry"]) - to_num(top["put_oi_expiry"])
-    ).astype(int)
+    df = summ.copy()
+    df = ensure_cols(df)
 
-    # 3) Strike je Symbol bestimmen
+    # Normalisieren
+    df["symbol"] = df.get("symbol", pd.Series(dtype="object")).astype(str).str.upper().str.strip()
+    df["expiry"] = to_dt(df.get("expiry", pd.Series(dtype="datetime64[ns]")))
+
+    df["call_oi"] = to_num(df.get("call_oi", pd.Series(dtype="float64"))).fillna(0.0)
+    df["put_oi"]  = to_num(df.get("put_oi",  pd.Series(dtype="float64"))).fillna(0.0)
+    df["total_oi"] = df["call_oi"] + df["put_oi"]
+
+    df = df[df["expiry"].notna()]
+    today = pd.Timestamp.today().normalize()
+    df["days"] = (df["expiry"] - today).dt.days
+    df = df[df["days"] >= 0]
+
+    if horizon_days > 0:
+        df = df[df["days"] <= horizon_days]
+
+    if df.empty:
+        print("[WARN] keine künftigen Expiries im Horizont; schreibe leere Datei")
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=["symbol", "direction", "expiry", "side",
+                              "focus_strike", "call_strike_top", "put_strike_top"]
+                     ).to_csv(out_path, index=False)
+        return
+
+    # 2) Pro Symbol den Verfall mit max(total_oi) wählen
+    idx = df.groupby("symbol")["total_oi"].idxmax()
+    top = df.loc[idx].copy()
+
+    # 3) direction & side
+    top["direction"] = np.sign(top["call_oi"] - top["put_oi"]).astype(int)
+
+    def side_fn(row) -> str:
+        d = row.get("direction", 0)
+        try:
+            d = int(d)
+        except Exception:
+            d = 0
+        call_oi = float(row.get("call_oi", 0.0) or 0.0)
+        put_oi  = float(row.get("put_oi",  0.0) or 0.0)
+        if d > 0 and call_oi > 0:
+            return "C"
+        if d < 0 and put_oi > 0:
+            return "P"
+        return "N"
+
+    top["side"] = top.apply(side_fn, axis=1)
+
+    # 4) Top-Strikes aus call_top_strikes / put_top_strikes parsen
+    top["call_strike_top"] = top.get("call_top_strikes", pd.Series(dtype=object)).apply(parse_first_strike)
+    top["put_strike_top"]  = top.get("put_top_strikes",  pd.Series(dtype=object)).apply(parse_first_strike)
+
+    # 5) focus_strike je nach side bestimmen
+    def focus_fn(row) -> float:
+        s = row.get("side", "N")
+        if s == "C":
+            return float(row.get("call_strike_top", np.nan))
+        if s == "P":
+            return float(row.get("put_strike_top", np.nan))
+        return np.nan
+
+    top["focus_strike"] = top.apply(focus_fn, axis=1)
+
+    # 6) Output vorbereiten
     out_rows = []
-
-    # Schneller Zugriff auf by_strike
-    bystr["_sym"] = bystr.get("symbol", pd.Series(dtype="object")).astype(str).str.upper().str.strip()
-    bystr["_exp"] = to_dt(bystr.get("expiry", pd.Series(dtype="datetime64[ns]"))).dt.date
-
-    # optionales Mapping aus strike_max (Fallback)
-    strike_max_map = {}
-    if strike_max_df is not None and not strike_max_df.empty:
-        smax = strike_max_df.copy()
-        smax["symbol"] = smax.get("symbol", pd.Series(dtype="object")).astype(str).str.upper().str.strip()
-        smax["expiry"] = to_dt(smax.get("expiry", pd.Series(dtype="datetime64[ns]"))).dt.date
-        call_sm = smax.get("call_strike_max")
-        put_sm  = smax.get("put_strike_max")
-        for _, r in smax.iterrows():
-            strike_max_map[(r["symbol"], r["expiry"])] = {
-                "call": float(pd.to_numeric(r.get("call_strike_max"), errors="coerce")) if call_sm is not None else np.nan,
-                "put":  float(pd.to_numeric(r.get("put_strike_max"),  errors="coerce")) if put_sm  is not None else np.nan
-            }
-
     for _, r in top.iterrows():
         sym = str(r["symbol"]).upper().strip()
-        exp_ts = pd.to_datetime(r["expiry"]) if pd.notna(r["expiry"]) else None
-        exp = exp_ts.date() if exp_ts is not None else None
-        d = int(r["direction"])
+        exp_ts = r["expiry"]
+        exp_str = exp_ts.strftime("%Y-%m-%d") if pd.notna(exp_ts) else ""
 
-        strike = choose_strike(bystr, sym, exp_ts, d)
-
-        # Fallback: strike_max
-        if (strike is None or np.isnan(strike) or strike == 0.0) and strike_max_map:
-            fm = strike_max_map.get((sym, exp))
-            if fm:
-                strike = fm["call"] if d > 0 else (fm["put"] if d < 0 else np.nan)
-
-        # side bestimmen
-        call_oi = float(r.get("call_oi_expiry", 0.0))
-        put_oi  = float(r.get("put_oi_expiry", 0.0))
-        total_oi = float(r.get("total_oi_expiry", 0.0))
-
-        if d > 0 and call_oi > 0:
-            side = "C"
-        elif d < 0 and put_oi > 0:
-            side = "P"
-        else:
-            side = "N"
-
-        out_rows.append({
+        out_row = {
             "symbol": sym,
-            "direction": int(max(-1, min(1, d))),
-            "expiry": exp_ts.strftime("%Y-%m-%d") if exp_ts is not None else "",
-            "strike": np.nan if (strike is None or np.isnan(strike)) else float(strike),
-            "side": side,
-            # optionale Diagnostik:
-            "call_oi_expiry": float(r.get("call_oi_expiry", np.nan)),
-            "put_oi_expiry":  float(r.get("put_oi_expiry",  np.nan)),
-            "total_oi_expiry":float(r.get("total_oi_expiry",np.nan)),
-        })
+            "direction": int(max(-1, min(1, int(r.get("direction", 0))))),
+            "expiry": exp_str,
+            "side": r.get("side", "N"),
+            "focus_strike": (np.nan if pd.isna(r.get("focus_strike"))
+                             else float(r.get("focus_strike"))),
+            "call_strike_top": (np.nan if pd.isna(r.get("call_strike_top"))
+                                else float(r.get("call_strike_top"))),
+            "put_strike_top": (np.nan if pd.isna(r.get("put_strike_top"))
+                               else float(r.get("put_strike_top"))),
+        }
 
-    out = pd.DataFrame(out_rows)
+        if with_metrics:
+            out_row["call_oi_expiry"] = float(r.get("call_oi", np.nan))
+            out_row["put_oi_expiry"]  = float(r.get("put_oi", np.nan))
+            out_row["total_oi_expiry"] = float(r.get("total_oi", np.nan))
 
-    if not args.with_metrics:
-        out = out[["symbol", "direction", "expiry", "strike", "side"]]
+        out_rows.append(out_row)
 
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    out.to_csv(args.out, index=False)
-    print("wrote", args.out, "rows=", len(out))
+    out_df = pd.DataFrame(out_rows)
+
+    if not with_metrics:
+        cols = ["symbol", "direction", "expiry", "side",
+                "focus_strike", "call_strike_top", "put_strike_top"]
+        out_df = out_df[cols]
+
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    out_df.to_csv(out_path, index=False)
+    print("wrote", out_path, "rows=", len(out_df), "cols=", len(out_df.columns))
+
+
+# ----------------------------- CLI -------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(description="Build compact options_signals.csv for AgenaTrader scanner (inkl. Strikes aus options_oi_summary).")
+    ap.add_argument("--summary", default="data/processed/options_oi_summary.csv",
+                    help="Pfad zu options_oi_summary.csv oder .csv.gz")
+    ap.add_argument("--out", default="data/processed/options_signals.csv",
+                    help="Output CSV (Workflow gzippt später)")
+    ap.add_argument("--horizon-days", type=int, default=365,
+                    help="Look-ahead window in days (0/negativ = kein Limit nach oben)")
+    ap.add_argument("--with-metrics", action="store_true",
+                    help="call_oi_expiry / put_oi_expiry / total_oi_expiry anhängen")
+    args = ap.parse_args()
+
+    horizon = args.horizon_days
+    if horizon is None or horizon <= 0:
+        horizon = 365 * 10  # praktisch 'kein Limit'
+
+    build_options_signals(
+        summary_path=args.summary,
+        out_path=args.out,
+        horizon_days=horizon,
+        with_metrics=args.with_metrics
+    )
 
 if __name__ == "__main__":
     main()

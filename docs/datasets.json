@@ -11,8 +11,6 @@
     "direction_signal": "/data/processed/direction_signal.csv.gz",
     "short_interest": "/data/processed/short_interest.csv.gz",
     "insider_tx": "/data/processed/insider_tx.csv.gz",
-    "fund_ownership": "/data/processed/fund_ownership.csv.gz",
-    "company_news": "/data/processed/company_news.ndjson.gz",
     "peers": "/data/processed/peers.csv.gz",
     "dividends": "/data/processed/dividends.csv.gz",
     "splits": "/data/processed/splits.csv.gz",

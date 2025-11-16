@@ -296,23 +296,21 @@ jobs:
           print("saved", len([f for f in os.listdir('data/prices') if f.endswith('.csv')]), "files to data/prices")
           PY
 
-      # -------------------- SHORT INTEREST (Rohdaten via Website) -----------#
+      # -------------------- SHORT INTEREST (nur US via iBorrowDesk) ---------#
       - name: Create scripts/fetch_short_interest.py
         run: |
           cat > scripts/fetch_short_interest.py <<'PY'
           import os
           import time
-          import json
-          from datetime import datetime
-          from typing import List, Dict, Any
+          from typing import List, Dict, Any, Optional
 
           import requests
           import pandas as pd
 
-
           BASE_URL = "https://iborrowdesk.com/api/ticker/"
           OUT_PATH = "data/processed/short_interest.csv"
 
+          # ----------------- Watchlist-Helfer -----------------
 
           def read_watchlist_csv(path: str) -> List[str]:
               if not path or not os.path.exists(path):
@@ -323,11 +321,8 @@ jobs:
                   df[col]
                   .dropna()
                   .astype(str)
-                  .str.upper()
-                  .str.strip()
                   .tolist()
               )
-
 
           def read_watchlist_txt(path: str) -> List[str]:
               if not path or not os.path.exists(path):
@@ -340,35 +335,74 @@ jobs:
                           continue
                       if s.lower().startswith("symbol"):
                           continue
-                      out.append(s.upper())
+                      out.append(s)
               return out
 
+          EU_SUFFIXES = (
+              ".DE",".EU",".AS",".BR",".BE",".PA",".MI",".SW",".L",".VX",".VI",
+              ".TO",".V",".ME",".HE",".ST",".CO",".OL",".SS",".SZ",".HK"
+          )
+
+          def clean_to_us_symbol(raw: str) -> Optional[str]:
+              """
+              Wandelt Roh-Einträge wie
+                'AAPL,US_IG'
+                'EUNL.DE # ISHARES CORE MSCI WORLD UCITS'
+              in saubere US-Ticker um oder wirft sie weg (EU/sonstiges).
+              """
+              if raw is None:
+                  return None
+              s = str(raw).strip().upper()
+              if not s:
+                  return None
+              # Kommentare entfernen
+              if "#" in s:
+                  s = s.split("#", 1)[0].strip()
+              # interne Suffixe wie ,US_IG / ,EU_IG entfernen
+              if "," in s:
+                  s = s.split(",", 1)[0].strip()
+              if not s:
+                  return None
+              # EU-/Nicht-US-Listings hart rausfiltern
+              for suf in EU_SUFFIXES:
+                  if s.endswith(suf):
+                      return None
+              # sehr einfache Plausibilitätsprüfung: nur A–Z/0–9/.-_ zulassen
+              for ch in s:
+                  if ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._":
+                      return None
+              return s
 
           def build_universe() -> List[str]:
               wl_stocks = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.csv")
               wl_etf    = os.getenv("WATCHLIST_ETF",    "watchlists/etf_sample.txt")
 
-              universe = set()
+              raw = set()
 
               if wl_stocks.endswith(".txt"):
-                  universe.update(read_watchlist_txt(wl_stocks))
+                  raw.update(read_watchlist_txt(wl_stocks))
               else:
-                  universe.update(read_watchlist_csv(wl_stocks))
+                  raw.update(read_watchlist_csv(wl_stocks))
 
               if wl_etf.endswith(".txt"):
-                  universe.update(read_watchlist_txt(wl_etf))
+                  raw.update(read_watchlist_txt(wl_etf))
               else:
-                  universe.update(read_watchlist_csv(wl_etf))
+                  raw.update(read_watchlist_csv(wl_etf))
 
-              return sorted(universe)
+              us = set()
+              for r in raw:
+                  sym = clean_to_us_symbol(r)
+                  if sym:
+                      us.add(sym)
 
+              uni = sorted(us)
+              print("US-Universum für iBorrowDesk:", uni)
+              return uni
+
+          # ----------------- iBorrowDesk-Fetch -----------------
 
           def fetch_iborrowdesk(sym: str) -> Dict[str, Any]:
-              """
-              Holt die Borrow-Daten von der Website (JSON-Endpoint).
-              Gibt nur den letzten (aktuellsten) Daily-Datensatz zurück.
-              """
-              url = BASE_URL + sym.upper()
+              url = BASE_URL + sym
               headers = {
                   "User-Agent": (
                       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -436,24 +470,20 @@ jobs:
                   }
 
               last = daily[-1] or {}
-              # Fallbacks
               date  = last.get("date")
               avail = last.get("available")
               fee   = last.get("fee")
               rebate = last.get("rebate")
 
-              row = {
+              return {
                   "symbol": sym,
                   "si_source": "iborrowdesk",
                   "si_date": date,
-                  # klassisches Short Interest / Float haben wir hier NICHT
                   "si_shares": None,
                   "float_shares": None,
                   "si_pct_float": None,
-                  # Borrow-Infos
-                  "borrow_rate": fee,        # Jahresgebühr in %
-                  "borrow_avail": avail,     # verfügbare Shares zum Shorten
-                  # Extra-Felder aus iBorrowDesk (optional)
+                  "borrow_rate": fee,
+                  "borrow_avail": avail,
                   "ibd_rebate": rebate,
                   "ibd_high_available": last.get("high_available"),
                   "ibd_low_available": last.get("low_available"),
@@ -463,14 +493,12 @@ jobs:
                   "ibd_low_rebate": last.get("low_rebate"),
                   "ibd_status": "ok",
               }
-              return row
-
 
           def main():
               os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
               universe = build_universe()
               if not universe:
-                  print("Keine Symbole in WATCHLIST_STOCKS / WATCHLIST_ETF gefunden.")
+                  print("Keine US-Symbole für iBorrowDesk gefunden.")
                   return
 
               rows = []
@@ -478,17 +506,16 @@ jobs:
                   print(f"[{i}/{len(universe)}] Hole iBorrowDesk für {sym} …")
                   row = fetch_iborrowdesk(sym)
                   rows.append(row)
-                  # kleine Pause um die Website nicht zu stressen
                   time.sleep(0.3)
 
               df = pd.DataFrame(rows)
               df.to_csv(OUT_PATH, index=False)
               print(f"wrote {OUT_PATH} rows={len(df)}")
 
-
           if __name__ == "__main__":
               main()
           PY
+
 
       - name: Fetch short interest (iBorrowDesk Website)
         run: |
@@ -555,59 +582,7 @@ jobs:
           python scripts/fetch_insider_tx.py
           head -n 10 data/processed/insider_tx.csv || true
 
-      # -------------------- FUND-OWNERSHIP (Institutionelle) -----------------
-      - name: Create scripts/fetch_fund_ownership.py
-        run: |
-          cat > scripts/fetch_fund_ownership.py <<'PY'
-          import os, time, pandas as pd, requests
-          BASE="https://finnhub.io/api/v1"
-          TOKEN=os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
-
-          def q(url, params):
-              params=dict(params or {}); 
-              if TOKEN: params["token"]=TOKEN
-              for i in range(3):
-                  try:
-                      r=requests.get(url, params=params, timeout=30)
-                      if r.status_code==200: return r.json()
-                  except Exception: pass
-                  time.sleep(1+2*i)
-              return None
-
-          def read_symbols(p):
-              if not p or not os.path.exists(p): return []
-              df=pd.read_csv(p); col="symbol" if "symbol" in df.columns else df.columns[0]
-              return [str(x).strip().upper() for x in df[col].dropna().tolist()]
-
-          def main():
-              wl=set(read_symbols(os.getenv("WATCHLIST_STOCKS"))+read_symbols(os.getenv("WATCHLIST_ETF")))
-              out="data/processed/fund_ownership.csv"
-              rows=[]
-              for sym in sorted(wl):
-                  r=q(BASE+"/stock/fund-ownership", {"symbol":sym, "limit":200})
-                  data = (r or {}).get("ownership") or []
-                  for it in data:
-                      rows.append({
-                          "symbol": sym,
-                          "owner": it.get("owner") or it.get("holder"),
-                          "percent": it.get("percent"),
-                          "reported_date": it.get("reportedDate") or it.get("reportDate"),
-                          "position": it.get("position"),
-                          "avg_price": it.get("avgPrice"),
-                      })
-              pd.DataFrame(rows).to_csv(out, index=False)
-              print("wrote", out, "rows", len(rows))
-
-          if __name__=="__main__": main()
-          PY
-
-      - name: Fetch fund ownership (Finnhub)
-        env:
-          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
-        run: |
-          python scripts/fetch_fund_ownership.py
-          head -n 10 data/processed/fund_ownership.csv || true
+      
 
       # -------------------- FINANZBERICHTE (Quarterly Timeseries) ------------
       - name: Create scripts/fetch_financials_ts.py

@@ -3,109 +3,125 @@
 """
 build_cot_energy_coverage.py
 
-Liest data/processed/cot_disagg_energy_raw.csv.gz und baut eine Coverage-Tabelle:
-  market_and_exchange_names, dataset, first_date, last_date, rows,
-  watchlist_match, in_watchlist
+Liest data/processed/cot_disagg_energy_raw.csv.gz (CFTC Energy-Disagg-CSV),
+normalisiert Spaltennamen und erstellt eine Coverage-Tabelle:
 
-Output:
-  data/reports/cot_energy_coverage.csv
+data/reports/cot_energy_coverage.csv mit Spalten:
+  market_and_exchange_names, dataset, first_date, last_date,
+  rows, watchlist_match, in_watchlist
 """
 
 import os
 import pandas as pd
 
-PROC_DIR = "data/processed"
-REPORTS_DIR = "data/reports"
-ENERGY_FILE = os.getenv(
-    "CFTC_DISAGG_ENERGY_OUT",
-    os.path.join(PROC_DIR, "cot_disagg_energy_raw.csv.gz"),
-)
-COT_WATCHLIST_FILE = os.getenv("COT_MARKETS_FILE", "watchlists/cot_markets.txt")
+PROC = "data/processed"
+REPORTS = "data/reports"
+ENERGY_FILE = os.path.join(PROC, "cot_disagg_energy_raw.csv.gz")
+WATCHLIST_FILE = os.getenv("COT_MARKETS_FILE", "watchlists/cot_markets.txt")
 
 
-def read_watchlist(path: str):
+def read_watchlist(path):
+    items = []
     if not os.path.exists(path):
-        return []
-    out = []
+        return items
     with open(path, "r", encoding="utf-8") as f:
         for ln in f:
             ln = ln.strip()
-            if ln and not ln.startswith(("#", "//")):
-                out.append(ln)
-    return out
+            if not ln or ln.startswith(("#", "//")):
+                continue
+            items.append(ln)
+    return items
+
+
+def find_col(df, candidates, label):
+    """
+    Sucht in df nach einer der Kandidaten (case-insensitive / trim).
+    Gibt den echten Spaltennamen zurück oder None.
+    """
+    # Map: lower(strip(name)) -> original
+    mapping = {c.lower().strip(): c for c in df.columns}
+    for cand in candidates:
+        key = cand.lower().strip()
+        if key in mapping:
+            return mapping[key]
+    return None
 
 
 def main():
     if not os.path.exists(ENERGY_FILE):
-        raise SystemExit("Energy-Datei fehlt: %s" % ENERGY_FILE)
+        raise SystemExit("Energy-File fehlt: %s" % ENERGY_FILE)
 
-    df = pd.read_csv(ENERGY_FILE, compression="infer", low_memory=False)
+    os.makedirs(REPORTS, exist_ok=True)
 
-    cols_lower = {c: c.strip().lower() for c in df.columns}
-    df.rename(columns=cols_lower, inplace=True)
+    df = pd.read_csv(ENERGY_FILE, compression="infer")
 
-    if "market_and_exchange_names" not in df.columns:
-        raise SystemExit("Spalte market_and_exchange_names fehlt in %s" % ENERGY_FILE)
+    if df.empty:
+        raise SystemExit("Energy-File ist leer: %s" % ENERGY_FILE)
 
-    if "report_date_as_yyyy_mm_dd" not in df.columns:
-        raise SystemExit("Spalte report_date_as_yyyy_mm_dd fehlt in %s" % ENERGY_FILE)
+    # ---- Datumsspalte normalisieren ---------------------------------------
+    date_candidates = [
+        "report_date_as_yyyy_mm_dd",
+        "Report_Date_as_YYYY_MM_DD",
+        "As_of_Date_in_YYYY-MM-DD",
+        "As of Date in YYYY-MM-DD",
+        "As of Date in YYYY-MM-DD ",
+    ]
+    date_col = find_col(df, date_candidates, "report_date")
+    if not date_col:
+        raise SystemExit(
+            "Spalte report_date_as_yyyy_mm_dd/As_of_Date_in_YYYY-MM-DD fehlt in %s. Vorhanden: %s"
+            % (ENERGY_FILE, ", ".join(df.columns))
+        )
 
     df["report_date_as_yyyy_mm_dd"] = pd.to_datetime(
-        df["report_date_as_yyyy_mm_dd"], errors="coerce"
-    )
+        df[date_col], errors="coerce"
+    ).dt.date
 
-    wl = read_watchlist(COT_WATCHLIST_FILE)
-    wl_upper = [w.upper() for w in wl]
+    # ---- Marktname normalisieren ------------------------------------------
+    mkt_candidates = [
+        "market_and_exchange_names",
+        "Market_and_Exchange_Names",
+        "Market_and_Exchange_Name",
+        "Market and Exchange Names",
+    ]
+    mkt_col = find_col(df, mkt_candidates, "market_and_exchange_names")
+    if not mkt_col:
+        raise SystemExit(
+            "Spalte market_and_exchange_names fehlt in %s. Vorhanden: %s"
+            % (ENERGY_FILE, ", ".join(df.columns))
+        )
 
-    # Coverage je Markt
+    df["market_and_exchange_names"] = df[mkt_col].astype(str).str.strip()
+
+    # ---- Coverage je Markt berechnen --------------------------------------
     grp = (
         df.groupby("market_and_exchange_names")["report_date_as_yyyy_mm_dd"]
         .agg(["min", "max", "count"])
         .reset_index()
+        .rename(
+            columns={
+                "min": "first_date",
+                "max": "last_date",
+                "count": "rows",
+            }
+        )
     )
+    grp.insert(1, "dataset", "energy_disagg")
 
-    grp.rename(
-        columns={
-            "min": "first_date",
-            "max": "last_date",
-            "count": "rows",
-        },
-        inplace=True,
-    )
+    # ---- Watchlist-Matching -----------------------------------------------
+    wl = read_watchlist(WATCHLIST_FILE)
+    wl_set = set(wl)
 
-    # Watchlist-Match / in_watchlist
-    def find_match(name: str):
-        up = name.upper()
-        if up in wl_upper:
-            return name  # exakter Treffer
-        # Fuzzy: Watchlist-Eintrag als Substring oder umgekehrt
-        for w in wl:
-            w_up = w.upper()
-            if w_up in up or up in w_up:
-                return w
-        return ""
+    def match_wl(name):
+        name = name.strip()
+        return name if name in wl_set else ""
 
-    grp["watchlist_match"] = grp["market_and_exchange_names"].apply(find_match)
-    grp["in_watchlist"] = grp["watchlist_match"].apply(lambda x: bool(x))
+    grp["watchlist_match"] = grp["market_and_exchange_names"].map(match_wl)
+    grp["in_watchlist"] = grp["watchlist_match"].ne("")
 
-    grp["dataset"] = "disagg_csv"
-
-    # Spalten-Reihenfolge wie bei deinem Coverage-Snippet
-    cols = [
-        "market_and_exchange_names",
-        "dataset",
-        "first_date",
-        "last_date",
-        "rows",
-        "watchlist_match",
-        "in_watchlist",
-    ]
-    grp = grp[cols]
-
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-    out_path = os.path.join(REPORTS_DIR, "cot_energy_coverage.csv")
-    grp.to_csv(out_path, index=False)
-    print("✅ wrote", out_path, "rows", len(grp))
+    out = os.path.join(REPORTS, "cot_energy_coverage.csv")
+    grp.to_csv(out, index=False)
+    print("✅ wrote", out, "rows:", len(grp))
 
 
 if __name__ == "__main__":

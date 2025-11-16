@@ -628,6 +628,18 @@ jobs:
           ls -lh data/processed/cot_20y_tff.csv.gz || true
           zcat data/processed/cot_20y_tff.csv.gz | head -n 2 || true
 
+
+      - name: Build COT market coverage report
+        run: |
+          python scripts/build_cot_coverage.py
+          echo "== COT Coverage =="
+          head -n 40 data/reports/cot_markets_coverage.csv || true
+          echo "== fehlende Watchlist-Einträge =="
+          cat data/reports/cot_markets_missing.txt || true
+          echo "== alle CFTC-Marktnamen =="
+          head -n 40 data/reports/cot_market_names_all.txt || true
+
+
       # -------------------- HV (historische Volatilität) ---------------------
       - name: Build HV summary (Stooq → hv20/hv60, mit yfinance-Fallback)
         run: |

@@ -1,176 +1,167 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-build_cot_coverage.py – Übersicht über COT-Märkte + Coverage für deine Watchlist.
-
-- Liest:
-    data/processed/cot_20y_disagg.csv[.gz]
-    data/processed/cot_20y_tff.csv[.gz]
-    watchlists/cot_markets.txt
-
-- Schreibt:
-    data/reports/cot_markets_coverage.csv
-    data/reports/cot_markets_missing.txt
-    data/reports/cot_market_names_all.txt   <-- NEU: alle Original-CFTC-Namen (TXT)
-"""
+# build_cot_coverage.py
+#
+# Liest:
+#   - data/processed/cot_20y_disagg.csv(.gz)
+#   - data/processed/cot_20y_tff.csv(.gz)
+#   - optional: data/processed/cot_disagg_energy_raw.csv(.gz)
+# und baut:
+#   - data/reports/cot_markets_coverage.csv
+#   - data/reports/cot_markets_missing.txt
+#   - data/reports/cot_market_names_all.txt
 
 import os
 import pandas as pd
 
-PROC = "data/processed"
-REPORT_DIR = "data/reports"
-WATCHLIST = os.getenv("COT_MARKETS_FILE", "watchlists/cot_markets.txt")
-
-os.makedirs(REPORT_DIR, exist_ok=True)
+BASE_PROC = "data/processed"
+BASE_REP  = "data/reports"
+WATCHLIST = "watchlists/cot_markets.txt"
 
 
-def rd_cot(name: str):
-    """
-    Lädt eine COT-Datei (csv oder csv.gz), wenn vorhanden.
-    name z.B.: "cot_20y_disagg.csv" (wir probieren csv und csv.gz).
-    """
-    base = os.path.join(PROC, name)
-    for p in (base, base + ".gz"):
-        if os.path.exists(p):
-            try:
-                return pd.read_csv(p, compression="infer")
-            except Exception as e:
-                print("WARN: konnte", p, "nicht lesen:", e)
-    return None
-
-
-def read_watchlist(path: str):
+def rd_csv(path: str) -> pd.DataFrame | None:
     if not os.path.exists(path):
-        print("INFO: Watchlist", path, "nicht gefunden.")
+        return None
+    try:
+        return pd.read_csv(path, compression="infer")
+    except Exception:
+        return None
+
+
+def normalise_dates(df: pd.DataFrame, dataset_label: str) -> pd.DataFrame:
+    """
+    Sorgt dafür, dass wir immer eine Spalte 'report_date' (datetime)
+    + 'market_and_exchange_names' + 'dataset' haben.
+    Behandelt Sonderfall: Energie-Rohdatei mit anderen Datumsnamen.
+    """
+    cols = {c.lower(): c for c in df.columns}
+
+    # Marktname
+    name_col = cols.get("market_and_exchange_names") or cols.get("market_and_exchange_name")
+    if not name_col:
+        raise SystemExit("Spalte 'market_and_exchange_names' fehlt in Dataset %s" % dataset_label)
+
+    # Datumsspalten in bevorzugter Reihenfolge
+    date_col = None
+    if "report_date_as_yyyy_mm_dd" in cols:
+        date_col = cols["report_date_as_yyyy_mm_dd"]
+    elif "as_of_date_in_yyyy-mm-dd" in cols:
+        date_col = cols["as_of_date_in_yyyy-mm-dd"]
+    elif "as_of_date_in_form_yyyymmdd" in cols:
+        date_col = cols["as_of_date_in_form_yyyymmdd"]
+    elif "report_date_as_mm_dd_yyyy" in cols:
+        date_col = cols["report_date_as_mm_dd_yyyy"]
+
+    if date_col is None:
+        raise SystemExit(
+            "Spalte report_date_as_yyyy_mm_dd/As_of_Date_in_YYYY-MM-DD fehlt in Dataset %s. "
+            "Vorhanden: %s" % (dataset_label, ", ".join(df.columns))
+        )
+
+    s = df[[name_col, date_col]].copy()
+    s.rename(columns={name_col: "market_and_exchange_names"}, inplace=True)
+
+    # Datumsparsing je nach Format
+    if date_col.lower() in ("report_date_as_yyyy_mm_dd", "as_of_date_in_yyyy-mm-dd"):
+        s["report_date"] = pd.to_datetime(s[date_col], errors="coerce")
+    elif date_col.lower() == "as_of_date_in_form_yyyymmdd":
+        s["report_date"] = pd.to_datetime(s[date_col].astype(str), format="%Y%m%d", errors="coerce")
+    elif date_col.lower() == "report_date_as_mm_dd_yyyy":
+        s["report_date"] = pd.to_datetime(s[date_col].astype(str), format="%m/%d/%Y", errors="coerce")
+    else:
+        s["report_date"] = pd.to_datetime(s[date_col], errors="coerce")
+
+    s = s.dropna(subset=["report_date"])
+    s["dataset"] = dataset_label
+    return s[["market_and_exchange_names", "dataset", "report_date"]]
+
+
+def load_watchlist(path: str) -> list[str]:
+    if not os.path.exists(path):
         return []
-    out = []
+    out: list[str] = []
     with open(path, "r", encoding="utf-8") as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln or ln.startswith("#") or ln.startswith("//"):
+        for line in f:
+            t = line.strip()
+            if not t or t.startswith("#"):
                 continue
-            out.append(ln)
+            out.append(t)
     return out
 
 
-def norm(s: str) -> str:
-    """
-    Grobe Normalisierung: Uppercase, mehrere Spaces entfernen.
-    Genug für einfache Contains-Checks.
-    """
-    if not isinstance(s, str):
-        s = str(s or "")
-    s = s.upper().replace("’", "'")
-    while "  " in s:
-        s = s.replace("  ", " ")
-    return s.strip()
+def main() -> None:
+    os.makedirs(BASE_REP, exist_ok=True)
 
+    parts: list[pd.DataFrame] = []
 
-def main():
-    # 1) COT-Dateien laden
-    dis = rd_cot("cot_20y_disagg.csv")
-    tff = rd_cot("cot_20y_tff.csv")
-
-    if dis is None and tff is None:
-        raise SystemExit("Keine COT-Dateien in data/processed gefunden (cot_20y_disagg/tff).")
-
-    dfs = []
-    if dis is not None:
-        dis = dis.copy()
-        dis["dataset"] = "disagg"
-        dfs.append(dis)
-    if tff is not None:
-        tff = tff.copy()
-        tff["dataset"] = "tff"
-        dfs.append(tff)
-
-    df = pd.concat(dfs, ignore_index=True)
-
-    # Spaltennamen robust finden
-    cols = {c.lower(): c for c in df.columns}
-
-    name_col = cols.get("market_and_exchange_names") or cols.get("market_and_exchange_name")
-    if not name_col:
-        raise SystemExit("Spalte market_and_exchange_names nicht gefunden.")
-
-    # Datumsspalte
-    date_col = None
-    for cand in ["report_date_as_yyyy_mm_dd", "report_date", "as_of_date_in_form_yyyy_mm_dd"]:
-        if cand in cols:
-            date_col = cols[cand]
-            break
-    if not date_col:
-        raise SystemExit("Konnte keine geeignete Datumsspalte finden.")
-
-    # 2) NEU: vollständige Namensliste als TXT
-    names_all = (
-        df[name_col]
-        .dropna()
-        .drop_duplicates()
-        .sort_values()
-        .tolist()
+    # 1) Disaggregated von Socrata
+    dis = rd_csv(os.path.join(BASE_PROC, "cot_20y_disagg.csv")) or rd_csv(
+        os.path.join(BASE_PROC, "cot_20y_disagg.csv.gz")
     )
-    names_path = os.path.join(REPORT_DIR, "cot_market_names_all.txt")
-    with open(names_path, "w", encoding="utf-8") as f:
-        for n in names_all:
-            f.write(str(n).strip() + "\n")
-    print("wrote", names_path, "names:", len(names_all))
+    if dis is not None and not dis.empty:
+        parts.append(normalise_dates(dis, "disagg"))
 
-    # 3) Min/Max-Datum + Rowanzahl je Markt + Dataset
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    grp = (
-        df.groupby([name_col, "dataset"], dropna=False)[date_col]
-        .agg(["min", "max", "count"])
-        .reset_index()
-        .rename(
-            columns={
-                name_col: "market_and_exchange_names",
-                "min": "first_date",
-                "max": "last_date",
-                "count": "rows",
-            }
+    # 2) TFF von Socrata
+    tff = rd_csv(os.path.join(BASE_PROC, "cot_20y_tff.csv")) or rd_csv(
+        os.path.join(BASE_PROC, "cot_20y_tff.csv.gz")
+    )
+    if tff is not None and not tff.empty:
+        parts.append(normalise_dates(tff, "tff"))
+
+    # 3) Optionale Energie-Rohdatei (Compressed History)
+    energy = rd_csv(os.path.join(BASE_PROC, "cot_disagg_energy_raw.csv")) or rd_csv(
+        os.path.join(BASE_PROC, "cot_disagg_energy_raw.csv.gz")
+    )
+    if energy is not None and not energy.empty:
+        parts.append(normalise_dates(energy, "energy_raw"))
+
+    if not parts:
+        raise SystemExit("Keine COT-Daten gefunden (disagg/tff/energy_raw).")
+
+    all_df = pd.concat(parts, ignore_index=True)
+    all_df["market_and_exchange_names"] = all_df["market_and_exchange_names"].astype(str)
+
+    # Coverage je Markt + Dataset
+    cov = (
+        all_df.groupby(["market_and_exchange_names", "dataset"])["report_date"]
+        .agg(
+            first_date=lambda s: s.min().strftime("%Y-%m-%d"),
+            last_date=lambda s: s.max().strftime("%Y-%m-%d"),
+            rows="size",
         )
+        .reset_index()
     )
 
-    # 4) Watchlist laden und simple Match-Flag erzeugen
-    wl_raw = read_watchlist(WATCHLIST)
-    wl_norm = [norm(x) for x in wl_raw]
+    # Watchlist-Mapping
+    wl = load_watchlist(WATCHLIST)
+    wl_set = set(wl)
 
-    def match_watchlist(mkt: str) -> str:
-        mm = norm(mkt)
-        hits = []
-        for w_raw, w_norm in zip(wl_raw, wl_norm):
-            if mm == w_norm or mm.find(w_norm) >= 0 or w_norm.find(mm) >= 0:
-                hits.append(w_raw)
-        return "; ".join(hits) if hits else ""
+    # direktes Matching: watchlist == market_and_exchange_names
+    cov["watchlist_match"] = cov["market_and_exchange_names"].where(
+        cov["market_and_exchange_names"].isin(wl_set),
+        ""
+    )
+    cov["in_watchlist"] = cov["watchlist_match"].ne("")
 
-    grp["watchlist_match"] = grp["market_and_exchange_names"].apply(match_watchlist)
-    grp["in_watchlist"] = grp["watchlist_match"].apply(lambda x: bool(x))
+    # fehlende Watchlist-Einträge
+    covered_names = set(cov["market_and_exchange_names"].unique())
+    missing = [w for w in wl if w not in covered_names]
 
-    # 5) Coverage-CSV schreiben
-    out_csv = os.path.join(REPORT_DIR, "cot_markets_coverage.csv")
-    grp.sort_values(
-        ["in_watchlist", "market_and_exchange_names", "dataset"],
-        ascending=[False, True, True]
-    ).to_csv(out_csv, index=False)
-    print("wrote", out_csv, "rows:", len(grp))
+    # Dateien schreiben
+    cov_path = os.path.join(BASE_REP, "cot_markets_coverage.csv")
+    cov.to_csv(cov_path, index=False)
+    print("wrote", cov_path, "rows", len(cov))
 
-    # 6) Welche Watchlist-Einträge wurden gar nicht gematcht?
-    matched = set()
-    for m in grp["watchlist_match"]:
-        if not m:
-            continue
-        for part in m.split(";"):
-            p = part.strip()
-            if p:
-                matched.add(p)
-
-    missing = [x for x in wl_raw if x not in matched]
-    miss_path = os.path.join(REPORT_DIR, "cot_markets_missing.txt")
+    miss_path = os.path.join(BASE_REP, "cot_markets_missing.txt")
     with open(miss_path, "w", encoding="utf-8") as f:
         for m in missing:
             f.write(m + "\n")
-    print("wrote missing list:", miss_path, "entries:", len(missing))
+    print("wrote", miss_path, "entries", len(missing))
+
+    names_path = os.path.join(BASE_REP, "cot_market_names_all.txt")
+    with open(names_path, "w", encoding="utf-8") as f:
+        for n in sorted(covered_names):
+            f.write(n + "\n")
+    print("wrote", names_path, "unique markets", len(covered_names))
 
 
 if __name__ == "__main__":

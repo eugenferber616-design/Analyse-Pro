@@ -5,6 +5,7 @@ Builds one wide master file per equity symbol by merging all processed datasets.
 Inputs (best-effort, optional):
   - direction_signal, options_signals, options_oi_by_strike, options_oi_summary
   - hv_summary, fundamentals_core, earnings_next.json, cds_proxy, revisions
+  - short_interest (iBorrowDesk Website)
 Output:
   - data/processed/equity_master.csv  (later gzipped by workflow)
 """
@@ -14,6 +15,7 @@ from datetime import datetime
 
 PROC = "data/processed"
 DOCS = "docs"
+
 
 def _read_csv_any(*candidates):
     for p in candidates:
@@ -25,6 +27,7 @@ def _read_csv_any(*candidates):
             except Exception:
                 pass
     return None
+
 
 def _read_json_to_df(*candidates, records_key=None):
     for p in candidates:
@@ -41,6 +44,7 @@ def _read_json_to_df(*candidates, records_key=None):
                 pass
     return None
 
+
 def _left(master, df, on="symbol", cols=None, rename=None):
     if df is None or df.empty:
         return master
@@ -51,10 +55,12 @@ def _left(master, df, on="symbol", cols=None, rename=None):
         df = df[keep].copy()
     return master.merge(df, how="left", on=on)
 
+
 def _norm_symbol(df, col="symbol"):
     if df is not None and col in df.columns:
         df[col] = df[col].astype(str).str.upper().str.strip()
     return df
+
 
 def _stance_from_dir(row):
     d = row.get("dir")
@@ -65,6 +71,54 @@ def _stance_from_dir(row):
     except Exception:
         return "neutral"
     return "bullish" if d > 0 else ("bearish" if d < 0 else "neutral")
+
+
+# --- NEU: Borrow-Stress 0–4 -----------------------------------------------
+def _borrow_stress(row):
+    """
+    Berechnet einen einfachen Borrow-Stress-Level 0–4 aus
+    borrow_rate (% p.a.) und borrow_avail (verfügbare Shares).
+
+    0 = keine Daten
+    1 = entspannt (billig & reichlich verfügbar)
+    2 = leicht angespannt
+    3 = angespannt
+    4 = extrem / Squeeze-Gefahr
+    """
+    rate = row.get("borrow_rate")
+    avail = row.get("borrow_avail")
+
+    # 0 = keine Daten / unlesbare Werte
+    if pd.isna(rate) or pd.isna(avail):
+        return 0
+    try:
+        r = float(rate)
+        a = float(avail)
+    except Exception:
+        return 0
+
+    # Rate-Score (1–4)
+    if r <= 0.5:
+        rate_score = 1
+    elif r <= 2.0:
+        rate_score = 2
+    elif r <= 10.0:
+        rate_score = 3
+    else:
+        rate_score = 4
+
+    # Availability-Score (1–4)
+    if a >= 1_000_000:
+        avail_score = 1
+    elif a >= 200_000:
+        avail_score = 2
+    elif a >= 50_000:
+        avail_score = 3
+    else:
+        avail_score = 4
+
+    return int(max(rate_score, avail_score))
+
 
 def build(out):
     # --- Collect symbols from available sets
@@ -98,6 +152,10 @@ def build(out):
 
     earn = _read_json_to_df(f"{DOCS}/earnings_next.json", f"{DOCS}/earnings_next.json.gz")
     _norm_symbol(earn); sets.append(earn[["symbol"]]) if earn is not None else None
+
+    # NEU: Short-Interest/Borrow (iBorrowDesk)
+    shorti = _read_csv_any(f"{PROC}/short_interest.csv", f"{PROC}/short_interest.csv.gz")
+    _norm_symbol(shorti); sets.append(shorti[["symbol"]]) if shorti is not None else None
 
     if not sets:
         raise SystemExit("Keine Eingabedateien gefunden – Master kann nicht gebaut werden.")
@@ -220,18 +278,29 @@ def build(out):
         ] if c in rev.columns]
         master = _left(master, rev, cols=keep)
 
+    # --- NEU: Short-Interest / Borrow + Stress 0–4
+    if shorti is not None:
+        keep = [c for c in [
+            "symbol", "si_date", "si_shares", "float_shares",
+            "si_pct_float", "borrow_rate", "borrow_avail", "ibd_status"
+        ] if c in shorti.columns]
+        master = _left(master, shorti, cols=keep)
+
+        if "borrow_rate" in master.columns or "borrow_avail" in master.columns:
+            master["borrow_stress"] = master.apply(_borrow_stress, axis=1)
+
     # --- derived: stance
     master["stance"] = master.apply(_stance_from_dir, axis=1)
 
     # --- tidy & types
-    for c in ["next_expiry", "expiry", "earnings_next", "opt_expiry"]:
+    for c in ["next_expiry", "expiry", "earnings_next", "opt_expiry", "si_date"]:
         if c in master.columns:
             try:
                 master[c] = pd.to_datetime(master[c], errors="coerce").dt.date
             except Exception:
                 pass
 
-    # order columns (inkl. neuer opt_* Felder)
+    # order columns (inkl. neuer opt_* und Borrow-Felder)
     preferred = [
         "symbol", "name", "sector", "industry",
         "stance", "dir", "strength",
@@ -243,7 +312,9 @@ def build(out):
         "hv10", "hv20", "hv30", "hv60",
         "cds_proxy",
         "marketcap", "pe", "pb", "ps", "ev_ebitda", "beta",
-        "currency"
+        "currency",
+        "si_date", "si_shares", "float_shares", "si_pct_float",
+        "borrow_rate", "borrow_avail", "borrow_stress", "ibd_status",
     ]
     cols = [c for c in preferred if c in master.columns] + \
            [c for c in master.columns if c not in preferred]
@@ -252,6 +323,7 @@ def build(out):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     master.to_csv(out, index=False)
     print(f"✅ wrote {out} with {len(master)} rows, {len(master.columns)} cols")
+
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

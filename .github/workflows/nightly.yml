@@ -750,11 +750,6 @@ jobs:
           python scripts/fetch_cftc_energy_disagg.py
           zcat data/processed/cot_disagg_energy_raw.csv.gz | head -n 20 || true
 
-      - name: Build COT Energy Coverage
-        run: |
-          python scripts/build_cot_energy_coverage.py
-          head -n 40 data/reports/cot_energy_coverage.csv || true
-
       - name: Merge COT Energy into 20y Disagg
         run: |
           set -euo pipefail
@@ -762,8 +757,6 @@ jobs:
           echo "== Merged COT 20y Disagg (Socrata + Energy TXT) =="
           ls -lh data/processed/cot_20y_disagg_merged.csv.gz || true
           zcat data/processed/cot_20y_disagg_merged.csv.gz | head -n 20 || true
-
-
 
       # -------------------- HV (historische Volatilität) ---------------------
       - name: Build HV summary (Stooq → hv20/hv60, mit yfinance-Fallback)

@@ -307,7 +307,13 @@ jobs:
           import requests
           import pandas as pd
 
-          BASE_URL = "https://iborrowdesk.com/api/ticker/"
+          # ---- Finnhub Basis ----
+          FH_BASE = "https://finnhub.io/api/v1"
+          FH_TOKEN = os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
+
+          # ---- iBorrowDesk Basis ----
+          IBD_BASE = "https://iborrowdesk.com/api/ticker/"
+
           OUT_PATH = "data/processed/short_interest.csv"
 
           # ----------------- Watchlist-Helfer -----------------
@@ -317,12 +323,7 @@ jobs:
                   return []
               df = pd.read_csv(path)
               col = "symbol" if "symbol" in df.columns else df.columns[0]
-              return (
-                  df[col]
-                  .dropna()
-                  .astype(str)
-                  .tolist()
-              )
+              return df[col].dropna().astype(str).tolist()
 
           def read_watchlist_txt(path: str) -> List[str]:
               if not path or not os.path.exists(path):
@@ -355,18 +356,23 @@ jobs:
               s = str(raw).strip().upper()
               if not s:
                   return None
+
               # Kommentare entfernen
               if "#" in s:
                   s = s.split("#", 1)[0].strip()
+
               # interne Suffixe wie ,US_IG / ,EU_IG entfernen
               if "," in s:
                   s = s.split(",", 1)[0].strip()
+
               if not s:
                   return None
+
               # EU-/Nicht-US-Listings hart rausfiltern
               for suf in EU_SUFFIXES:
                   if s.endswith(suf):
                       return None
+
               # sehr einfache Plausibilitätsprüfung: nur A–Z/0–9/.-_ zulassen
               for ch in s:
                   if ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._":
@@ -396,13 +402,105 @@ jobs:
                       us.add(sym)
 
               uni = sorted(us)
-              print("US-Universum für iBorrowDesk:", uni)
+              print("US-Universum für Short Interest:", uni)
               return uni
+
+          # ----------------- Hilfsfunktionen Finnhub -----------------
+
+          def q_fh(path: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+              if not FH_TOKEN:
+                  return None
+              p = dict(params or {})
+              p["token"] = FH_TOKEN
+              url = FH_BASE + path
+              for i in range(3):
+                  try:
+                      r = requests.get(url, params=p, timeout=30)
+                      if r.status_code == 200:
+                          try:
+                              return r.json()
+                          except Exception:
+                              return None
+                  except Exception:
+                      pass
+                  time.sleep(1 + 2 * i)
+              return None
+
+          def fetch_finnhub_short(sym: str) -> Dict[str, Any]:
+              """
+              Holt Short Interest + Float + Borrow von Finnhub (falls verfügbar).
+              Gibt KEINEN Fehler aus, sondern leere Felder wenn nichts da ist.
+              """
+              out: Dict[str, Any] = {
+                  "fh_si_date": None,
+                  "fh_si_shares": None,
+                  "fh_float_shares": None,
+                  "fh_si_pct_float": None,
+                  "fh_borrow_rate": None,
+                  "fh_borrow_avail": None,
+              }
+
+              if not FH_TOKEN:
+                  return out
+
+              # Short-Interest Historie (letzten Eintrag nehmen)
+              try:
+                  si = q_fh("/stock/short-interest", {"symbol": sym, "from": "2019-01-01", "to": ""}) or {}
+                  data = si.get("data") if isinstance(si, dict) else None
+                  last = (data or [{}])[-1] if data else {}
+                  si_sh = last.get("shortInterest") or last.get("short_interest")
+                  si_dt = last.get("date") or last.get("t")
+                  out["fh_si_shares"] = si_sh
+                  out["fh_si_date"] = si_dt
+                  # evtl. Prozente direkt aus dem Datensatz
+                  pct = (
+                      last.get("shortInterestPercentFloat")
+                      or last.get("shortInterestFloat")
+                      or last.get("short_float")
+                  )
+                  if pct is not None:
+                      out["fh_si_pct_float"] = float(pct)
+              except Exception:
+                  pass
+
+              # Float / Shares
+              try:
+                  fl = q_fh("/stock/float", {"symbol": sym}) or {}
+                  float_sh = fl.get("floatShares") or fl.get("float_shares")
+                  out["fh_float_shares"] = float_sh
+                  # wenn wir Shares + Float haben, Prozent selbst berechnen
+                  if float_sh and out["fh_si_shares"] and out.get("fh_si_pct_float") is None:
+                      try:
+                          out["fh_si_pct_float"] = 100.0 * float(out["fh_si_shares"]) / float(float_sh)
+                      except Exception:
+                          pass
+              except Exception:
+                  pass
+
+              # Borrow-Infos (zusätzliche Quelle für Fee/Avail)
+              try:
+                  br = q_fh("/stock/borrow", {"symbol": sym}) or {}
+                  br_data = br.get("data") if isinstance(br, dict) else None
+                  br_last = (br_data or [{}])[-1] if br_data else {}
+                  br_rate = (
+                      br_last.get("rate")
+                      or br_last.get("feeRate")
+                      or br_last.get("fr")
+                  )
+                  br_avail = br_last.get("shares") or br_last.get("available")
+                  if br_rate is not None:
+                      out["fh_borrow_rate"] = br_rate
+                  if br_avail is not None:
+                      out["fh_borrow_avail"] = br_avail
+              except Exception:
+                  pass
+
+              return out
 
           # ----------------- iBorrowDesk-Fetch -----------------
 
           def fetch_iborrowdesk(sym: str) -> Dict[str, Any]:
-              url = BASE_URL + sym
+              url = IBD_BASE + sym
               headers = {
                   "User-Agent": (
                       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -416,27 +514,19 @@ jobs:
                   r = requests.get(url, headers=headers, timeout=20)
               except Exception as e:
                   return {
-                      "symbol": sym,
-                      "si_source": "iborrowdesk",
-                      "si_date": None,
-                      "si_shares": None,
-                      "float_shares": None,
-                      "si_pct_float": None,
-                      "borrow_rate": None,
-                      "borrow_avail": None,
+                      "ibd_date": None,
+                      "ibd_available": None,
+                      "ibd_fee": None,
+                      "ibd_rebate": None,
                       "ibd_status": f"error_request:{e}",
                   }
 
               if not r.ok:
                   return {
-                      "symbol": sym,
-                      "si_source": "iborrowdesk",
-                      "si_date": None,
-                      "si_shares": None,
-                      "float_shares": None,
-                      "si_pct_float": None,
-                      "borrow_rate": None,
-                      "borrow_avail": None,
+                      "ibd_date": None,
+                      "ibd_available": None,
+                      "ibd_fee": None,
+                      "ibd_rebate": None,
                       "ibd_status": f"http_{r.status_code}",
                   }
 
@@ -444,47 +534,29 @@ jobs:
                   j = r.json()
               except Exception as e:
                   return {
-                      "symbol": sym,
-                      "si_source": "iborrowdesk",
-                      "si_date": None,
-                      "si_shares": None,
-                      "float_shares": None,
-                      "si_pct_float": None,
-                      "borrow_rate": None,
-                      "borrow_avail": None,
+                      "ibd_date": None,
+                      "ibd_available": None,
+                      "ibd_fee": None,
+                      "ibd_rebate": None,
                       "ibd_status": f"json_error:{e}",
                   }
 
               daily = j.get("daily") or []
               if not daily:
                   return {
-                      "symbol": sym,
-                      "si_source": "iborrowdesk",
-                      "si_date": None,
-                      "si_shares": None,
-                      "float_shares": None,
-                      "si_pct_float": None,
-                      "borrow_rate": None,
-                      "borrow_avail": None,
+                      "ibd_date": None,
+                      "ibd_available": None,
+                      "ibd_fee": None,
+                      "ibd_rebate": None,
                       "ibd_status": "no_daily_data",
                   }
 
               last = daily[-1] or {}
-              date  = last.get("date")
-              avail = last.get("available")
-              fee   = last.get("fee")
-              rebate = last.get("rebate")
-
               return {
-                  "symbol": sym,
-                  "si_source": "iborrowdesk",
-                  "si_date": date,
-                  "si_shares": None,
-                  "float_shares": None,
-                  "si_pct_float": None,
-                  "borrow_rate": fee,
-                  "borrow_avail": avail,
-                  "ibd_rebate": rebate,
+                  "ibd_date": last.get("date"),
+                  "ibd_available": last.get("available"),
+                  "ibd_fee": last.get("fee"),
+                  "ibd_rebate": last.get("rebate"),
                   "ibd_high_available": last.get("high_available"),
                   "ibd_low_available": last.get("low_available"),
                   "ibd_high_fee": last.get("high_fee"),
@@ -494,19 +566,60 @@ jobs:
                   "ibd_status": "ok",
               }
 
+          # ----------------- Main -----------------
+
           def main():
               os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-              universe = build_universe()
-              if not universe:
-                  print("Keine US-Symbole für iBorrowDesk gefunden.")
+              uni = build_universe()
+              if not uni:
+                  print("Keine US-Symbole für Short Interest gefunden.")
                   return
 
               rows = []
-              for i, sym in enumerate(universe, start=1):
-                  print(f"[{i}/{len(universe)}] Hole iBorrowDesk für {sym} …")
-                  row = fetch_iborrowdesk(sym)
+              for i, sym in enumerate(uni, start=1):
+                  print(f"[{i}/{len(uni)}] SI für {sym} …")
+
+                  fh = fetch_finnhub_short(sym)
+                  ibd = fetch_iborrowdesk(sym)
+
+                  # Kanonische Felder für den Master:
+                  si_date = fh.get("fh_si_date") or ibd.get("ibd_date")
+                  si_shares = fh.get("fh_si_shares")
+                  float_sh = fh.get("fh_float_shares")
+                  si_pct = fh.get("fh_si_pct_float")
+
+                  # Borrow rate/avail – erst iBorrowDesk, dann Finnhub:
+                  borrow_rate = ibd.get("ibd_fee") or fh.get("fh_borrow_rate")
+                  borrow_avail = ibd.get("ibd_available") or fh.get("fh_borrow_avail")
+
+                  si_source = None
+                  if fh.get("fh_si_shares") or fh.get("fh_si_pct_float"):
+                      si_source = "finnhub"
+                  if ibd.get("ibd_fee") or ibd.get("ibd_available"):
+                      si_source = (si_source + "+ibd") if si_source else "ibd"
+
+                  row = {
+                      "symbol": sym,
+                      "si_source": si_source,
+                      "si_date": si_date,
+                      "si_shares": si_shares,
+                      "float_shares": float_sh,
+                      "si_pct_float": si_pct,
+                      "borrow_rate": borrow_rate,
+                      "borrow_avail": borrow_avail,
+                      # Diagnose-Felder:
+                      "fh_si_date": fh.get("fh_si_date"),
+                      "fh_si_shares": fh.get("fh_si_shares"),
+                      "fh_float_shares": fh.get("fh_float_shares"),
+                      "fh_si_pct_float": fh.get("fh_si_pct_float"),
+                      "fh_borrow_rate": fh.get("fh_borrow_rate"),
+                      "fh_borrow_avail": fh.get("fh_borrow_avail"),
+                  }
+                  row.update(ibd)  # ibd_* Felder anhängen
                   rows.append(row)
-                  time.sleep(0.3)
+
+                  # klein wenig schlafen, um API/Website nicht zu stressen
+                  time.sleep(0.4)
 
               df = pd.DataFrame(rows)
               df.to_csv(OUT_PATH, index=False)
@@ -515,6 +628,7 @@ jobs:
           if __name__ == "__main__":
               main()
           PY
+
 
 
       - name: Fetch short interest (iBorrowDesk Website)

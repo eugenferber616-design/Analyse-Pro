@@ -1,11 +1,11 @@
 {
-  "ts": "2025-11-18T02:20:34Z",
+  "ts": "2025-11-18T17:15:25Z",
   "watchlist": "watchlists/mylist.txt",
   "overrides": "watchlists/earnings_overrides.csv",
-  "rows": 414,
+  "rows": 410,
   "symbols": 19,
   "errors": [],
-  "missing": 8,
+  "missing": 9,
   "files": {
     "earnings_results_csv": "data/processed/earnings_results.csv",
     "earnings_results_gz": "data/processed/earnings_results.csv.gz",

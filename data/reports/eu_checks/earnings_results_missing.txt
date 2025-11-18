@@ -1,4 +1,5 @@
 symbol,tried,status
+SAP.DE,SAP,no-data
 SIE.DE,SIE,no-data
 BAS.DE,BAS,no-data
 BAYN.DE,BAYN,no-data

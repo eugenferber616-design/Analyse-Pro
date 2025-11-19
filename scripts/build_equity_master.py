@@ -6,7 +6,8 @@ Builds one wide master file per equity symbol by merging all processed datasets.
 WICHTIG:
 - KEINE Options- oder Richtungsdaten mehr (dir/strength/stance/next_expiry/Strikes).
 - Fokus: Fundamentals, HV, CDS-Proxy, Revisions, Earnings-Nächster Termin,
-         Short Interest + Borrow-Stress, Peers, Dividenden, Splits, Insider.
+         Short Interest + Borrow-Stress, Peers, Dividenden, Splits, Insider,
+         sowie Factor-Scores (Value/Quality/Growth/Momentum/Risk/Composite).
 
 Input (best effort, alle optional):
   data/processed/fundamentals_core.csv(.gz)
@@ -19,6 +20,7 @@ Input (best effort, alle optional):
   data/processed/dividends.csv(.gz)
   data/processed/splits.csv(.gz)
   data/processed/insider_tx.csv(.gz)
+  data/processed/factor_scores.csv(.gz)
 
 Output:
   data/processed/equity_master.csv  (wird im Workflow später gezippt)
@@ -166,9 +168,11 @@ def build(out_path: str):
                                 f"{PROC}/splits.csv.gz"))
     ins    = norm_symbol(rd_csv(f"{PROC}/insider_tx.csv",
                                 f"{PROC}/insider_tx.csv.gz"))
+    fscores = norm_symbol(rd_csv(f"{PROC}/factor_scores.csv",
+                                 f"{PROC}/factor_scores.csv.gz"))
 
     sets = []
-    for df in (fnda, hv, cds, rev, earn, shorti, peers, divs, splits, ins):
+    for df in (fnda, hv, cds, rev, earn, shorti, peers, divs, splits, ins, fscores):
         if df is not None and "symbol" in df.columns:
             sets.append(df[["symbol"]])
 
@@ -368,6 +372,14 @@ def build(out_path: str):
                 )
                 master = left(master, agg, cols=agg.columns.tolist())
 
+    # ------------------ Factor Scores reinmergen ---------
+    if fscores is not None and not fscores.empty:
+        # nur Score-Spalten übernehmen, um Fundamentals nicht zu überschreiben
+        score_cols = [c for c in fscores.columns if c.endswith("_score")]
+        if score_cols:
+            cols = ["symbol"] + score_cols
+            master = left(master, fscores, cols=cols)
+
     # ------------------ Spalten sortieren ----------------
     preferred = [
         "symbol", "name", "sector", "industry",
@@ -393,6 +405,9 @@ def build(out_path: str):
         "insider_last_tx_shares", "insider_last_tx_price",
         "insider_buy_shares_12m", "insider_sell_shares_12m",
         "insider_buy_trades_12m", "insider_sell_trades_12m",
+        # Scores (neu)
+        "value_score", "quality_score", "growth_score",
+        "momentum_score", "risk_score", "composite_score",
     ]
     cols = [c for c in preferred if c in master.columns] + \
            [c for c in master.columns if c not in preferred]

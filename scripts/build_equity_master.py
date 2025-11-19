@@ -4,7 +4,7 @@
 Builds one wide master file per equity symbol by merging all processed datasets.
 
 WICHTIG:
-- KEINE Options- oder Richtungsdaten (dir/strength/stance/next_expiry/Strikes).
+- KEINE Options- oder Richtungsdaten mehr (dir/strength/stance/next_expiry/Strikes).
 - Fokus: Fundamentals, HV, CDS-Proxy, Revisions, Earnings-Nächster Termin,
          Short Interest + Borrow-Stress, Peers, Dividenden, Splits, Insider.
 
@@ -289,19 +289,17 @@ def build(out_path: str):
         # Datum: Transaction-Date bevorzugen, sonst Filing-Date
         tx_date_col = None
         if "transaction_date" in df_ins.columns:
-            df_ins["transaction_date"] = pd.to_datetime(
-                df_ins["transaction_date"], errors="coerce"
-            )
             tx_date_col = "transaction_date"
-        if "filing_date" in df_ins.columns:
-            df_ins["filing_date"] = pd.to_datetime(
-                df_ins["filing_date"], errors="coerce"
-            )
-            if tx_date_col is None:
-                tx_date_col = "filing_date"
+        elif "filing_date" in df_ins.columns:
+            tx_date_col = "filing_date"
 
         if tx_date_col is not None:
-            df_ins["tx_date"] = df_ins[tx_date_col]
+            # alles als UTC-Timestamps parsen (timezone-aware)
+            df_ins["tx_date"] = pd.to_datetime(
+                df_ins[tx_date_col],
+                errors="coerce",
+                utc=True
+            )
 
             # Letzte Transaktion je Symbol
             last_idx = (
@@ -314,7 +312,8 @@ def build(out_path: str):
 
             last_cols = ["symbol"]
             if "tx_date" in last.columns:
-                last["insider_last_tx_date"] = last["tx_date"].dt.date
+                # als Naive-Date (ohne TZ) in Master schreiben
+                last["insider_last_tx_date"] = last["tx_date"].dt.tz_convert(None).dt.date
                 last_cols.append("insider_last_tx_date")
             if "transaction_code" in last.columns:
                 last = last.rename(columns={"transaction_code": "insider_last_tx_code"})
@@ -332,10 +331,12 @@ def build(out_path: str):
             master = left(master, last[last_cols], cols=last_cols)
 
             # 12M-Fenster für Buy/Sell-Summen
-            cutoff = pd.Timestamp.utcnow() - timedelta(days=365)
+            cutoff = pd.Timestamp.now(tz="UTC") - timedelta(days=365)
             w = df_ins[df_ins["tx_date"] >= cutoff].copy()
             if not w.empty and "transaction_code" in w.columns:
                 w["code"] = w["transaction_code"].astype(str).str.upper()
+                is_buy = w["code"].str.startswith("P")   # Purchase
+                is_sell = w["code"].str.startswith("S")  # Sale
 
                 if "change" in w.columns:
                     shares_col = "change"
@@ -353,11 +354,11 @@ def build(out_path: str):
                     w["_shares"] = pd.to_numeric(w[shares_col], errors="coerce")
                     agg_dict["insider_buy_shares_12m"] = (
                         "_shares",
-                        lambda x: x[w.loc[x.index, "code"].str.startswith("P")].sum()
+                        lambda x: x[is_buy.loc[x.index]].sum()
                     )
                     agg_dict["insider_sell_shares_12m"] = (
                         "_shares",
-                        lambda x: x[w.loc[x.index, "code"].str.startswith("S")].sum()
+                        lambda x: x[is_sell.loc[x.index]].sum()
                     )
 
                 agg = (
@@ -367,31 +368,32 @@ def build(out_path: str):
                 )
                 master = left(master, agg, cols=agg.columns.tolist())
 
-    # ------------------ Pflichtspalten sicherstellen ----------------
-    # Wenn einzelne Datensätze fehlen, wollen wir die Spalten trotzdem im Master haben
-    required_cols = [
-        "name", "sector", "industry", "currency",
-        "marketcap", "sharesoutstanding", "pe", "pb", "ps", "ev_ebitda", "beta",
+    # ------------------ Spalten sortieren ----------------
+    preferred = [
+        "symbol", "name", "sector", "industry",
+        # HV
         "hv10", "hv20", "hv30", "hv60",
+        # Earnings/Revisions
         "earnings_next", "eps_rev_3m", "rev_rev_3m",
         "eps_surprise", "rev_surprise",
+        # CDS / Fundamentals
         "cds_proxy",
+        "marketcap", "pe", "pb", "ps", "ev_ebitda", "beta", "currency",
+        # Short Interest
         "si_date", "si_shares", "float_shares", "si_pct_float",
         "borrow_rate", "borrow_avail", "borrow_stress", "si_source",
+        # Peers
         "peers_count",
+        # Dividenden
         "last_div_date", "last_div_amount", "div_count_total",
+        # Splits
         "last_split_date", "last_split_ratio", "split_count_total",
+        # Insider
         "insider_last_tx_date", "insider_last_tx_code",
         "insider_last_tx_shares", "insider_last_tx_price",
         "insider_buy_shares_12m", "insider_sell_shares_12m",
         "insider_buy_trades_12m", "insider_sell_trades_12m",
     ]
-    for c in required_cols:
-        if c not in master.columns:
-            master[c] = pd.NA
-
-    # ------------------ Spalten sortieren ----------------
-    preferred = ["symbol"] + required_cols
     cols = [c for c in preferred if c in master.columns] + \
            [c for c in master.columns if c not in preferred]
     master = master[cols]

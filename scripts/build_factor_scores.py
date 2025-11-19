@@ -183,7 +183,11 @@ def main():
             how="left",
         )
 
-    cds = rd("cds_proxy.csv") or rd("cds_proxy.csv.gz")
+    # CDS robust laden (kein or auf DataFrame)
+    cds = rd("cds_proxy.csv")
+    if cds is None or cds.empty:
+        cds = rd("cds_proxy.csv.gz")
+
     if cds is not None and not cds.empty:
         # Annahme: Spalten symbol, proxy_spread o.ä.
         # Wir nehmen die erste passende Spalte als Credit-Prox
@@ -202,7 +206,10 @@ def main():
             fund = fund.rename(columns={credit_col: "credit_spread"})
 
     # Short Interest (optional) – nur für Risk-Score, wenn vorhanden
-    si = rd("short_interest.csv") or rd("short_interest.csv.gz")
+    si = rd("short_interest.csv")
+    if si is None or si.empty:
+        si = rd("short_interest.csv.gz")
+
     if si is not None and not si.empty:
         si["symbol"] = si["symbol"].astype(str).str.upper()
         cols = [c for c in si.columns if c in ("si_pct_float", "borrow_rate")]
@@ -246,7 +253,6 @@ def main():
     # ------------------------------------------------------------------ #
     # 4) PRICE-FEATURES je SYMBOL REINMERGEN
     # ------------------------------------------------------------------ #
-    # Wir bauen ein kleines dict symbol -> {rtn_*, near_52w_high}
     all_syms = fund["symbol"].dropna().astype(str).unique().tolist()
     price_rows = []
 
@@ -346,11 +352,7 @@ def main():
 
     # ------------------------------------------------------------------ #
     # 9) GROWTH-SCORE (LIGHT) – OPTIONAL
-    #    -> hier zunächst nur Umsatz-/EPS-Wachstum, falls vorhanden
     # ------------------------------------------------------------------ #
-    # Wir versuchen, einige Growth-Kennzahlen aus fundamentals_core
-    # zu verwenden, z.B. rev_yoy, rev_cagr_3y, eps_yoy. Wenn es sie
-    # nicht gibt, bleibt growth_score = NaN.
     growth_cols = []
     for cname in fund.columns:
         lc = cname.lower()
@@ -376,9 +378,7 @@ def main():
         fund["growth_score"] = np.nan
 
     # ------------------------------------------------------------------ #
-    # 10) COMPOSITE-SCORE (wie im Guide)
-    #     Composite = 0.30*Quality + 0.25*Growth + 0.20*Value
-    #                 + 0.15*Momentum - 0.10*Risk
+    # 10) COMPOSITE-SCORE
     # ------------------------------------------------------------------ #
     v = fund["value_score"].astype(float)
     q = fund["quality_score"].astype(float)

@@ -3,21 +3,33 @@
 """
 build_factor_scores.py
 ----------------------
-Baut einfache Value-/Quality-/Momentum-/Risk-Scores (0–100) pro Aktie
-auf Basis deiner bestehenden Dateien:
+Baut Value-/Quality-/Growth-/Momentum-/Risk-Scores (0–100) pro Aktie
+auf Basis deiner bestehenden Dateien und leitet daraus mehrere Rankings ab:
 
+Input:
 - data/processed/fundamentals_core.csv
 - data/processed/hv_summary.csv.gz
 - data/processed/cds_proxy.csv (oder .csv.gz)
-- data/processed/earnings_results.csv.gz (optional, nur Growth-Light)
+- data/processed/short_interest.csv(.gz) (optional)
+- data/processed/index_membership.csv (optional, für echtes R2K)
 - data/prices/{SYMBOL}.csv (Returns 1/3/6/12M, 52W-High-Nähe)
 
 Output:
 - data/processed/factor_scores.csv
 
-Hinweis:
-- Sektor-neutralisierte Perzentile (wo sinnvoll)
-- Fehlende Spalten werden einfach ignoriert
+Scores (0–100):
+- value_score, quality_score, growth_score, momentum_score, risk_score, composite_score
+
+Letter-Grades A–D:
+- global_grade    (A–D, globales Ranking von composite_score)
+- momentum_grade  (A–D, globales Ranking von momentum_score)
+- r2k_growth_grade (A–D, Ranking von growth_score NUR innerhalb Russell-Subset)
+
+Mapping (Perzentile):
+- A: oberste 20 %
+- B: 50–80 %
+- C: 20–50 %
+- D: unterste 20 %
 """
 
 import os
@@ -156,6 +168,37 @@ def compute_price_features(sym: str) -> Dict[str, float]:
     return out
 
 
+def scores_to_grade(series: pd.Series) -> pd.Series:
+    """
+    Mappt eine Score-Spalte (0–100) auf Letter-Grades A–D anhand
+    globaler Perzentile:
+      A: oberste 20%
+      B: 50–80%
+      C: 20–50%
+      D: unterste 20%
+    """
+    s = pd.to_numeric(series, errors="coerce")
+    grades = pd.Series(np.nan, index=s.index, dtype="object")
+    mask = s.notna()
+    if mask.sum() == 0:
+        return grades
+
+    ranks = s[mask].rank(method="average", pct=True)
+
+    for idx, r in ranks.items():
+        if r >= 0.80:
+            g = "A"
+        elif r >= 0.50:
+            g = "B"
+        elif r >= 0.20:
+            g = "C"
+        else:
+            g = "D"
+        grades.at[idx] = g
+
+    return grades
+
+
 def main():
     os.makedirs(BASE_PROC, exist_ok=True)
 
@@ -167,11 +210,11 @@ def main():
         raise SystemExit("fundamentals_core.csv fehlt oder ist leer")
 
     # Sicherstellen, dass Basis-Spalten existieren
-    fund = ensure_cols(fund, ["symbol", "sector", "industry"])
+    fund = ensure_cols(fund, ["symbol", "sector", "industry", "marketcap"])
     fund["symbol"] = fund["symbol"].astype(str).str.upper()
 
     # ------------------------------------------------------------------ #
-    # 2) HV / BETA / CREDIT / SHORT-RISK MERGEN
+    # 2) HV / CREDIT / SHORT-RISK MERGEN
     # ------------------------------------------------------------------ #
     hv = rd("hv_summary.csv.gz")
     if hv is not None and not hv.empty:
@@ -247,7 +290,6 @@ def main():
     ]
 
     # Momentum (Returns hoch = gut, Nähe 52W-High hoch = gut)
-    # Diese Spalten werden wir gleich noch aus Preisen anreichern:
     momo_cols = ["rtn_1m", "rtn_3m", "rtn_6m", "rtn_12m", "near_52w_high"]
 
     # ------------------------------------------------------------------ #
@@ -378,7 +420,7 @@ def main():
         fund["growth_score"] = np.nan
 
     # ------------------------------------------------------------------ #
-    # 10) COMPOSITE-SCORE
+    # 10) COMPOSITE-SCORE (global)
     # ------------------------------------------------------------------ #
     v = fund["value_score"].astype(float)
     q = fund["quality_score"].astype(float)
@@ -397,12 +439,44 @@ def main():
     fund["composite_score"] = composite
 
     # ------------------------------------------------------------------ #
-    # 11) OUTPUT REDUZIEREN & SCHREIBEN
+    # 11) LETTER-GRADES (global + Momentum + R2K-Growth)
+    # ------------------------------------------------------------------ #
+    # Globaler Gesamt-Grade
+    fund["global_grade"] = scores_to_grade(fund["composite_score"])
+    # Separater Momentum-Grade
+    fund["momentum_grade"] = scores_to_grade(fund["momentum_score"])
+
+    # --- Russell-2000-Subset bestimmen ---
+    idx_df = rd("index_membership.csv")
+    mask_r2k = pd.Series(False, index=fund.index)
+
+    if idx_df is not None and not idx_df.empty and "symbol" in idx_df.columns and "index" in idx_df.columns:
+        idx_df["symbol"] = idx_df["symbol"].astype(str).str.upper()
+        idx_df["index"] = idx_df["index"].astype(str).str.upper()
+        r2k_syms = idx_df.loc[idx_df["index"].str.contains("RUSSELL"), "symbol"].unique()
+        mask_r2k = fund["symbol"].isin(r2k_syms)
+    else:
+        # Fallback: Small-Cap-Proxy über Marketcap (untere 40% = "R2K-ähnlich")
+        mc = pd.to_numeric(fund["marketcap"], errors="coerce")
+        if mc.notna().sum() > 10:
+            thresh = mc.quantile(0.40)
+            mask_r2k = mc <= thresh
+
+    # R2K-Growth-Grade nur für dieses Subset
+    fund["r2k_growth_grade"] = np.nan
+    if mask_r2k.any():
+        subset = fund.loc[mask_r2k, "growth_score"]
+        grades_r2k = scores_to_grade(subset)
+        fund.loc[mask_r2k, "r2k_growth_grade"] = grades_r2k
+
+    # ------------------------------------------------------------------ #
+    # 12) OUTPUT REDUZIEREN & SCHREIBEN
     # ------------------------------------------------------------------ #
     out_cols = [
         "symbol",
         "sector",
         "industry",
+        "marketcap",
         # Basis-Features (optional mitgeben)
         "pe",
         "pb",
@@ -432,6 +506,10 @@ def main():
         "momentum_score",
         "risk_score",
         "composite_score",
+        # Grades / Rankings
+        "global_grade",
+        "momentum_grade",
+        "r2k_growth_grade",
     ]
 
     out_cols = [c for c in out_cols if c in fund.columns]

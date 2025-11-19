@@ -961,6 +961,12 @@ jobs:
           head -n 5 data/processed/riskindex_timeseries.csv || true
           cat data/processed/riskindex_snapshot.json || true
 
+      - name: Build factor_scores (Value/Quality/Momentum/Risk/Composite)
+        run: |
+            python scripts/build_factor_scores.py
+            head -n 20 data/processed/factor_scores.csv || true
+
+
       # ===================== ALLES KOMPRIMIEREN ===============================
       - name: Compress ALL processed & docs to .gz
         shell: bash

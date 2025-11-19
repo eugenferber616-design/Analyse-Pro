@@ -164,7 +164,7 @@ def normalize_finnhub_rows(sym: str, api_sym: str, rows: List[dict]) -> List[dic
         })
     return out
 
-# ───────────────────────────── Provider: Yahoo Finance ─────────────────────────────
+# ───────────────────────────── Provider: Yahoo Finance ───────────────────────
 _YF_AVAILABLE = None
 def yf_available() -> bool:
     global _YF_AVAILABLE
@@ -203,7 +203,8 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
                         "revenue_actual": None, "revenue_estimate": None, "surprise_rev_pct": None,
                         "currency": "", "source": "yahoo.ed"
                     })
-        except Exception: pass
+        except Exception:
+            pass
 
         # 2) quarterly_earnings (EPS + Revenue)
         try:
@@ -223,7 +224,8 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
                         "revenue_actual": rr.get("revenue_actual"), "revenue_estimate": None,
                         "surprise_rev_pct": None, "currency": "", "source": "yahoo.qe"
                     })
-        except Exception: pass
+        except Exception:
+            pass
 
         # 3) quarterly_financials (nur Revenue)
         try:
@@ -242,7 +244,8 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
                             "revenue_actual": rev, "revenue_estimate": None, "surprise_rev_pct": None,
                             "currency": "", "source": "yahoo.qf"
                         })
-        except Exception: pass
+        except Exception:
+            pass
 
     except Exception:
         return rows, api_sym
@@ -355,6 +358,42 @@ def write_missing(rows: List[Dict[str, str]], path: Path):
 def write_report(report: dict, path: Path):
     with open(path, "w", encoding="utf-8") as f: json.dump(report, f, indent=2)
 
+# ───────────────────────────── Year/Quarter aus period ableiten ─────────────
+def infer_year_quarter_from_period(df: pd.DataFrame) -> pd.DataFrame:
+    """Füllt year/quarter, wenn sie leer sind, aus period (z.B. '2023Q4' oder Datum)."""
+    if "period" not in df.columns or "year" not in df.columns or "quarter" not in df.columns:
+        return df
+
+    def _yq(row):
+        y, q = row.get("year"), row.get("quarter")
+        if pd.notna(y) and pd.notna(q):
+            return y, q
+        p = row.get("period")
+        if pd.isna(p):
+            return y, q
+        s = str(p)
+        m = re.match(r"^(\d{4})Q([1-4])$", s)
+        if m:
+            try:
+                return float(m.group(1)), float(m.group(2))
+            except Exception:
+                return y, q
+        d = parse_iso_date(s)
+        if d:
+            try:
+                yy = int(d[:4]); mth = int(d[5:7]); qq = (mth-1)//3 + 1
+                return float(yy), float(qq)
+            except Exception:
+                return y, q
+        return y, q
+
+    yq = df.apply(_yq, axis=1, result_type="expand")
+    yq.columns = ["__year_fix", "__quarter_fix"]
+    df.loc[df["year"].isna(), "year"] = yq.loc[df["year"].isna(), "__year_fix"]
+    df.loc[df["quarter"].isna(), "quarter"] = yq.loc[df["quarter"].isna(), "__quarter_fix"]
+    df = df.drop(columns=["__year_fix","__quarter_fix"])
+    return df
+
 # ───────────────────────────── Main ─────────────────────────────
 def main():
     import argparse
@@ -440,8 +479,14 @@ def main():
     df.loc[m_rev, "surprise_rev_pct"] = (df.loc[m_rev, "revenue_actual"] - df.loc[m_rev, "revenue_estimate"]) / df.loc[m_rev, "revenue_estimate"] * 100.0
 
     # Perioden-Fallback aus year/quarter
-    fp_missing = df["period"].isna() & df["year"].notna() & df["quarter"].notna()
-    df.loc[fp_missing, "period"] = df.loc[fp_missing].apply(lambda r: make_fiscal_period(r["year"], r["quarter"], None), axis=1)
+    if "period" in df.columns and "year" in df.columns and "quarter" in df.columns:
+        fp_missing = df["period"].isna() & df["year"].notna() & df["quarter"].notna()
+        df.loc[fp_missing, "period"] = df.loc[fp_missing].apply(
+            lambda r: make_fiscal_period(r["year"], r["quarter"], None), axis=1
+        )
+
+    # Year/Quarter aus period ableiten (zusätzlich)
+    df = infer_year_quarter_from_period(df)
 
     # Priorisierung & Dedupe
     priority = {"finnhub": 4, "yahoo.ed": 3, "sec": 2, "yahoo.qe": 1, "yahoo.qf": 0}

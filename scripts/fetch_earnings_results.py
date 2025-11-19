@@ -391,7 +391,10 @@ def infer_year_quarter_from_period(df: pd.DataFrame) -> pd.DataFrame:
     yq.columns = ["__year_fix", "__quarter_fix"]
     df.loc[df["year"].isna(), "year"] = yq.loc[df["year"].isna(), "__year_fix"]
     df.loc[df["quarter"].isna(), "quarter"] = yq.loc[df["quarter"].isna(), "__quarter_fix"]
-    df = df.drop(columns=["__year_fix","__quarter_fix"])
+    cols_to_drop = [c for c in ["_year_fix", "_quarter_fix"] if c in df.columns]
+    if cols_to_drop:
+    df = df.drop(columns=cols_to_drop)
+
     return df
 
 # ───────────────────────────── Main ─────────────────────────────

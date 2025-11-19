@@ -2,23 +2,45 @@
 # -*- coding: utf-8 -*-
 """
 Builds one wide master file per equity symbol by merging all processed datasets.
-Inputs (best-effort, optional):
-  - direction_signal, options_signals, options_oi_by_strike, options_oi_summary, options_oi_totals
-  - hv_summary, fundamentals_core, earnings_next.json, cds_proxy, revisions
-  - short_interest (iBorrowDesk Website), peers
-  - dividends, splits, insider_tx
+
+WICHTIG:
+- KEINE Options- oder Richtungsdaten (dir/strength/stance/next_expiry/Strikes).
+- Fokus: Fundamentals, HV, CDS-Proxy, Revisions, Earnings-Nächster Termin,
+         Short Interest + Borrow-Stress, Peers, Dividenden, Splits, Insider.
+
+Input (best effort, alle optional):
+  data/processed/fundamentals_core.csv(.gz)
+  data/processed/hv_summary.csv(.gz)
+  data/processed/cds_proxy.csv(.gz) oder cds_proxy_v3.csv(.gz)
+  data/processed/revisions.csv(.gz)
+  docs/earnings_next.json(.gz)
+  data/processed/short_interest.csv(.gz)
+  data/processed/peers.csv(.gz)
+  data/processed/dividends.csv(.gz)
+  data/processed/splits.csv(.gz)
+  data/processed/insider_tx.csv(.gz)
+
 Output:
-  - data/processed/equity_master.csv  (later gzipped by workflow)
+  data/processed/equity_master.csv  (wird im Workflow später gezippt)
 """
 
-import os, json, argparse, pandas as pd
-from datetime import timedelta
+import os
+import json
+import argparse
+from datetime import datetime, timedelta
+
+import pandas as pd
 
 PROC = "data/processed"
 DOCS = "docs"
 
 
-def _read_csv_any(*candidates):
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+
+def rd_csv(*candidates):
+    """Liest die erste existierende CSV (auch .gz) als DataFrame."""
     for p in candidates:
         if not p:
             continue
@@ -33,11 +55,13 @@ def _read_csv_any(*candidates):
     return None
 
 
-def _read_json_to_df(*candidates, records_key=None):
+def rd_json_to_df(*candidates, records_key=None):
+    """Liest JSON/JSON.GZ und gibt DataFrame zurück."""
     for p in candidates:
         if os.path.exists(p):
             try:
-                data = json.load(open(p, "r", encoding="utf-8"))
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
                 if isinstance(data, list):
                     return pd.DataFrame(data)
                 if isinstance(data, dict):
@@ -49,7 +73,20 @@ def _read_json_to_df(*candidates, records_key=None):
     return None
 
 
-def _left(master, df, on="symbol", cols=None, rename=None):
+def norm_symbol(df, col="symbol"):
+    """Symbol-Spalte vereinheitlichen."""
+    if df is not None and col in df.columns:
+        df[col] = (
+            df[col]
+            .astype(str)
+            .str.upper()
+            .str.strip()
+        )
+    return df
+
+
+def left(master, df, on="symbol", cols=None, rename=None):
+    """Left-Join auf symbol mit optionaler Spaltenauswahl/Umbenennung."""
     if df is None or df.empty:
         return master
     if rename:
@@ -60,29 +97,14 @@ def _left(master, df, on="symbol", cols=None, rename=None):
     return master.merge(df, how="left", on=on)
 
 
-def _norm_symbol(df, col="symbol"):
-    if df is not None and col in df.columns:
-        df[col] = df[col].astype(str).str.upper().str.strip()
-    return df
-
-
-def _stance_from_dir(row):
-    d = row.get("dir")
-    if pd.isna(d):
-        return "neutral"
-    try:
-        d = int(d)
-    except Exception:
-        return "neutral"
-    return "bullish" if d > 0 else ("bearish" if d < 0 else "neutral")
-
-
-# --- Borrow-Stress 0–4 ------------------------------------------------------
-def _borrow_stress(row):
+# Borrow-Stress 0–4 aus Short Interest / Borrow
+def borrow_stress(row):
     """
-    Einfacher Borrow-Stress-Level 0–4 aus borrow_rate (% p.a.) und borrow_avail.
     0 = keine Daten
-    1 = entspannt, 4 = extrem angespannt (Squeeze-Gefahr)
+    1 = entspannt (billig & viel verfügbar)
+    2 = leicht angespannt
+    3 = angespannt
+    4 = extrem / Squeeze-Gefahr
     """
     rate = row.get("borrow_rate")
     avail = row.get("borrow_avail")
@@ -116,362 +138,244 @@ def _borrow_stress(row):
     return int(max(rate_score, avail_score))
 
 
-def build(out):
-    # --- Collect symbols from all available sets -----------------------------
+# --------------------------------------------------------------------------- #
+# Build
+# --------------------------------------------------------------------------- #
+
+def build(out_path: str):
+    # ------------------ Rohdaten laden ------------------
+    fnda   = norm_symbol(rd_csv(f"{PROC}/fundamentals_core.csv",
+                                f"{PROC}/fundamentals_core.csv.gz"))
+    hv     = norm_symbol(rd_csv(f"{PROC}/hv_summary.csv",
+                                f"{PROC}/hv_summary.csv.gz"))
+    cds    = norm_symbol(rd_csv(f"{PROC}/cds_proxy.csv",
+                                f"{PROC}/cds_proxy.csv.gz",
+                                f"{PROC}/cds_proxy_v3.csv",
+                                f"{PROC}/cds_proxy_v3.csv.gz"))
+    rev    = norm_symbol(rd_csv(f"{PROC}/revisions.csv",
+                                f"{PROC}/revisions.csv.gz"))
+    earn   = norm_symbol(rd_json_to_df(f"{DOCS}/earnings_next.json",
+                                       f"{DOCS}/earnings_next.json.gz"))
+    shorti = norm_symbol(rd_csv(f"{PROC}/short_interest.csv",
+                                f"{PROC}/short_interest.csv.gz"))
+    peers  = norm_symbol(rd_csv(f"{PROC}/peers.csv",
+                                f"{PROC}/peers.csv.gz"))
+    divs   = norm_symbol(rd_csv(f"{PROC}/dividends.csv",
+                                f"{PROC}/dividends.csv.gz"))
+    splits = norm_symbol(rd_csv(f"{PROC}/splits.csv",
+                                f"{PROC}/splits.csv.gz"))
+    ins    = norm_symbol(rd_csv(f"{PROC}/insider_tx.csv",
+                                f"{PROC}/insider_tx.csv.gz"))
+
     sets = []
-
-    dirsig = _read_csv_any(f"{PROC}/direction_signal.csv", f"{PROC}/direction_signal.csv.gz")
-    _norm_symbol(dirsig)
-    if dirsig is not None:
-        sets.append(dirsig[["symbol"]])
-
-    optsig = _read_csv_any(f"{PROC}/options_signals.csv", f"{PROC}/options_signals.csv.gz")
-    _norm_symbol(optsig)
-    if optsig is not None:
-        sets.append(optsig[["symbol"]])
-
-    bystrike = _read_csv_any(f"{PROC}/options_oi_by_strike.csv", f"{PROC}/options_oi_by_strike.csv.gz")
-    _norm_symbol(bystrike)
-    if bystrike is not None:
-        sets.append(bystrike[["symbol"]])
-
-    optsum = _read_csv_any(f"{PROC}/options_oi_summary.csv", f"{PROC}/options_oi_summary.csv.gz")
-    _norm_symbol(optsum)
-    if optsum is not None:
-        sets.append(optsum[["symbol"]])
-
-    opttot = _read_csv_any(f"{PROC}/options_oi_totals.csv", f"{PROC}/options_oi_totals.csv.gz")
-    _norm_symbol(opttot)
-    if opttot is not None:
-        sets.append(opttot[["symbol"]])
-
-    hv = _read_csv_any(f"{PROC}/hv_summary.csv", f"{PROC}/hv_summary.csv.gz")
-    _norm_symbol(hv)
-    if hv is not None:
-        sets.append(hv[["symbol"]])
-
-    fnda = _read_csv_any(f"{PROC}/fundamentals_core.csv", f"{PROC}/fundamentals_core.csv.gz")
-    _norm_symbol(fnda)
-    if fnda is not None:
-        sets.append(fnda[["symbol"]])
-
-    cds = _read_csv_any(
-        f"{PROC}/cds_proxy.csv", f"{PROC}/cds_proxy.csv.gz",
-        f"{PROC}/cds_proxy_v3.csv", f"{PROC}/cds_proxy_v3.csv.gz"
-    )
-    _norm_symbol(cds)
-    if cds is not None:
-        sets.append(cds[["symbol"]])
-
-    rev = _read_csv_any(f"{PROC}/revisions.csv", f"{PROC}/revisions.csv.gz")
-    _norm_symbol(rev)
-    if rev is not None:
-        sets.append(rev[["symbol"]])
-
-    earn = _read_json_to_df(f"{DOCS}/earnings_next.json", f"{DOCS}/earnings_next.json.gz")
-    _norm_symbol(earn)
-    if earn is not None:
-        sets.append(earn[["symbol"]])
-
-    shorti = _read_csv_any(f"{PROC}/short_interest.csv", f"{PROC}/short_interest.csv.gz")
-    _norm_symbol(shorti)
-    if shorti is not None:
-        sets.append(shorti[["symbol"]])
-
-    peers = _read_csv_any(f"{PROC}/peers.csv", f"{PROC}/peers.csv.gz")
-    _norm_symbol(peers)
-    if peers is not None:
-        sets.append(peers[["symbol"]])
-
-    divs = _read_csv_any(f"{PROC}/dividends.csv", f"{PROC}/dividends.csv.gz")
-    _norm_symbol(divs)
-    if divs is not None:
-        sets.append(divs[["symbol"]])
-
-    splits = _read_csv_any(f"{PROC}/splits.csv", f"{PROC}/splits.csv.gz")
-    _norm_symbol(splits)
-    if splits is not None:
-        sets.append(splits[["symbol"]])
-
-    insider = _read_csv_any(f"{PROC}/insider_tx.csv", f"{PROC}/insider_tx.csv.gz")
-    _norm_symbol(insider)
-    if insider is not None:
-        sets.append(insider[["symbol"]])
+    for df in (fnda, hv, cds, rev, earn, shorti, peers, divs, splits, ins):
+        if df is not None and "symbol" in df.columns:
+            sets.append(df[["symbol"]])
 
     if not sets:
-        raise SystemExit("Keine Eingabedateien gefunden – Master kann nicht gebaut werden.")
+        raise SystemExit("Keine Inputs gefunden – equity_master kann nicht gebaut werden.")
 
-    universe = pd.concat(sets, ignore_index=True).dropna().drop_duplicates()
+    universe = (
+        pd.concat(sets, ignore_index=True)
+        .dropna()
+        .drop_duplicates()
+    )
     universe["symbol"] = universe["symbol"].astype(str).str.upper().str.strip()
     master = universe.drop_duplicates("symbol").copy()
 
-    # --- direction_signal (bevorzugt) ---------------------------------------
-    if dirsig is not None:
-        ren = {
-            "nearest_dte": "nearest_dte",
-            "next_expiry": "next_expiry",
-            "focus_strike_7": "fs7",
-            "focus_strike_30": "fs30",
-            "focus_strike_60": "fs60",
-        }
-        if "dir" not in dirsig.columns and "direction" in dirsig.columns:
-            ren["direction"] = "dir"
-        if "strength" not in dirsig.columns and "score" in dirsig.columns:
-            ren["score"] = "strength"
-
-        dir_cols = [
-            "symbol", "dir", "strength", "next_expiry", "nearest_dte",
-            "focus_strike_7", "focus_strike_30", "focus_strike_60", "direction", "score"
-        ]
-        cols = [c for c in dir_cols if c in dirsig.columns]
-        master = _left(master, dirsig, cols=cols, rename=ren)
-
-    # --- options_signals (Fallback für dir/strength/Strike) ------------------
-    if optsig is not None:
-        ren = {}
-        if "direction" in optsig.columns:
-            ren["direction"] = "dir"
-        sig_cols = [c for c in ["symbol", "dir", "strength", "expiry", "strike", "direction"]
-                    if c in optsig.columns]
-        master = _left(master, optsig, cols=sig_cols, rename=ren)
-
-    # --- options_oi_by_strike (Focus-Strike + dte) ---------------------------
-    if bystrike is not None:
-        bs = bystrike.copy()
-        if "focus_strike" in bs.columns:
-            bs = bs.rename(columns={"focus_strike": "focus_strike_general"})
-        cols = [c for c in ["symbol", "focus_strike_general", "expiry", "dte"] if c in bs.columns]
-        master = _left(master, bs, cols=cols)
-
-    # --- options_oi_summary (dominanter Verfall pro Symbol) ------------------
-    if optsum is not None and not optsum.empty:
-        s = optsum.copy()
-        if "call_oi" in s.columns:
-            s["call_oi"] = pd.to_numeric(s["call_oi"], errors="coerce")
-        if "put_oi" in s.columns:
-            s["put_oi"] = pd.to_numeric(s["put_oi"], errors="coerce")
-
-        if "call_oi" in s.columns and "put_oi" in s.columns:
-            s["__tot_oi"] = s["call_oi"].fillna(0.0) + s["put_oi"].fillna(0.0)
-            s = s.sort_values(["symbol", "__tot_oi"], ascending=[True, False]).drop_duplicates("symbol")
-        else:
-            s = s.drop_duplicates("symbol")
-
-        ren = {
-            "expiry":           "opt_expiry",
-            "spot":             "opt_spot",
-            "call_oi":          "opt_call_oi",
-            "put_oi":           "opt_put_oi",
-            "put_call_ratio":   "opt_put_call_ratio",
-            "call_iv_w":        "opt_call_iv_w",
-            "put_iv_w":         "opt_put_iv_w",
-            "call_top_strikes": "opt_call_top_strikes",
-            "put_top_strikes":  "opt_put_top_strikes",
-        }
-        cols = ["symbol"] + [c for c in ren.keys() if c in s.columns]
-        master = _left(master, s, cols=cols, rename=ren)
-
-    # --- options_oi_totals (Summe über alle Verfälle) ------------------------
-    if opttot is not None and not opttot.empty:
-        t = opttot.copy()
-        cl = {c.lower(): c for c in t.columns}
-
-        call_candidates = ["call_oi", "total_call_oi", "call_oi_all", "calloi", "call_oi_total"]
-        put_candidates  = ["put_oi", "total_put_oi", "put_oi_all", "putoi", "put_oi_total"]
-
-        call_col = next((cl[x] for x in call_candidates if x in cl), None)
-        put_col  = next((cl[x] for x in put_candidates  if x in cl), None)
-
-        if call_col and put_col:
-            t[call_col] = pd.to_numeric(t[call_col], errors="coerce")
-            t[put_col]  = pd.to_numeric(t[put_col],  errors="coerce")
-
-            if "symbol" in t.columns and t["symbol"].nunique() < len(t):
-                agg = t.groupby("symbol", as_index=False).agg({
-                    call_col: "sum",
-                    put_col:  "sum",
-                })
-            else:
-                agg = t[["symbol", call_col, put_col]].drop_duplicates("symbol")
-
-            agg = agg.rename(columns={
-                call_col: "tot_call_oi_all",
-                put_col:  "tot_put_oi_all",
-            })
-            if "tot_call_oi_all" in agg.columns and "tot_put_oi_all" in agg.columns:
-                agg["tot_put_call_ratio_all"] = agg["tot_put_oi_all"] / agg["tot_call_oi_all"].replace(0, pd.NA)
-
-            master = _left(master, agg, cols=agg.columns.tolist())
-
-    # --- HV summary ----------------------------------------------------------
-    if hv is not None:
-        hv2 = hv.rename(columns={c: c.lower() for c in hv.columns})
-        cols = [c for c in ["symbol", "hv10", "hv20", "hv30", "hv60"] if c in hv2.columns]
-        master = _left(master, hv2, cols=cols)
-
-    # --- Fundamentals --------------------------------------------------------
+    # ------------------ Fundamentals --------------------
     if fnda is not None:
         keep = [c for c in [
             "symbol", "name", "sector", "industry", "currency",
-            "marketcap", "sharesoutstanding", "pe", "pb", "ps", "ev_ebitda", "beta"
+            "marketcap", "sharesoutstanding",
+            "pe", "pb", "ps", "ev_ebitda", "beta"
         ] if c in fnda.columns]
-        master = _left(master, fnda, cols=keep)
+        master = left(master, fnda, cols=keep)
 
-    # --- Earnings next -------------------------------------------------------
+    # ------------------ HV summary ----------------------
+    if hv is not None:
+        hv2 = hv.rename(columns={c: c.lower() for c in hv.columns})
+        cols = [c for c in ["symbol", "hv10", "hv20", "hv30", "hv60"] if c in hv2.columns]
+        master = left(master, hv2, cols=cols)
+
+    # ------------------ CDS proxy -----------------------
+    if cds is not None:
+        rn = {}
+        if "proxy_spread" in cds.columns:
+            rn["proxy_spread"] = "cds_proxy"
+        cols = [c for c in ["symbol", "cds_proxy", "proxy_spread"] if c in cds.columns]
+        master = left(master, cds, cols=cols, rename=rn)
+
+    # ------------------ Revisions -----------------------
+    if rev is not None:
+        keep = [c for c in [
+            "symbol", "eps_rev_3m", "rev_rev_3m",
+            "eps_surprise", "rev_surprise"
+        ] if c in rev.columns]
+        master = left(master, rev, cols=keep)
+
+    # ------------------ Earnings next -------------------
     if earn is not None:
         rn = {}
         if "next_date" in earn.columns:
             rn["next_date"] = "earnings_next"
         cols = [c for c in ["symbol", "earnings_next", "next_date"] if c in earn.columns]
-        master = _left(master, earn, cols=cols, rename=rn if rn else None)
+        master = left(master, earn, cols=cols, rename=rn)
 
-    # --- CDS proxy -----------------------------------------------------------
-    if cds is not None:
-        rn = {}
-        if "proxy_spread" in cds.columns:
-            rn["proxy_spread"] = "cds_proxy"
-        keep = [c for c in ["symbol", "cds_proxy", "proxy_spread"] if c in cds.columns]
-        master = _left(master, cds, cols=keep, rename=rn if rn else None)
-
-    # --- Revisions -----------------------------------------------------------
-    if rev is not None:
-        keep = [c for c in [
-            "symbol", "eps_rev_3m", "rev_rev_3m", "eps_surprise", "rev_surprise"
-        ] if c in rev.columns]
-        master = _left(master, rev, cols=keep)
-
-    # --- Short-Interest / Borrow + Stress -----------------------------------
+    # ------------------ Short Interest + Borrow ---------
     if shorti is not None:
         keep = [c for c in [
             "symbol", "si_date", "si_shares", "float_shares",
-            "si_pct_float", "borrow_rate", "borrow_avail", "si_source"
+            "si_pct_float", "borrow_rate", "borrow_avail",
+            "si_source"
         ] if c in shorti.columns]
-        master = _left(master, shorti, cols=keep)
+        master = left(master, shorti, cols=keep)
 
         if "borrow_rate" in master.columns or "borrow_avail" in master.columns:
-            master["borrow_stress"] = master.apply(_borrow_stress, axis=1)
+            master["borrow_stress"] = master.apply(borrow_stress, axis=1)
 
-    # --- Peers: count der Peer-Symbole --------------------------------------
+    # ------------------ Peers (Anzahl) ------------------
     if peers is not None and "peer" in peers.columns:
-        pc = (peers.groupby("symbol")["peer"]
-                    .nunique()
-                    .reset_index()
-                    .rename(columns={"peer": "peers_count"}))
-        master = _left(master, pc, cols=["symbol", "peers_count"])
+        pc = (
+            peers.groupby("symbol")["peer"]
+            .nunique()
+            .reset_index()
+            .rename(columns={"peer": "peers_count"})
+        )
+        master = left(master, pc, cols=["symbol", "peers_count"])
 
-    # --- Dividenden: letzte Dividende + Count -------------------------------
-    if divs is not None and "date" in divs.columns:
+    # ------------------ Dividenden-Aggregate ------------
+    if divs is not None and not divs.empty and "date" in divs.columns:
         d = divs.copy()
         d["date"] = pd.to_datetime(d["date"], errors="coerce")
-        d = d.dropna(subset=["date"])
-        if not d.empty:
-            d_last = d.sort_values(["symbol", "date"]).groupby("symbol").tail(1)
-            d_last = d_last.rename(columns={"date": "last_div_date", "dividend": "last_div_amount"})
-            d_last = d_last[["symbol", "last_div_date", "last_div_amount"]]
+        agg_map = {
+            "last_div_date": ("date", "max"),
+            "div_count_total": ("date", "count"),
+        }
+        if "dividend" in d.columns:
+            agg_map["last_div_amount"] = ("dividend", "last")
 
-            d_cnt = (d.groupby("symbol")["date"]
-                       .count()
-                       .reset_index()
-                       .rename(columns={"date": "div_count_total"}))
+        agg = (
+            d.sort_values("date")
+             .groupby("symbol")
+             .agg(**{k: pd.NamedAgg(*v) for k, v in agg_map.items()})
+             .reset_index()
+        )
+        master = left(master, agg, cols=agg.columns.tolist())
 
-            d_agg = d_last.merge(d_cnt, on="symbol", how="left")
-            master = _left(master, d_agg, cols=["symbol", "last_div_date", "last_div_amount", "div_count_total"])
-
-    # --- Splits: letzter Split + Count --------------------------------------
-    if splits is not None and "date" in splits.columns:
+    # ------------------ Splits-Aggregate ----------------
+    if splits is not None and not splits.empty and "date" in splits.columns:
         s = splits.copy()
         s["date"] = pd.to_datetime(s["date"], errors="coerce")
-        s = s.dropna(subset=["date"])
-        if not s.empty:
-            s_last = s.sort_values(["symbol", "date"]).groupby("symbol").tail(1)
-            s_last = s_last.rename(columns={"date": "last_split_date", "split_ratio": "last_split_ratio"})
-            keep_cols = ["symbol", "last_split_date"]
-            if "last_split_ratio" in s_last.columns:
-                keep_cols.append("last_split_ratio")
-            s_last = s_last[keep_cols]
+        agg_map = {
+            "last_split_date": ("date", "max"),
+            "split_count_total": ("date", "count"),
+        }
+        if "split_ratio" in s.columns:
+            agg_map["last_split_ratio"] = ("split_ratio", "last")
 
-            s_cnt = (s.groupby("symbol")["date"]
-                       .count()
-                       .reset_index()
-                       .rename(columns={"date": "split_count_total"}))
+        agg = (
+            s.sort_values("date")
+             .groupby("symbol")
+             .agg(**{k: pd.NamedAgg(*v) for k, v in agg_map.items()})
+             .reset_index()
+        )
+        master = left(master, agg, cols=agg.columns.tolist())
 
-            s_agg = s_last.merge(s_cnt, on="symbol", how="left")
-            master = _left(master, s_agg, cols=["symbol", "last_split_date", "last_split_ratio", "split_count_total"])
+    # ------------------ Insider-Aggregate ----------------
+    if ins is not None and not ins.empty:
+        df_ins = ins.copy()
 
-    # --- Insider-Transaktionen: letzte + 12M-Summen -------------------------
-    if insider is not None and "transaction_date" in insider.columns:
-        ins = insider.copy()
-        ins["transaction_date"] = pd.to_datetime(ins["transaction_date"], errors="coerce")
-        ins = ins.dropna(subset=["transaction_date"])
-        if not ins.empty:
-            last_tx = (ins.sort_values(["symbol", "transaction_date"])
-                          .groupby("symbol")
-                          .tail(1))
-            last_tx = last_tx.rename(columns={
-                "transaction_date": "insider_last_tx_date",
-                "transaction_code": "insider_last_tx_code",
-                "share": "insider_last_tx_shares",
-                "transaction_price": "insider_last_tx_price",
-            })
-            keep_cols = ["symbol", "insider_last_tx_date", "insider_last_tx_code",
-                         "insider_last_tx_shares", "insider_last_tx_price"]
-            last_tx = last_tx[[c for c in keep_cols if c in last_tx.columns]]
+        # Datum: Transaction-Date bevorzugen, sonst Filing-Date
+        tx_date_col = None
+        if "transaction_date" in df_ins.columns:
+            df_ins["transaction_date"] = pd.to_datetime(
+                df_ins["transaction_date"], errors="coerce"
+            )
+            tx_date_col = "transaction_date"
+        if "filing_date" in df_ins.columns:
+            df_ins["filing_date"] = pd.to_datetime(
+                df_ins["filing_date"], errors="coerce"
+            )
+            if tx_date_col is None:
+                tx_date_col = "filing_date"
 
-            cutoff = pd.Timestamp.today() - timedelta(days=365)
-            recent = ins[ins["transaction_date"] >= cutoff].copy()
+        if tx_date_col is not None:
+            df_ins["tx_date"] = df_ins[tx_date_col]
 
-            def _is_buy(code):
-                c = str(code).upper().strip()
-                return c.startswith("P")  # Purchase
+            # Letzte Transaktion je Symbol
+            last_idx = (
+                df_ins
+                .sort_values("tx_date")
+                .groupby("symbol")["tx_date"]
+                .idxmax()
+            )
+            last = df_ins.loc[last_idx].copy()
 
-            def _is_sell(code):
-                c = str(code).upper().strip()
-                return c.startswith("S")  # Sale
+            last_cols = ["symbol"]
+            if "tx_date" in last.columns:
+                last["insider_last_tx_date"] = last["tx_date"].dt.date
+                last_cols.append("insider_last_tx_date")
+            if "transaction_code" in last.columns:
+                last = last.rename(columns={"transaction_code": "insider_last_tx_code"})
+                last_cols.append("insider_last_tx_code")
+            if "change" in last.columns:
+                last = last.rename(columns={"change": "insider_last_tx_shares"})
+                last_cols.append("insider_last_tx_shares")
+            elif "share" in last.columns:
+                last = last.rename(columns={"share": "insider_last_tx_shares"})
+                last_cols.append("insider_last_tx_shares")
+            if "transaction_price" in last.columns:
+                last = last.rename(columns={"transaction_price": "insider_last_tx_price"})
+                last_cols.append("insider_last_tx_price")
 
-            recent["is_buy"] = recent.get("transaction_code", "").apply(_is_buy)
-            recent["is_sell"] = recent.get("transaction_code", "").apply(_is_sell)
+            master = left(master, last[last_cols], cols=last_cols)
 
-            recent["share"] = pd.to_numeric(recent.get("share"), errors="coerce").fillna(0.0)
+            # 12M-Fenster für Buy/Sell-Summen
+            cutoff = pd.Timestamp.utcnow() - timedelta(days=365)
+            w = df_ins[df_ins["tx_date"] >= cutoff].copy()
+            if not w.empty and "transaction_code" in w.columns:
+                w["code"] = w["transaction_code"].astype(str).str.upper()
 
-            gb = recent.groupby("symbol")
-            agg_ins = gb.agg(
-                insider_buy_shares_12m=("share", lambda x: float(x[recent.loc[x.index, "is_buy"]].sum())),
-                insider_sell_shares_12m=("share", lambda x: float(x[recent.loc[x.index, "is_sell"]].sum())),
-                insider_buy_trades_12m=("is_buy", "sum"),
-                insider_sell_trades_12m=("is_sell", "sum"),
-            ).reset_index()
+                if "change" in w.columns:
+                    shares_col = "change"
+                elif "share" in w.columns:
+                    shares_col = "share"
+                else:
+                    shares_col = None
 
-            ins_agg = last_tx.merge(agg_ins, on="symbol", how="left")
-            master = _left(master, ins_agg)
+                agg_dict = {
+                    "insider_buy_trades_12m": ("code", lambda x: (x.str.startswith("P")).sum()),
+                    "insider_sell_trades_12m": ("code", lambda x: (x.str.startswith("S")).sum()),
+                }
 
-    # --- stance aus dir ------------------------------------------------------
-    master["stance"] = master.apply(_stance_from_dir, axis=1)
+                if shares_col is not None:
+                    w["_shares"] = pd.to_numeric(w[shares_col], errors="coerce")
+                    agg_dict["insider_buy_shares_12m"] = (
+                        "_shares",
+                        lambda x: x[w.loc[x.index, "code"].str.startswith("P")].sum()
+                    )
+                    agg_dict["insider_sell_shares_12m"] = (
+                        "_shares",
+                        lambda x: x[w.loc[x.index, "code"].str.startswith("S")].sum()
+                    )
 
-    # --- Datumsfelder schön machen ------------------------------------------
-    for c in ["next_expiry", "opt_expiry", "earnings_next",
-              "si_date", "last_div_date", "last_split_date",
-              "insider_last_tx_date"]:
-        if c in master.columns:
-            try:
-                master[c] = pd.to_datetime(master[c], errors="coerce").dt.date
-            except Exception:
-                pass
+                agg = (
+                    w.groupby("symbol")
+                     .agg(**{k: pd.NamedAgg(col, func) for k, (col, func) in agg_dict.items()})
+                     .reset_index()
+                )
+                master = left(master, agg, cols=agg.columns.tolist())
 
-    # --- Spalten sortieren ---------------------------------------------------
-    preferred = [
-        "symbol", "name", "sector", "industry",
-        "stance", "dir", "strength",
-        "next_expiry", "nearest_dte",
-        "fs7", "fs30", "fs60", "focus_strike_general",
-        "opt_expiry", "opt_spot",
-        "opt_call_oi", "opt_put_oi", "opt_put_call_ratio",
-        "opt_call_iv_w", "opt_put_iv_w",
-        "opt_call_top_strikes", "opt_put_top_strikes",
-        "tot_call_oi_all", "tot_put_oi_all", "tot_put_call_ratio_all",
-        "earnings_next",
+    # ------------------ Pflichtspalten sicherstellen ----------------
+    # Wenn einzelne Datensätze fehlen, wollen wir die Spalten trotzdem im Master haben
+    required_cols = [
+        "name", "sector", "industry", "currency",
+        "marketcap", "sharesoutstanding", "pe", "pb", "ps", "ev_ebitda", "beta",
         "hv10", "hv20", "hv30", "hv60",
+        "earnings_next", "eps_rev_3m", "rev_rev_3m",
+        "eps_surprise", "rev_surprise",
         "cds_proxy",
-        "marketcap", "pe", "pb", "ps", "ev_ebitda", "beta", "currency",
         "si_date", "si_shares", "float_shares", "si_pct_float",
         "borrow_rate", "borrow_avail", "borrow_stress", "si_source",
         "peers_count",
@@ -482,14 +386,22 @@ def build(out):
         "insider_buy_shares_12m", "insider_sell_shares_12m",
         "insider_buy_trades_12m", "insider_sell_trades_12m",
     ]
+    for c in required_cols:
+        if c not in master.columns:
+            master[c] = pd.NA
+
+    # ------------------ Spalten sortieren ----------------
+    preferred = ["symbol"] + required_cols
     cols = [c for c in preferred if c in master.columns] + \
            [c for c in master.columns if c not in preferred]
     master = master[cols]
 
-    os.makedirs(os.path.dirname(out), exist_ok=True)
-    master.to_csv(out, index=False)
-    print(f"✅ wrote {out} with {len(master)} rows, {len(master.columns)} cols")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    master.to_csv(out_path, index=False)
+    print(f"✅ wrote {out_path} with {len(master)} rows, {len(master.columns)} cols")
 
+
+# --------------------------------------------------------------------------- #
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

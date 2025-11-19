@@ -27,7 +27,7 @@ Output:
 import os
 import json
 import argparse
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pandas as pd
 
@@ -56,7 +56,7 @@ def rd_csv(*candidates):
 
 
 def rd_json_to_df(*candidates, records_key=None):
-    """Liest JSON/JSON.GZ und gibt DataFrame zurück."""
+    """Liest JSON und gibt DataFrame zurück (gz-Variante wird i.d.R. erst NACH dem Run erzeugt)."""
     for p in candidates:
         if os.path.exists(p):
             try:
@@ -317,8 +317,8 @@ def build(out_path: str):
                 last["insider_last_tx_date"] = last["tx_date"].dt.date
                 last_cols.append("insider_last_tx_date")
             if "transaction_code" in last.columns:
-                last_cols.append("transaction_code")
                 last = last.rename(columns={"transaction_code": "insider_last_tx_code"})
+                last_cols.append("insider_last_tx_code")
             if "change" in last.columns:
                 last = last.rename(columns={"change": "insider_last_tx_shares"})
                 last_cols.append("insider_last_tx_shares")
@@ -336,8 +336,6 @@ def build(out_path: str):
             w = df_ins[df_ins["tx_date"] >= cutoff].copy()
             if not w.empty and "transaction_code" in w.columns:
                 w["code"] = w["transaction_code"].astype(str).str.upper()
-                is_buy = w["code"].str.startswith("P")   # Purchase
-                is_sell = w["code"].str.startswith("S")  # Sale
 
                 if "change" in w.columns:
                     shares_col = "change"
@@ -346,20 +344,29 @@ def build(out_path: str):
                 else:
                     shares_col = None
 
+                def count_trades(x, prefix):
+                    x = x.astype(str).str.upper()
+                    return x.str.startswith(prefix).sum()
+
                 agg_dict = {
-                    "insider_buy_trades_12m": ("code", lambda x: (x.str.startswith("P")).sum()),
-                    "insider_sell_trades_12m": ("code", lambda x: (x.str.startswith("S")).sum()),
+                    "insider_buy_trades_12m": ("code", lambda x: count_trades(x, "P")),
+                    "insider_sell_trades_12m": ("code", lambda x: count_trades(x, "S")),
                 }
 
                 if shares_col is not None:
                     w["_shares"] = pd.to_numeric(w[shares_col], errors="coerce")
+
+                    def sum_shares(x, code_series, prefix):
+                        mask = code_series.loc[x.index].astype(str).str.upper().str.startswith(prefix)
+                        return x[mask].sum()
+
                     agg_dict["insider_buy_shares_12m"] = (
                         "_shares",
-                        lambda x: x[is_buy.loc[x.index]].sum()
+                        lambda x: sum_shares(x, w["code"], "P"),
                     )
                     agg_dict["insider_sell_shares_12m"] = (
                         "_shares",
-                        lambda x: x[is_sell.loc[x.index]].sum()
+                        lambda x: sum_shares(x, w["code"], "S"),
                     )
 
                 agg = (

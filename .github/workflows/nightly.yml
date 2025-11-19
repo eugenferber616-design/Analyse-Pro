@@ -148,8 +148,11 @@ jobs:
           SIMFIN_API_KEY:       ${{ secrets.SIMFIN_API_KEY }}
           FINNHUB_SLEEP_MS:     ${{ env.FINNHUB_SLEEP_MS }}
         run: |
-          python scripts/fetch_earnings_results.py --watchlist "${WATCHLIST_STOCKS}" --limit 40 --use-yf
-          test -f data/processed/earnings_results.csv && head -n 20 data/processed/earnings_results.csv || true
+          # Script einfach mit Output-Pfad aufrufen
+          python scripts/fetch_earnings_results.py --out data/processed/earnings_results.csv.gz
+          test -s data/processed/earnings_results.csv.gz || (echo "earnings_results leer!" && exit 1)
+          zcat data/processed/earnings_results.csv.gz | head -n 20 || true
+
 
       - name: Pull ETF basics (Finnhub)
         env:

@@ -21,9 +21,10 @@ Scores (0–100):
 - value_score, quality_score, growth_score, momentum_score, risk_score, composite_score
 
 Letter-Grades A–D:
-- global_grade    (A–D, globales Ranking von composite_score)
-- momentum_grade  (A–D, globales Ranking von momentum_score)
-- r2k_growth_grade (A–D, Ranking von growth_score NUR innerhalb Russell-Subset)
+- global_grade      (A–D, globales Ranking von **Fundamental-Score**: Value+Quality+Growth)
+- momentum_grade    (A–D, globales Ranking von momentum_score)
+- r2k_growth_grade  (A–D, Ranking von growth_score NUR innerhalb Russell-Subset)
+- risk_grade        (A–D, Ranking von risk_score: hoch = stabil, wenig Risiko)
 
 Mapping (Perzentile):
 - A: oberste 20 %
@@ -279,7 +280,9 @@ def main():
         "roic",
     ]
 
-    # Risk (je höher, desto schlechter -> Risk-Score hoch = riskant)
+    # Risk-Stabilitäts-Faktoren:
+    # hohe Werte = HOHES Risiko (schlecht), niedrige Werte = stabil (gut)
+    # => wir rechnen sie so um, dass risk_score HOCH = stabil/wenig Risiko ist.
     risk_high_is_bad = [
         "beta",
         "hv60",
@@ -374,7 +377,7 @@ def main():
         fund["momentum_score"] = np.nan
 
     # ------------------------------------------------------------------ #
-    # 8) RISK-SCORE (hoch = schlecht)
+    # 8) RISK-SCORE (Stabilität: hoch = gut, wenig Risiko)
     # ------------------------------------------------------------------ #
     for c in risk_high_is_bad:
         if c not in fund.columns:
@@ -382,7 +385,9 @@ def main():
 
     risk_parts = []
     for c in risk_high_is_bad:
-        s = sector_percentile(fund, c, higher_is_better=True)
+        # WICHTIG: higher_is_better=False, weil hohe Werte schlecht sind.
+        # Dadurch bekommen niedrige Risiko-Werte HOHE Perzentile.
+        s = sector_percentile(fund, c, higher_is_better=False)
         fund[f"risk_{c}_pctl"] = s
         if s.notna().any():
             risk_parts.append(f"risk_{c}_pctl")
@@ -420,40 +425,50 @@ def main():
         fund["growth_score"] = np.nan
 
     # ------------------------------------------------------------------ #
-    # 10) COMPOSITE-SCORE (global)
+    # 10) FUNDAMENTAL-COMPOSITE (OHNE Momentum & Risk)
     # ------------------------------------------------------------------ #
     v = fund["value_score"].astype(float)
     q = fund["quality_score"].astype(float)
     g = fund["growth_score"].astype(float)
-    m = fund["momentum_score"].astype(float)
-    r = fund["risk_score"].astype(float)
+    # m = fund["momentum_score"].astype(float)  # separat
+    # r = fund["risk_score"].astype(float)      # separat
 
-    composite = (
-        0.20 * v
-        + 0.30 * q
-        + 0.25 * g
-        + 0.15 * m
-        - 0.10 * r
+    # Fundamental-Score (nur Value + Quality + Growth)
+    fundamental_score = (
+        0.40 * v +
+        0.40 * q +
+        0.20 * g
     )
 
-    fund["composite_score"] = composite
+    fund["fundamental_score"] = fundamental_score
+    # Für Kompatibilität: composite_score = Fundamental-Score
+    fund["composite_score"] = fundamental_score
 
     # ------------------------------------------------------------------ #
-    # 11) LETTER-GRADES (global + Momentum + R2K-Growth)
+    # 11) LETTER-GRADES (Global Fundamental, Momentum, Risk, R2K-Growth)
     # ------------------------------------------------------------------ #
-    # Globaler Gesamt-Grade
-    fund["global_grade"] = scores_to_grade(fund["composite_score"])
+    # Globaler Fundamental-Grade
+    fund["global_grade"] = scores_to_grade(fund["fundamental_score"])
     # Separater Momentum-Grade
     fund["momentum_grade"] = scores_to_grade(fund["momentum_score"])
+    # Separater Risk-Grade (hoch = stabil)
+    fund["risk_grade"] = scores_to_grade(fund["risk_score"])
 
     # --- Russell-2000-Subset bestimmen ---
     idx_df = rd("index_membership.csv")
     mask_r2k = pd.Series(False, index=fund.index)
 
-    if idx_df is not None and not idx_df.empty and "symbol" in idx_df.columns and "index" in idx_df.columns:
+    if (
+        idx_df is not None
+        and not idx_df.empty
+        and "symbol" in idx_df.columns
+        and "index" in idx_df.columns
+    ):
         idx_df["symbol"] = idx_df["symbol"].astype(str).str.upper()
         idx_df["index"] = idx_df["index"].astype(str).str.upper()
-        r2k_syms = idx_df.loc[idx_df["index"].str.contains("RUSSELL"), "symbol"].unique()
+        r2k_syms = idx_df.loc[
+            idx_df["index"].str.contains("RUSSELL"), "symbol"
+        ].unique()
         mask_r2k = fund["symbol"].isin(r2k_syms)
     else:
         # Fallback: Small-Cap-Proxy über Marketcap (untere 40% = "R2K-ähnlich")
@@ -505,10 +520,12 @@ def main():
         "growth_score",
         "momentum_score",
         "risk_score",
+        "fundamental_score",
         "composite_score",
         # Grades / Rankings
         "global_grade",
         "momentum_grade",
+        "risk_grade",
         "r2k_growth_grade",
     ]
 

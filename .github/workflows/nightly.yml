@@ -165,15 +165,14 @@ jobs:
           head -n 30 data/processed/etf_basics.csv || true
           test -f data/reports/etf_errors.json && cat data/reports/etf_errors.json || true
 
-      - name: Pull FUNDAMENTALS (profile2 + metrics, mit Fallbacks)
+      - name: Pull FUNDAMENTALS (pro)
         env:
           FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
           FINNHUB_TOKEN:         ${{ secrets.FINNHUB_TOKEN }}
-          ALPHAVANTAGE_API_KEY:  ${{ secrets.ALPHAVANTAGE_API_KEY }}
-          SIMFIN_API_KEY:        ${{ secrets.SIMFIN_API_KEY }}
         run: |
-          python scripts/fetch_fundamentals.py --watchlist "${WATCHLIST_STOCKS}" --sleep_ms 200 || true
+          python scripts/fetch_fundamentals_pro.py
           head -n 20 data/processed/fundamentals_core.csv || true
+
 
       - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
         shell: bash

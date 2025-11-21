@@ -1,7 +1,7 @@
 {
-  "ts": "2025-11-20T02:17:40.634361Z",
+  "ts": "2025-11-21T02:18:15.441133Z",
   "symbols": 19,
-  "calendar_rows": 5,
+  "calendar_rows": 4,
   "result_rows": 28,
   "providers": {
     "finnhub": true,

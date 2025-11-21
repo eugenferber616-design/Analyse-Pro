@@ -21,7 +21,7 @@ Scores (0–100):
 - value_score, quality_score, growth_score, momentum_score, risk_score, composite_score
 
 Letter-Grades A–D:
-- global_grade      (A–D, globales Ranking von **Fundamental-Score**: Value+Quality+Growth)
+- global_grade      (A–D, globales Ranking von **fundamental_score = Quality+Growth**, OHNE Value)
 - momentum_grade    (A–D, globales Ranking von momentum_score)
 - r2k_growth_grade  (A–D, Ranking von growth_score NUR innerhalb Russell-Subset)
 - risk_grade        (A–D, Ranking von risk_score: hoch = stabil, wenig Risiko)
@@ -425,19 +425,22 @@ def main():
         fund["growth_score"] = np.nan
 
     # ------------------------------------------------------------------ #
-    # 10) FUNDAMENTAL-COMPOSITE (OHNE Momentum & Risk)
+    # 10) FUNDAMENTAL-COMPOSITE (OHNE Momentum & Risk, OHNE Value)
+    #      -> jetzt NUR Quality + Growth (Business-Qualität)
     # ------------------------------------------------------------------ #
-    v = fund["value_score"].astype(float)
+    v = fund["value_score"].astype(float)    # bleibt erhalten, aber geht NICHT in fundamental_score
     q = fund["quality_score"].astype(float)
     g = fund["growth_score"].astype(float)
     # m = fund["momentum_score"].astype(float)  # separat
     # r = fund["risk_score"].astype(float)      # separat
 
-    # Fundamental-Score (nur Value + Quality + Growth)
+    # Neuer Fundamental-Score:
+    #  - 60 % Quality
+    #  - 40 % Growth
+    #  - KEIN Value (Value bleibt eigener Score)
     fundamental_score = (
-        0.40 * v +
-        0.40 * q +
-        0.20 * g
+        0.60 * q +
+        0.40 * g
     )
 
     fund["fundamental_score"] = fundamental_score
@@ -447,7 +450,7 @@ def main():
     # ------------------------------------------------------------------ #
     # 11) LETTER-GRADES (Global Fundamental, Momentum, Risk, R2K-Growth)
     # ------------------------------------------------------------------ #
-    # Globaler Fundamental-Grade
+    # Globaler Fundamental-Grade: jetzt nur noch Quality+Growth
     fund["global_grade"] = scores_to_grade(fund["fundamental_score"])
     # Separater Momentum-Grade
     fund["momentum_grade"] = scores_to_grade(fund["momentum_score"])

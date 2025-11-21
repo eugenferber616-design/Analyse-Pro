@@ -1,32 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-build_factor_scores.py
-----------------------
-Baut Value-/Quality-/Growth-/Momentum-/Risk-Scores (0–100) pro Aktie.
+build_factor_scores.py – ABSOLUTE Version
+-----------------------------------------
 
-WICHTIG (dein gewünschtes Design):
-- Value = eigener Score + eigener Grade (value_score, value_grade)
-- Fundamental/Global = NUR Quality + Growth (fundamental_score, global_grade)
-- Risk = eigener Score + Grade (risk_score, risk_grade)
-- Momentum = relativ (vs. Universum), wie vorher
-- Alle Grades A–D basieren auf festen Score-Grenzen (nicht mehr Perzentile):
-
-    A: Score >= 80
-    B: 60–79
-    C: 40–59
-    D: < 40
+Baut Value-/Quality-/Growth-/Momentum-/Risk-Scores (0–100) pro Aktie
+OHNE Vergleich mit anderen Aktien (keine Perzentile).
 
 Input:
 - data/processed/fundamentals_core.csv
 - data/processed/hv_summary.csv.gz
 - data/processed/cds_proxy.csv (oder .csv.gz)
 - data/processed/short_interest.csv(.gz) (optional)
-- data/processed/index_membership.csv (optional, für R2K)
+- data/processed/index_membership.csv (optional, für echtes R2K)
 - data/prices/{SYMBOL}.csv (Returns 1/3/6/12M, 52W-High-Nähe)
 
 Output:
 - data/processed/factor_scores.csv
+
+Scores (0–100):
+- value_score       (billig/teuer – absolut)
+- quality_score     (Profitabilität – absolut)
+- growth_score      (Wachstum – absolut)
+- momentum_score    (Trend / Nähe 52W-High – absolut)
+- risk_score        (Stabilität: hoch = wenig Risiko)
+- fundamental_score (nur Quality + Growth, ohne Value/Risk)
+- composite_score   (= fundamental_score, für Kompatibilität)
+
+Letter-Grades A–D (feste Schwellen, nicht relativ):
+- global_grade      (A–D, aus fundamental_score)
+- value_grade       (A–D, aus value_score)
+- momentum_grade    (A–D, aus momentum_score)
+- risk_grade        (A–D, aus risk_score)
+- r2k_growth_grade  (A–D, aus growth_score innerhalb R2K-/Smallcap-Subset)
 """
 
 import os
@@ -41,8 +47,9 @@ BASE_PRICES = os.path.join("data", "prices")
 
 
 # ------------------------------------------------------------------ #
-# Helpers
+# Helper: robustes Einlesen
 # ------------------------------------------------------------------ #
+
 def rd(path: str, **kwargs) -> Optional[pd.DataFrame]:
     """Robustes Einlesen von CSV/CSV.GZ aus data/processed."""
     full = os.path.join(BASE_PROC, path)
@@ -64,119 +71,81 @@ def ensure_cols(df: pd.DataFrame, need: List[str]) -> pd.DataFrame:
     return df
 
 
-def global_percentile(
-    df: pd.DataFrame, col: str, higher_is_better: bool
-) -> pd.Series:
+# ------------------------------------------------------------------ #
+# Helper: Skalierungsfunktionen (absolut)
+# ------------------------------------------------------------------ #
+
+def to_num(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(s, errors="coerce")
+
+
+def scale_linear(x: pd.Series, low_bad: float, high_good: float) -> pd.Series:
     """
-    Globales Perzentil über das ganze Universum (0–100).
-    Wird noch für Momentum verwendet (relative Performance),
-    aber NICHT mehr für Value/Quality/Risk/Growth.
+    Skaliert so, dass:
+        <= low_bad     → 0
+        >= high_good   → 100
+        dazwischen     → linear 0–100
     """
-    if col not in df.columns:
-        return pd.Series(np.nan, index=df.index)
-    x = pd.to_numeric(df[col], errors="coerce")
-    mask = x.notna()
-    if mask.sum() <= 1:
-        return pd.Series(np.nan, index=df.index)
-    ranks = x[mask].rank(method="average", pct=True)
-    if not higher_is_better:
-        ranks = 1.0 - ranks
-    out = pd.Series(np.nan, index=df.index)
-    out[mask] = (ranks * 100.0).clip(0.0, 100.0)
+    v = to_num(x)
+    out = (v - low_bad) / float(high_good - low_bad) * 100.0
+    return out.clip(0.0, 100.0)
+
+
+def scale_inverse(x: pd.Series, low_good: float, high_bad: float) -> pd.Series:
+    """
+    Für Kennzahlen, bei denen 'niedrig = gut' ist, z.B. KGV, Beta, Volatilität.
+        <= low_good    → 100
+        >= high_bad    → 0
+        dazwischen     → linear 100–0
+    """
+    v = to_num(x)
+    out = (high_bad - v) / float(high_bad - low_good) * 100.0
+    return out.clip(0.0, 100.0)
+
+
+def as_percent(x: pd.Series) -> pd.Series:
+    """
+    Versucht, Margin-Spalten auf Prozent zu normalisieren.
+    Wenn der Median zwischen -1 und 1 liegt, wird mit 100 multipliziert.
+    """
+    v = to_num(x)
+    med = v.median(skipna=True)
+    if pd.notna(med) and -1.0 < med < 1.0:
+        v = v * 100.0
+    return v
+
+
+def score_to_grade(score: pd.Series) -> pd.Series:
+    """
+    Score (0–100) -> A–D mit festen Schwellen:
+      A: >= 75
+      B: 55–74
+      C: 35–54
+      D: < 35
+    """
+    s = to_num(score)
+    out = pd.Series(np.nan, index=s.index, dtype="object")
+    mask = s.notna()
+    if not mask.any():
+        return out
+
+    out.loc[(mask) & (s >= 75.0)] = "A"
+    out.loc[(mask) & (s >= 55.0) & (s < 75.0)] = "B"
+    out.loc[(mask) & (s >= 35.0) & (s < 55.0)] = "C"
+    out.loc[(mask) & (s < 35.0)] = "D"
     return out
 
 
 # ------------------------------------------------------------------ #
-# ABSOLUTE SCORING-FUNKTIONEN (0–100)
+# Price-Features (wie vorher)
 # ------------------------------------------------------------------ #
-def _to_num(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(series, errors="coerce")
 
-
-def score_low_is_good_abs(
-    series: pd.Series, best: float, ok: float, bad: float
-) -> pd.Series:
-    """
-    Für Kennzahlen, bei denen "niedriger = besser" ist (z.B. KGV, Beta, HV).
-
-    best: bis hier (inkl.) -> 100 Punkte
-    ok:   bis hier noch ok -> ~70 Punkte
-    bad:  ab hier und darüber -> fällt auf 0
-
-    Dazwischen wird linear gemappt.
-    """
-    x = _to_num(series)
-    out = pd.Series(np.nan, index=x.index)
-    mask = x.notna()
-    if mask.sum() == 0:
-        return out
-
-    xx = x[mask]
-
-    # sehr gut
-    out.loc[xx <= best] = 100.0
-
-    # zwischen best und ok → 100 -> 70
-    m = (xx > best) & (xx <= ok)
-    if (ok - best) != 0:
-        out.loc[m] = 70.0 + (ok - xx[m]) / (ok - best) * 30.0
-
-    # zwischen ok und bad → 70 -> 10
-    m = (xx > ok) & (xx <= bad)
-    if (bad - ok) != 0:
-        out.loc[m] = 10.0 + (bad - xx[m]) / (bad - ok) * 60.0
-
-    # schlechter als bad → 0
-    out.loc[xx > bad] = 0.0
-
-    return out.clip(0.0, 100.0)
-
-
-def score_high_is_good_abs(
-    series: pd.Series, bad: float, ok: float, best: float
-) -> pd.Series:
-    """
-    Für Kennzahlen, bei denen "höher = besser" ist (z.B. Marge, ROE, Growth).
-
-    bad:  darunter -> 0 Punkte
-    ok:   ab hier noch ok -> ~60 Punkte
-    best: ab hier (inkl.) -> 100 Punkte
-    """
-    x = _to_num(series)
-    out = pd.Series(np.nan, index=x.index)
-    mask = x.notna()
-    if mask.sum() == 0:
-        return out
-
-    xx = x[mask]
-
-    # sehr schlecht
-    out.loc[xx <= bad] = 0.0
-
-    # zwischen bad und ok → 0 -> 60
-    m = (xx > bad) & (xx <= ok)
-    if (ok - bad) != 0:
-        out.loc[m] = (xx[m] - bad) / (ok - bad) * 60.0
-
-    # zwischen ok und best → 60 -> 90
-    m = (xx > ok) & (xx <= best)
-    if (best - ok) != 0:
-        out.loc[m] = 60.0 + (xx[m] - ok) / (best - ok) * 30.0
-
-    # über best → 100
-    out.loc[xx > best] = 100.0
-
-    return out.clip(0.0, 100.0)
-
-
-# ------------------------------------------------------------------ #
-# Preis-Features (Momentum, 52W-High)
-# ------------------------------------------------------------------ #
 def compute_price_features(sym: str) -> Dict[str, float]:
     """
     Liest data/prices/{sym}.csv und berechnet:
     - rtn_1m, rtn_3m, rtn_6m, rtn_12m (in %)
     - near_52w_high (0–100, 100 = am Hoch)
+    Wenn Datei fehlt oder zu wenig Daten: leere dict.
     """
     f = os.path.join(BASE_PRICES, f"{sym}.csv")
     if not os.path.exists(f):
@@ -200,7 +169,7 @@ def compute_price_features(sym: str) -> Dict[str, float]:
         else:
             return {}
 
-    close = pd.to_numeric(df["close"], errors="coerce").dropna()
+    close = to_num(df["close"]).dropna()
     if len(close) < 30:
         return {}
 
@@ -214,7 +183,6 @@ def compute_price_features(sym: str) -> Dict[str, float]:
             except Exception:
                 pass
 
-    # 52W-High-Nähe (letzte 252 Tage)
     try:
         if len(close) >= 50:
             window = close.iloc[-252:] if len(close) >= 252 else close
@@ -229,39 +197,13 @@ def compute_price_features(sym: str) -> Dict[str, float]:
 
 
 # ------------------------------------------------------------------ #
-# Grades A–D aus Score (0–100) – ABSOLUT
+# Hauptfunktion
 # ------------------------------------------------------------------ #
-def scores_to_grade(series: pd.Series) -> pd.Series:
-    """
-    Mappt eine Score-Spalte (0–100) direkt auf Letter-Grades A–D:
 
-      A: Score >= 80
-      B: 60–79
-      C: 40–59
-      D: < 40
-    """
-    s = pd.to_numeric(series, errors="coerce")
-    grades = pd.Series(np.nan, index=s.index, dtype="object")
-    mask = s.notna()
-    if mask.sum() == 0:
-        return grades
-
-    xx = s[mask]
-    grades.loc[xx >= 80.0] = "A"
-    grades.loc[(xx >= 60.0) & (xx < 80.0)] = "B"
-    grades.loc[(xx >= 40.0) & (xx < 60.0)] = "C"
-    grades.loc[(xx < 40.0)] = "D"
-
-    return grades
-
-
-# ------------------------------------------------------------------ #
-# MAIN
-# ------------------------------------------------------------------ #
 def main():
     os.makedirs(BASE_PROC, exist_ok=True)
 
-    # 1) FUNDAMENTALS LADEN
+    # 1) FUNDAMENTALS
     fund = rd("fundamentals_core.csv")
     if fund is None or fund.empty:
         raise SystemExit("fundamentals_core.csv fehlt oder ist leer")
@@ -280,17 +222,13 @@ def main():
             how="left",
         )
 
-    # CDS robust laden
     cds = rd("cds_proxy.csv")
     if cds is None or cds.empty:
         cds = rd("cds_proxy.csv.gz")
 
     if cds is not None and not cds.empty:
         cds["symbol"] = cds["symbol"].astype(str).str.upper()
-        cand = []
-        for c in cds.columns:
-            if "spread" in c.lower() or "proxy" in c.lower():
-                cand.append(c)
+        cand = [c for c in cds.columns if "spread" in c.lower() or "proxy" in c.lower()]
         credit_col = cand[0] if cand else None
         if credit_col:
             fund = fund.merge(
@@ -300,7 +238,6 @@ def main():
             )
             fund = fund.rename(columns={credit_col: "credit_spread"})
 
-    # Short Interest (optional)
     si = rd("short_interest.csv")
     if si is None or si.empty:
         si = rd("short_interest.csv.gz")
@@ -315,33 +252,9 @@ def main():
                 how="left",
             )
 
-    # 3) FELDER-KANDIDATEN
-    value_low_is_good = ["pe", "pb", "ps", "ev_ebitda", "ev_sales"]
-    value_high_is_good = ["fcf_yield"]
-
-    quality_high_is_good = [
-        "gross_margin",
-        "oper_margin",
-        "fcf_margin",
-        "roe",
-        "roic",
-    ]
-
-    risk_high_is_bad = [
-        "beta",
-        "hv60",
-        "net_debt_ebitda",
-        "credit_spread",
-        "si_pct_float",
-        "borrow_rate",
-    ]
-
-    momo_cols = ["rtn_1m", "rtn_3m", "rtn_6m", "rtn_12m", "near_52w_high"]
-
-    # 4) PRICE-FEATURES je SYMBOL
+    # 3) PRICE-FEATURES
     all_syms = fund["symbol"].dropna().astype(str).unique().tolist()
     price_rows = []
-
     for sym in all_syms:
         feats = compute_price_features(sym)
         if feats:
@@ -353,142 +266,67 @@ def main():
         price_df = pd.DataFrame(price_rows)
         fund = fund.merge(price_df, on="symbol", how="left")
 
-    # 5) VALUE-SCORE (ABSOLUT, EIGENER SCORE)
-    for c in value_low_is_good + value_high_is_good:
+    # ------------------------------------------------------------------ #
+    # 4) VALUE-SCORE (billig/teuer)
+    # ------------------------------------------------------------------ #
+    for c in ["pe", "pb", "ps", "ev_ebitda", "ev_sales", "fcf_yield"]:
         if c not in fund.columns:
             fund[c] = np.nan
 
-    value_parts = []
+    sc_val_pe = scale_inverse(fund["pe"], low_good=10.0, high_bad=40.0)
+    sc_val_pb = scale_inverse(fund["pb"], low_good=1.0, high_bad=6.0)
+    sc_val_ps = scale_inverse(fund["ps"], low_good=1.0, high_bad=10.0)
+    sc_val_ev_ebitda = scale_inverse(fund["ev_ebitda"], low_good=6.0, high_bad=20.0)
+    sc_val_ev_sales = scale_inverse(fund["ev_sales"], low_good=1.5, high_bad=10.0)
+    # FCF-Yield: hoch = gut (z.B. 0–8 %)
+    sc_val_fcf = scale_linear(fund["fcf_yield"], low_bad=0.0, high_good=8.0)
 
-    fund["value_pe"] = score_low_is_good_abs(
-        fund["pe"], best=12.0, ok=20.0, bad=40.0
-    )
-    value_parts.append("value_pe")
+    value_parts = [
+        sc_val_pe,
+        sc_val_pb,
+        sc_val_ps,
+        sc_val_ev_ebitda,
+        sc_val_ev_sales,
+        sc_val_fcf,
+    ]
+    value_mat = np.vstack([p.values for p in value_parts])
+    value_score = np.nanmean(value_mat, axis=0)
+    fund["value_score"] = value_score
 
-    fund["value_pb"] = score_low_is_good_abs(
-        fund["pb"], best=1.5, ok=3.0, bad=6.0
-    )
-    value_parts.append("value_pb")
-
-    fund["value_ps"] = score_low_is_good_abs(
-        fund["ps"], best=1.5, ok=3.0, bad=6.0
-    )
-    value_parts.append("value_ps")
-
-    fund["value_ev_ebitda"] = score_low_is_good_abs(
-        fund["ev_ebitda"], best=8.0, ok=12.0, bad=25.0
-    )
-    value_parts.append("value_ev_ebitda")
-
-    fund["value_ev_sales"] = score_low_is_good_abs(
-        fund["ev_sales"], best=1.5, ok=3.0, bad=6.0
-    )
-    value_parts.append("value_ev_sales")
-
-    fund["value_fcf_yield"] = score_high_is_good_abs(
-        fund["fcf_yield"], bad=0.0, ok=3.0, best=8.0
-    )
-    value_parts.append("value_fcf_yield")
-
-    fund["value_score"] = (
-        fund[value_parts].mean(axis=1, skipna=True) if value_parts else np.nan
-    )
-
-    # 6) QUALITY-SCORE (ABSOLUT)
-    for c in quality_high_is_good:
+    # ------------------------------------------------------------------ #
+    # 5) QUALITY-SCORE (Profitabilität)
+    # ------------------------------------------------------------------ #
+    for c in ["gross_margin", "oper_margin", "fcf_margin", "roe", "roic"]:
         if c not in fund.columns:
             fund[c] = np.nan
 
-    q_parts = []
+    gm = as_percent(fund["gross_margin"])
+    om = as_percent(fund["oper_margin"])
+    fm = as_percent(fund["fcf_margin"])
+    roe = as_percent(fund["roe"])
+    roic = as_percent(fund["roic"])
 
-    fund["quality_gross_margin"] = score_high_is_good_abs(
-        fund["gross_margin"], bad=10.0, ok=30.0, best=50.0
-    )
-    q_parts.append("quality_gross_margin")
+    # grobe Schwellen: <5% schlecht, >30% sehr gut
+    sc_q_gm = scale_linear(gm, low_bad=5.0, high_good=40.0)
+    sc_q_om = scale_linear(om, low_bad=0.0, high_good=30.0)
+    sc_q_fm = scale_linear(fm, low_bad=0.0, high_good=20.0)
+    sc_q_roe = scale_linear(roe, low_bad=5.0, high_good=25.0)
+    sc_q_roic = scale_linear(roic, low_bad=5.0, high_good=25.0)
 
-    fund["quality_oper_margin"] = score_high_is_good_abs(
-        fund["oper_margin"], bad=5.0, ok=15.0, best=30.0
-    )
-    q_parts.append("quality_oper_margin")
+    q_parts = [
+        sc_q_gm,
+        sc_q_om,
+        sc_q_fm,
+        sc_q_roe,
+        sc_q_roic,
+    ]
+    q_mat = np.vstack([p.values for p in q_parts])
+    quality_score = np.nanmean(q_mat, axis=0)
+    fund["quality_score"] = quality_score
 
-    fund["quality_fcf_margin"] = score_high_is_good_abs(
-        fund["fcf_margin"], bad=0.0, ok=5.0, best=15.0
-    )
-    q_parts.append("quality_fcf_margin")
-
-    fund["quality_roe"] = score_high_is_good_abs(
-        fund["roe"], bad=5.0, ok=12.0, best=20.0
-    )
-    q_parts.append("quality_roe")
-
-    fund["quality_roic"] = score_high_is_good_abs(
-        fund["roic"], bad=5.0, ok=10.0, best=20.0
-    )
-    q_parts.append("quality_roic")
-
-    fund["quality_score"] = (
-        fund[q_parts].mean(axis=1, skipna=True) if q_parts else np.nan
-    )
-
-    # 7) MOMENTUM-SCORE (RELATIV, Perzentile)
-    for c in momo_cols:
-        if c not in fund.columns:
-            fund[c] = np.nan
-
-    momo_parts = []
-    for c in momo_cols:
-        s = global_percentile(fund, c, higher_is_better=True)
-        fund[f"momo_{c}_pctl"] = s
-        if s.notna().any():
-            momo_parts.append(f"momo_{c}_pctl")
-
-    if momo_parts:
-        fund["momentum_score"] = fund[momo_parts].mean(axis=1, skipna=True)
-    else:
-        fund["momentum_score"] = np.nan
-
-    # 8) RISK-SCORE (ABSOLUT: hohe Werte = hohes Risiko → niedriger Score)
-    for c in risk_high_is_bad:
-        if c not in fund.columns:
-            fund[c] = np.nan
-
-    risk_parts = []
-
-    fund["risk_beta"] = score_low_is_good_abs(
-        fund["beta"], best=0.7, ok=1.0, bad=1.5
-    )
-    risk_parts.append("risk_beta")
-
-    fund["risk_hv60"] = score_low_is_good_abs(
-        fund["hv60"], best=15.0, ok=25.0, bad=40.0
-    )
-    risk_parts.append("risk_hv60")
-
-    fund["risk_net_debt_ebitda"] = score_low_is_good_abs(
-        fund["net_debt_ebitda"], best=0.0, ok=2.0, bad=4.0
-    )
-    risk_parts.append("risk_net_debt_ebitda")
-
-    fund["risk_credit_spread"] = score_low_is_good_abs(
-        fund["credit_spread"], best=100.0, ok=300.0, bad=600.0
-    )
-    risk_parts.append("risk_credit_spread")
-
-    fund["risk_si_pct_float"] = score_low_is_good_abs(
-        fund["si_pct_float"], best=2.0, ok=8.0, bad=20.0
-    )
-    risk_parts.append("risk_si_pct_float")
-
-    fund["risk_borrow_rate"] = score_low_is_good_abs(
-        fund["borrow_rate"], best=1.0, ok=5.0, bad=15.0
-    )
-    risk_parts.append("risk_borrow_rate")
-
-    fund["risk_score"] = (
-        fund[risk_parts].mean(axis=1, skipna=True) if risk_parts else np.nan
-    )
-
-    # 9) GROWTH-SCORE (ABSOLUT – EPS/Revenue Growth)
+    # ------------------------------------------------------------------ #
+    # 6) GROWTH-SCORE (Wachstum)
+    # ------------------------------------------------------------------ #
     growth_cols = []
     for cname in fund.columns:
         lc = cname.lower()
@@ -498,37 +336,83 @@ def main():
             growth_cols.append(cname)
         if "eps_yoy" in lc or ("eps" in lc and "growth" in lc):
             growth_cols.append(cname)
-
     growth_cols = sorted(set(growth_cols))
 
     g_parts = []
     for c in growth_cols:
-        # Growth in %: -10 = schlecht, 0 = neutral, >=20 sehr gut
-        fund[f"growth_{c}_pctl"] = score_high_is_good_abs(
-            fund[c], bad=-10.0, ok=0.0, best=20.0
-        )
-        g_parts.append(f"growth_{c}_pctl")
+        g = to_num(fund[c])
+        # Wachstum in % (ggf. von 0–1 auf 0–100 skalieren)
+        g = as_percent(g)
+        # z.B. 0% = 20 Punkte, 20%+ = 100 Punkte, -10% = 0 Punkte
+        sc = scale_linear(g, low_bad=-10.0, high_good=20.0)
+        g_parts.append(sc)
 
-    fund["growth_score"] = (
-        fund[g_parts].mean(axis=1, skipna=True) if g_parts else np.nan
-    )
+    if g_parts:
+        g_mat = np.vstack([p.values for p in g_parts])
+        growth_score = np.nanmean(g_mat, axis=0)
+    else:
+        growth_score = np.full(len(fund), np.nan)
 
-    # 10) FUNDAMENTAL-COMPOSITE (NUR Quality + Growth, OHNE Value)
+    fund["growth_score"] = growth_score
+
+    # ------------------------------------------------------------------ #
+    # 7) MOMENTUM-SCORE (Trend, Nähe Hoch)
+    # ------------------------------------------------------------------ #
+    for c in ["rtn_1m", "rtn_3m", "rtn_6m", "rtn_12m", "near_52w_high"]:
+        if c not in fund.columns:
+            fund[c] = np.nan
+
+    sc_m_1m = scale_linear(fund["rtn_1m"], low_bad=-20.0, high_good=15.0)
+    sc_m_3m = scale_linear(fund["rtn_3m"], low_bad=-25.0, high_good=25.0)
+    sc_m_6m = scale_linear(fund["rtn_6m"], low_bad=-30.0, high_good=40.0)
+    sc_m_12m = scale_linear(fund["rtn_12m"], low_bad=-40.0, high_good=60.0)
+    sc_m_hi = scale_linear(fund["near_52w_high"], low_bad=0.0, high_good=100.0)
+
+    m_parts = [sc_m_1m, sc_m_3m, sc_m_6m, sc_m_12m, sc_m_hi]
+    m_mat = np.vstack([p.values for p in m_parts])
+    momentum_score = np.nanmean(m_mat, axis=0)
+    fund["momentum_score"] = momentum_score
+
+    # ------------------------------------------------------------------ #
+    # 8) RISK-SCORE (Stabilität – hoher Score = wenig Risiko)
+    # ------------------------------------------------------------------ #
+    for c in ["beta", "hv60", "net_debt_ebitda", "credit_spread",
+              "si_pct_float", "borrow_rate"]:
+        if c not in fund.columns:
+            fund[c] = np.nan
+
+    sc_r_beta = scale_inverse(fund["beta"], low_good=0.8, high_bad=2.0)
+    sc_r_hv60 = scale_inverse(fund["hv60"], low_good=15.0, high_bad=60.0)
+    sc_r_ndebt = scale_inverse(fund["net_debt_ebitda"], low_good=0.0, high_bad=5.0)
+    sc_r_spread = scale_inverse(fund["credit_spread"], low_good=50.0, high_bad=600.0)
+    sc_r_si = scale_inverse(fund["si_pct_float"], low_good=0.0, high_bad=20.0)
+    sc_r_borrow = scale_inverse(fund["borrow_rate"], low_good=0.0, high_bad=15.0)
+
+    r_parts = [sc_r_beta, sc_r_hv60, sc_r_ndebt, sc_r_spread, sc_r_si, sc_r_borrow]
+    r_mat = np.vstack([p.values for p in r_parts])
+    risk_score = np.nanmean(r_mat, axis=0)
+    fund["risk_score"] = risk_score
+
+    # ------------------------------------------------------------------ #
+    # 9) FUNDAMENTAL-COMPOSITE (nur Quality + Growth)
+    # ------------------------------------------------------------------ #
+    v = fund["value_score"].astype(float)
     q = fund["quality_score"].astype(float)
     g = fund["growth_score"].astype(float)
 
-    # z.B. 60% Quality, 40% Growth – kannst du später anpassen
-    fundamental_score = 0.60 * q + 0.40 * g
+    fundamental_score = 0.50 * q + 0.50 * g
     fund["fundamental_score"] = fundamental_score
-    fund["composite_score"] = fundamental_score
+    fund["composite_score"] = fundamental_score  # für Kompatibilität
 
-    # 11) LETTER-GRADES (ABSOLUT)
-    fund["value_grade"] = scores_to_grade(fund["value_score"])
-    fund["global_grade"] = scores_to_grade(fund["fundamental_score"])
-    fund["momentum_grade"] = scores_to_grade(fund["momentum_score"])
-    fund["risk_grade"] = scores_to_grade(fund["risk_score"])
+    # ------------------------------------------------------------------ #
+    # 10) LETTER-GRADES (absolute Schwellen)
+    # ------------------------------------------------------------------ #
+    fund["global_grade"] = score_to_grade(fund["fundamental_score"])
+    fund["value_grade"] = score_to_grade(fund["value_score"])
+    fund["momentum_grade"] = score_to_grade(fund["momentum_score"])
+    fund["risk_grade"] = score_to_grade(fund["risk_score"])
 
-    # Russell-2000-ähnliches Growth-Subset (wie vorher)
+    # R2K-/Smallcap-Subset (für Growth-Grade)
     idx_df = rd("index_membership.csv")
     mask_r2k = pd.Series(False, index=fund.index)
 
@@ -545,18 +429,20 @@ def main():
         ].unique()
         mask_r2k = fund["symbol"].isin(r2k_syms)
     else:
-        mc = pd.to_numeric(fund["marketcap"], errors="coerce")
+        mc = to_num(fund["marketcap"])
         if mc.notna().sum() > 10:
             thresh = mc.quantile(0.40)
             mask_r2k = mc <= thresh
 
     fund["r2k_growth_grade"] = np.nan
     if mask_r2k.any():
-        subset = fund.loc[mask_r2k, "growth_score"]
-        grades_r2k = scores_to_grade(subset)
-        fund.loc[mask_r2k, "r2k_growth_grade"] = grades_r2k
+        fund.loc[mask_r2k, "r2k_growth_grade"] = score_to_grade(
+            fund.loc[mask_r2k, "growth_score"]
+        )
 
-    # 12) OUTPUT
+    # ------------------------------------------------------------------ #
+    # 11) OUTPUT REDUZIEREN & SCHREIBEN
+    # ------------------------------------------------------------------ #
     out_cols = [
         "symbol",
         "sector",
@@ -593,16 +479,16 @@ def main():
         "fundamental_score",
         "composite_score",
         # Grades
-        "value_grade",
         "global_grade",
+        "value_grade",
         "momentum_grade",
         "risk_grade",
         "r2k_growth_grade",
     ]
 
     out_cols = [c for c in out_cols if c in fund.columns]
-
     out = fund[out_cols].copy()
+
     out_path = os.path.join(BASE_PROC, "factor_scores.csv")
     out.to_csv(out_path, index=False)
     print("wrote", out_path, "rows:", len(out))

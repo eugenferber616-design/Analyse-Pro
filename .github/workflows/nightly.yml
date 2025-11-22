@@ -256,9 +256,12 @@ jobs:
           import os, pandas as pd, yfinance as yf
           from datetime import datetime, timedelta
 
+          # Config
           days = int(os.getenv("PRICES_DAYS","750"))
-          os.makedirs("data/prices", exist_ok=True)
+          base_path = "data/prices"
+          os.makedirs(base_path, exist_ok=True)
 
+          # Watchlist lesen
           def read_list(p):
               if not p or not os.path.exists(p): return []
               df = pd.read_csv(p)
@@ -268,20 +271,36 @@ jobs:
           wl = sorted(set(read_list(os.getenv("WATCHLIST_STOCKS")) + read_list(os.getenv("WATCHLIST_ETF"))))
           start = (datetime.utcnow() - timedelta(days=days*1.2)).strftime("%Y-%m-%d")
 
+          print(f"Downloading {len(wl)} symbols to {base_path} (A-Z sorted)...")
+
+          count = 0
           for sym in wl:
               try:
-                  df = yf.download(sym, start=start, auto_adjust=False, progress=False)
+                  # --- ORDNER-LOGIK ---
+                  first_char = sym[0].upper()
+                  if not first_char.isalpha():
+                      first_char = "#"
+                  
+                  sub_dir = os.path.join(base_path, first_char)
+                  os.makedirs(sub_dir, exist_ok=True)
+                  # --------------------
+
+                  df = yf.download(sym, start=start, auto_adjust=False, progress=False, threads=False)
                   if df is None or df.empty:
                       continue
+                  
                   df.index = df.index.tz_localize(None)
+                  
+                  # Speichern im Unterordner
+                  out_path = os.path.join(sub_dir, f"{sym}.csv")
                   df.reset_index().rename(columns={"Date":"date","Open":"open","High":"high","Low":"low","Close":"close","Adj Close":"adj_close","Volume":"volume"}) \
-                    .to_csv(f"data/prices/{sym}.csv", index=False)
+                    .to_csv(out_path, index=False)
+                  count += 1
               except Exception:
                   pass
 
-          print("saved", len([f for f in os.listdir('data/prices') if f.endswith('.csv')]), "files to data/prices")
+          print(f"Successfully saved {count} files.")
           PY
-
       # -------------------- SHORT INTEREST (nur US via iBorrowDesk) ---------#
       - name: Create scripts/fetch_short_interest.py
         run: |
@@ -1099,15 +1118,21 @@ jobs:
           print("datasets.json base =", base)
           PY
 
-      - name: Commit updated cache & reports (no big files)
+      - name: Commit updated cache & reports
         shell: bash
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # WICHTIG: data/prices und data/history ignorieren!
           git add data/ docs/ \
-            ':!data/processed/*.csv' ':!data/processed/*.csv.gz' \
-            ':!data/processed/*.parquet' ':!data/processed/*.zip' ':!data/processed/*.json.gz' || true
-          git commit -m "Nightly cache update (No LLM) + RAW data expansion (SI/Insider/Fund/Financials/Peers/News/Div&Splits) + Equity MASTER + RiskIndex/CDS/HV/COT/OAS + History" || echo "Nothing to commit"
+            ':!data/processed/*.csv' \
+            ':!data/processed/*.csv.gz' \
+            ':!data/processed/*.parquet' \
+            ':!data/prices/**' \
+            ':!data/history/**' || true
+            
+          git commit -m "Nightly update" || echo "Nothing to commit"
           git push
 
       - name: Upload reports & docs (artifact)

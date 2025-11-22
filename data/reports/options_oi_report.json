@@ -1,10 +1,9 @@
 {
-  "ts": "2025-11-22T02:18:22.602178Z",
+  "ts": "2025-11-22T18:37:29.587472Z",
   "watchlist": "watchlists/mylist.txt",
   "symbols": 19,
   "rows_summary": 183,
-  "rows_by_expiry": 183,
-  "rows_by_strike": 2454,
+  "whale_alerts": 734,
   "errors": [
     {
       "symbol": "SAP.DE",

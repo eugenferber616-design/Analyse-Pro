@@ -243,17 +243,16 @@ jobs:
           # Hauptskript aus scripts/ nutzen
           python scripts/build_direction_signal.py
 
-          # Robust: akzeptiere .csv **oder** .csv.gz als Output
-          if [ -s data/processed/direction_signal.csv ]; then
-            echo "✔ direction_signal.csv gefunden"
-            head -n 40 data/processed/direction_signal.csv || true
-          elif [ -s data/processed/direction_signal.csv.gz ]; then
+          # Wir erwarten eine .csv.gz – genau das schreibt das Skript
+          if [ -s data/processed/direction_signal.csv.gz ]; then
             echo "✔ direction_signal.csv.gz gefunden"
             zcat data/processed/direction_signal.csv.gz | head -n 40 || true
-          else:
-            echo "❌ direction_signal leer oder fehlt!" >&2
+          else
+            echo "❌ direction_signal.csv.gz fehlt oder ist leer!" >&2
             exit 1
           fi
+
+
 
       # -------------------- PREISDATEN (OHLC) FÜR WATCHLIST -------------------
       - name: Fetch OHLC prices for watchlist (yfinance)

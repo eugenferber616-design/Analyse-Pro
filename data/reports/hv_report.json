@@ -1,20 +1,20 @@
 {
-  "timestamp": "2025-11-23T17:06:03.676016Z",
+  "timestamp": "2025-11-23T21:14:50.681854Z",
   "total_symbols": 19,
   "success": 0,
   "failed": 19,
-  "duration_sec": 0.09,
+  "duration_sec": 0.08,
   "output": "data/processed/hv_summary.csv.gz",
   "sample_errors": [
-    "AAPL: unsupported operand type(s) for /: 'str' and 'str'",
-    "AVGO: unsupported operand type(s) for /: 'str' and 'str'",
     "ADS.DE: unsupported operand type(s) for /: 'str' and 'str'",
+    "AMZN: unsupported operand type(s) for /: 'str' and 'str'",
+    "AVGO: unsupported operand type(s) for /: 'str' and 'str'",
+    "ALV.DE: unsupported operand type(s) for /: 'str' and 'str'",
+    "BAYN.DE: unsupported operand type(s) for /: 'str' and 'str'",
+    "GLD: unsupported operand type(s) for /: 'str' and 'str'",
+    "AAPL: unsupported operand type(s) for /: 'str' and 'str'",
     "BAS.DE: unsupported operand type(s) for /: 'str' and 'str'",
     "BMW.DE: unsupported operand type(s) for /: 'str' and 'str'",
-    "AMZN: unsupported operand type(s) for /: 'str' and 'str'",
-    "BAYN.DE: unsupported operand type(s) for /: 'str' and 'str'",
-    "ALV.DE: unsupported operand type(s) for /: 'str' and 'str'",
-    "META: unsupported operand type(s) for /: 'str' and 'str'",
-    "IFX.DE: unsupported operand type(s) for /: 'str' and 'str'"
+    "DTE.DE: unsupported operand type(s) for /: 'str' and 'str'"
   ]
 }

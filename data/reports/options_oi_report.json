@@ -1,59 +1,9 @@
 {
-  "ts": "2025-11-23T02:38:33.444790Z",
-  "watchlist": "watchlists/mylist.txt",
-  "symbols": 19,
-  "rows_summary": 183,
-  "whale_alerts": 734,
-  "errors": [
-    {
-      "symbol": "SAP.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "DTE.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "ALV.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "SIE.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "BAS.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "BAYN.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "BMW.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "VOW3.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "ADS.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    },
-    {
-      "symbol": "IFX.DE",
-      "stage": "options_list",
-      "msg": "no options available; skipped"
-    }
-  ]
+  "timestamp_utc": "2025-11-23T16:56:23.006134Z",
+  "mode": "live_only",
+  "n_symbols": 19,
+  "n_summary_rows": 54,
+  "n_totals_rows": 19,
+  "n_whale_alerts": 625,
+  "errors": []
 }

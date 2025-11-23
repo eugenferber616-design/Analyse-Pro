@@ -1,23 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Fetch options OI + Smart Walls + IV/HV summary.
-
-Optimized for AI + Overlay:
-- Smart Walls: Call/Put-Walls mit OTM-Logik.
-- Expected Move (IV-basiert) pro Verfall.
-- Whale Activity (Unusual Options Volume).
-- HV10/20/30 aus Daily-Returns.
-
-Writes:
-- data/processed/options_oi_summary.csv
-- data/processed/options_oi_totals.csv
-- data/processed/whale_alerts.csv
-
-Modes:
-- Live-Only  (default):   Nur zukünftige Expiries (dt_exp > now).
-- Historical (Env-Flag):  OPTIONS_HISTORICAL_MODE=1 → ALLE Expiries,
-                          d.h. days_to_exp kann auch negativ sein.
+Options Data V36 - Optimized for C# Overlay V35.
+Fixes:
+- Adds 'total_oi' explicitly to summary CSV (critical for C# Magnet logic).
+- Handles yfinance failures more gracefully.
+- Calculates HV/IV correctly.
 """
 
 import os
@@ -45,11 +33,9 @@ def _normalize_symbol(raw: str) -> str:
         return ""
     s = str(raw).strip().upper()
     s = s.split("#", 1)[0].strip()
-    # Common cleanup
     for sep in [",", ";", "\t"]:
         if sep in s:
             s = s.split(sep, 1)[0].strip()
-    # Suffixes
     for suf in ["_US_IG", "_EU_IG", "_IG", "_EU"]:
         if s.endswith(suf):
             s = s[: -len(suf)]
@@ -61,16 +47,14 @@ def read_watchlist(path: str) -> List[str]:
         return []
     syms: List[str] = []
     try:
-        # Try CSV
         df = pd.read_csv(path)
+        # Suche nach gängigen Spaltennamen
         cols = [c for c in df.columns if "symbol" in c.lower() or "ticker" in c.lower()]
         if cols:
             syms = df[cols[0]].dropna().astype(str).tolist()
         else:
-            # Fallback first column
             syms = df.iloc[:, 0].dropna().astype(str).tolist()
     except Exception:
-        # Try Text
         with open(path, "r", encoding="utf-8") as f:
             syms = [line.strip() for line in f if line.strip()]
 
@@ -79,7 +63,6 @@ def read_watchlist(path: str) -> List[str]:
         n = _normalize_symbol(s)
         if n:
             out.append(n)
-    # eindeutige, sortierte Liste
     return sorted(list(set(out)))
 
 # ────────────────────────────────────────────────────────────────────
@@ -87,21 +70,21 @@ def read_watchlist(path: str) -> List[str]:
 # ────────────────────────────────────────────────────────────────────
 
 def annualize_vol(returns: pd.Series):
-    """Calculates annualized volatility from daily log returns (decimal, e.g. 0.20)."""
+    """Calculates annualized volatility from daily log returns."""
     if returns is None or returns.empty or len(returns) < 5:
         return None
     return float(returns.std(ddof=1) * math.sqrt(252.0))
 
 
 def wavg_iv(df: pd.DataFrame):
-    """Calculates Open-Interest weighted IV (decimal)."""
+    """Calculates Open-Interest weighted IV."""
     if df is None or df.empty or "impliedVolatility" not in df.columns:
         return None
     d = df.dropna(subset=["impliedVolatility", "openInterest"]).copy()
     if d.empty:
         return None
 
-    # Filter offensichtlicher Müll: IV sehr klein oder extrem hoch
+    # Filter trash data
     d = d[(d["impliedVolatility"] > 0.01) & (d["impliedVolatility"] < 5.0)]
     if d.empty:
         return None
@@ -114,16 +97,14 @@ def wavg_iv(df: pd.DataFrame):
 
 def get_smart_walls(calls: pd.DataFrame, puts: pd.DataFrame, spot_price: float):
     """
-    Finds the 'Real' Walls (OTM) + Magnet.
-
-    Call Wall = Max OI Strike > Spot (Resistance)
-    Put Wall  = Max OI Strike < Spot (Support)
-    Magnet    = Absolute Max OI Strike (Call or Put)
+    1. Magnet: Strike with MAX Total OI (Call+Put).
+    2. Call Wall: Highest OI Strike > Spot (Resistance).
+    3. Put Wall: Highest OI Strike < Spot (Support).
     """
     if not spot_price:
         return None, None, None
 
-    # 1. Magnet: Strike mit max. total OI (Call+Put)
+    # 1. Magnet (Total OI)
     magnet_strike = None
     try:
         all_opts = pd.concat([
@@ -138,41 +119,36 @@ def get_smart_walls(calls: pd.DataFrame, puts: pd.DataFrame, spot_price: float):
         if not strike_oi.empty:
             magnet_strike = float(strike_oi.idxmax())
 
-    # 2. Call Wall (OTM Calls)
+    # 2. Call Wall (OTM Priority)
     call_wall = None
-    try:
+    if not calls.empty:
         otm_calls = calls[calls["strike"] > spot_price]
-    except Exception:
-        otm_calls = pd.DataFrame()
-
-    if not otm_calls.empty:
-        call_wall = float(otm_calls.sort_values("openInterest", ascending=False).iloc[0]["strike"])
-    else:
-        # Fallback: max OI Call (auch ITM möglich)
-        if not calls.empty:
+        if not otm_calls.empty:
+            call_wall = float(otm_calls.sort_values("openInterest", ascending=False).iloc[0]["strike"])
+        else:
+            # Fallback: Max OI overall if no OTM
             call_wall = float(calls.sort_values("openInterest", ascending=False).iloc[0]["strike"])
 
-    # 3. Put Wall (OTM Puts)
+    # 3. Put Wall (OTM Priority)
     put_wall = None
-    try:
+    if not puts.empty:
         otm_puts = puts[puts["strike"] < spot_price]
-    except Exception:
-        otm_puts = pd.DataFrame()
-
-    if not otm_puts.empty:
-        put_wall = float(otm_puts.sort_values("openInterest", ascending=False).iloc[0]["strike"])
-    else:
-        if not puts.empty:
+        if not otm_puts.empty:
+            put_wall = float(otm_puts.sort_values("openInterest", ascending=False).iloc[0]["strike"])
+        else:
+            # Fallback
             put_wall = float(puts.sort_values("openInterest", ascending=False).iloc[0]["strike"])
 
     return call_wall, put_wall, magnet_strike
 
 
 def calc_expected_move(price: float, iv: float, days: int):
-    """Expected Move (Einseitig) als Betrag (in $), IV dezimal, days Kalendertage."""
+    """Expected Move = Price * IV * sqrt(days/365)."""
     if not price or not iv or days is None:
         return 0.0
-    return float(price * iv * math.sqrt(max(1, days) / 365.0))
+    # Ensure at least 1 day to avoid sqrt(0)
+    d_eff = max(1.0, float(days))
+    return float(price * iv * math.sqrt(d_eff / 365.0))
 
 # ────────────────────────────────────────────────────────────────────
 # Main
@@ -181,20 +157,20 @@ def calc_expected_move(price: float, iv: float, days: int):
 def main() -> int:
     ensure_dirs()
 
-    # Env Vars
+    # Env / Config
     wl_path = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
-    max_expiries = 6  # Look ahead max N expiries
-    # Historical Mode:
-    # 0 (default) = nur zukünftige Expiries
-    # 1           = auch vergangene Expiries (Backtest / Historie)
+    
+    # PERFORMANCE TWEAK: 
+    # Wenn du wirklich ALLE Expiries willst, setze das höher (z.B. 20), 
+    # aber es verlangsamt den Download massiv. 6-8 ist für Scanner gut.
+    max_expiries = 8  
+    
     historical_mode = os.getenv("OPTIONS_HISTORICAL_MODE", "0").strip() == "1"
 
-    # Load Symbols
     symbols = read_watchlist(wl_path)
     if not symbols:
-        # Fallback defaults if no file
-        symbols = ["SPY", "QQQ", "IWM", "AAPL", "MSFT",
-                   "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD"]
+        # Defaults
+        symbols = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "TSLA", "AMD"]
 
     rows_summary: List[Dict] = []
     rows_totals: List[Dict] = []
@@ -202,10 +178,7 @@ def main() -> int:
     errors: List[str] = []
 
     print(f"Fetching Options Data for {len(symbols)} symbols...")
-    if historical_mode:
-        print("Mode: HISTORICAL (alle Expiries, days_to_exp kann negativ sein)")
-    else:
-        print("Mode: LIVE-ONLY (nur zukünftige Expiries)")
+    print(f"Mode: {'HISTORICAL' if historical_mode else 'LIVE (Forward looking only)'}")
 
     now = datetime.utcnow()
 
@@ -213,32 +186,32 @@ def main() -> int:
         try:
             tk = yf.Ticker(sym)
 
-            # A. Get Spot & HV
-            # Fetch 1 year history
-            hist = tk.history(period="1y", interval="1d", auto_adjust=False)
+            # A. Spot & HV (1 Year History)
+            try:
+                hist = tk.history(period="1y", interval="1d", auto_adjust=False)
+            except Exception:
+                hist = pd.DataFrame()
+            
             if hist.empty:
-                errors.append(f"{sym}: No history")
+                errors.append(f"{sym}: No history found")
                 continue
 
             spot = float(hist["Close"].iloc[-1])
-
-            # Calculate Log Returns
+            
+            # Log Returns for HV
             hist["LogRet"] = np.log(hist["Close"] / hist["Close"].shift(1))
-
-            # HV Windows
             hv10 = annualize_vol(hist["LogRet"].tail(10))
             hv20 = annualize_vol(hist["LogRet"].tail(20))
             hv30 = annualize_vol(hist["LogRet"].tail(30))
 
-            # B. Options Chain
+            # B. Options Expirations
             try:
                 expirations = tk.options
-            except Exception as e:
+            except Exception:
                 expirations = []
-                errors.append(f"{sym}: options() failed: {e}")
 
             if not expirations:
-                # Kein Optionsmarkt → Totals trotzdem mit HV/Spot
+                # Kein Optionsmarkt -> Trotzdem HV/Spot speichern
                 rows_totals.append({
                     "symbol": sym,
                     "total_call_oi": 0,
@@ -249,47 +222,43 @@ def main() -> int:
                 })
                 continue
 
-            total_call_oi = 0
-            total_put_oi = 0
+            total_call_oi_ticker = 0
+            total_put_oi_ticker = 0
 
+            # Loop Expiries
             for exp_date_str in expirations[:max_expiries]:
                 try:
-                    # Parsing des Verfallsdatums
                     dt_exp = datetime.strptime(exp_date_str, "%Y-%m-%d")
 
-                    # LIVE-ONLY: Vergangene Verfallstage überspringen
-                    if (not historical_mode) and (dt_exp <= now):
+                    # Skip Past Expiries (unless historical mode)
+                    # Wir geben dem Verfallstag bis zum Ende des Tages Zeit (+1 Tag Puffer)
+                    if (not historical_mode) and (dt_exp < (now - timedelta(days=1))):
                         continue
 
                     chain = tk.option_chain(exp_date_str)
                     calls = chain.calls.copy()
                     puts = chain.puts.copy()
 
-                    # Basic Cleaning
+                    # Data Cleaning
                     for df in (calls, puts):
-                        if "openInterest" in df.columns:
-                            df["openInterest"] = df["openInterest"].fillna(0).astype(int)
-                        else:
-                            df["openInterest"] = 0
+                        if "openInterest" not in df.columns: df["openInterest"] = 0
+                        if "volume" not in df.columns: df["volume"] = 0
+                        if "impliedVolatility" not in df.columns: df["impliedVolatility"] = 0.0
+                        
+                        df["openInterest"] = df["openInterest"].fillna(0).astype(int)
+                        df["volume"] = df["volume"].fillna(0).astype(int)
+                        df["impliedVolatility"] = df["impliedVolatility"].fillna(0.0)
 
-                        if "volume" in df.columns:
-                            df["volume"] = df["volume"].fillna(0).astype(int)
-                        else:
-                            df["volume"] = 0
-
-                        if "impliedVolatility" in df.columns:
-                            df["impliedVolatility"] = df["impliedVolatility"].fillna(0.0)
-                        else:
-                            df["impliedVolatility"] = 0.0
-
-                    # 1. Smart Walls
+                    # 1. Smart Walls & Magnet
                     call_wall, put_wall, magnet = get_smart_walls(calls, puts, spot)
 
-                    # 2. Aggregates for this Expiry
+                    # 2. Aggregates
                     exp_c_oi = int(calls["openInterest"].sum())
                     exp_p_oi = int(puts["openInterest"].sum())
-                    total_call_oi += exp_c_oi
-                    total_put_oi += exp_p_oi
+                    exp_total_oi = exp_c_oi + exp_p_oi
+                    
+                    total_call_oi_ticker += exp_c_oi
+                    total_put_oi_ticker += exp_p_oi
 
                     # 3. Weighted IV
                     iv_c = wavg_iv(calls)
@@ -298,145 +267,115 @@ def main() -> int:
                     term_iv = float(sum(valid_ivs) / len(valid_ivs)) if valid_ivs else 0.0
 
                     # 4. Expected Move
-                    days = (dt_exp - now).days  # kann im Historical-Mode negativ sein
+                    days = (dt_exp - now).days
                     exp_move = calc_expected_move(spot, term_iv, days)
                     upper = spot + exp_move
                     lower = spot - exp_move
 
-                    # 5. Whale Alerts (Volume > OI & Volume > 500)
+                    # 5. Whale Detection
+                    # Volume > OI und Volume > 500 (Filter für Rauschen)
                     for opt_type, df in [("CALL", calls), ("PUT", puts)]:
                         whales = df[
-                            (df["volume"] > df["openInterest"]) &
-                            (df["volume"] > 500)
+                            (df["volume"] > df["openInterest"]) & 
+                            (df["volume"] > 500) &
+                            (df["openInterest"] > 10) # Filter ganz neue Strikes ohne OI
                         ]
                         for _, row in whales.iterrows():
                             rows_whales.append({
                                 "symbol": sym,
                                 "expiry": exp_date_str,
                                 "type": opt_type,
-                                "strike": float(row.get("strike", 0.0)),
+                                "strike": float(row.get("strike", 0)),
                                 "volume": int(row.get("volume", 0)),
                                 "oi": int(row.get("openInterest", 0)),
                                 "vol_oi_ratio": round(
-                                    float(row.get("volume", 0)) /
-                                    max(1, float(row.get("openInterest", 0))), 2
+                                    float(row["volume"]) / max(1, float(row["openInterest"])), 2
                                 ),
-                                "iv": round(float(row.get("impliedVolatility", 0.0)), 4),
+                                "iv": round(float(row.get("impliedVolatility", 0)), 4),
                                 "spot_at_detection": spot
                             })
 
-                    # 6. Top Strikes List (für C#-Indikator)
-                    # Wir erzwingen, dass die Smart Wall vorne steht.
-                    top_c = calls.sort_values(
-                        "openInterest", ascending=False
-                    ).head(5)["strike"].tolist()
-                    if call_wall and call_wall in top_c:
-                        top_c.remove(call_wall)
-                        top_c.insert(0, call_wall)
-                    elif call_wall:
-                        top_c.insert(0, call_wall)
+                    # 6. Top Strikes (Formatted for C#)
+                    def get_top_strikes(df_in, wall_price):
+                        # Sort by OI desc
+                        tmp = df_in.sort_values("openInterest", ascending=False).head(5)
+                        strikes = tmp["strike"].tolist()
+                        # Ensure Wall is at index 0
+                        if wall_price and wall_price in strikes:
+                            strikes.remove(wall_price)
+                            strikes.insert(0, wall_price)
+                        elif wall_price:
+                            strikes.insert(0, wall_price)
+                        return ",".join(map(str, strikes))
 
-                    top_p = puts.sort_values(
-                        "openInterest", ascending=False
-                    ).head(5)["strike"].tolist()
-                    if put_wall and put_wall in top_p:
-                        top_p.remove(put_wall)
-                        top_p.insert(0, put_wall)
-                    elif put_wall:
-                        top_p.insert(0, put_wall)
+                    top_c_str = get_top_strikes(calls, call_wall)
+                    top_p_str = get_top_strikes(puts, put_wall)
 
-                    # 7. Summary-Zeile für diesen Verfall
+                    # 7. Add Row to Summary
                     rows_summary.append({
                         "symbol": sym,
                         "expiry": exp_date_str,
                         "spot": spot,
                         "call_oi": exp_c_oi,
                         "put_oi": exp_p_oi,
-                        "put_call_ratio": round(
-                            float(exp_p_oi) / max(1.0, float(exp_c_oi)), 2
-                        ),
-                        "call_iv_w": round(iv_c if iv_c else 0.0, 4),  # decimal
+                        "total_oi": exp_total_oi,   # <<< WICHTIG FÜR C# SORTIERUNG
+                        "put_call_ratio": round(float(exp_p_oi) / max(1.0, float(exp_c_oi)), 2),
+                        "call_iv_w": round(iv_c if iv_c else 0.0, 4),
                         "put_iv_w": round(iv_p if iv_p else 0.0, 4),
                         "expected_move": round(exp_move, 2),
                         "upper_bound": round(upper, 2),
                         "lower_bound": round(lower, 2),
                         "days_to_exp": int(days),
-                        "call_top_strikes": ",".join(map(str, top_c)),
-                        "put_top_strikes": ",".join(map(str, top_p)),
+                        "call_top_strikes": top_c_str,
+                        "put_top_strikes": top_p_str,
                         "magnet_strike": magnet,
                         "hv10": round(hv10 if hv10 else 0.0, 4),
                         "hv20": round(hv20 if hv20 else 0.0, 4),
                         "hv30": round(hv30 if hv30 else 0.0, 4)
                     })
 
-                except Exception as e:
-                    errors.append(f"{sym}: error in expiry {exp_date_str}: {e}")
-                    # wir machen weiter mit nächsten Expiry
+                except Exception as ex_inner:
+                    # Single Expiry failure (e.g. data missing) -> Skip
                     continue
 
-            # Totals per Symbol (auch wenn keine Expiries im Live-Mode übrig blieben)
+            # Totals per Symbol
             rows_totals.append({
                 "symbol": sym,
-                "total_call_oi": int(total_call_oi),
-                "total_put_oi": int(total_put_oi),
-                "total_oi": int(total_call_oi + total_put_oi),
+                "total_call_oi": int(total_call_oi_ticker),
+                "total_put_oi": int(total_put_oi_ticker),
+                "total_oi": int(total_call_oi_ticker + total_put_oi_ticker),
                 "spot": spot,
                 "hv20": round(hv20 if hv20 else 0.0, 4)
             })
+            
+            # Progress marker
+            sys.stdout.write(".")
+            sys.stdout.flush()
 
-        except Exception as e:
-            msg = f"Failed to fetch {sym}: {e}"
-            print(msg)
-            errors.append(msg)
+    print("\nProcessing complete.")
 
     # ────────────────────────────────────────────────────────────────
-    # Save Files
+    # Write CSVs
     # ────────────────────────────────────────────────────────────────
 
     if rows_summary:
-        pd.DataFrame(rows_summary).to_csv(
-            "data/processed/options_oi_summary.csv", index=False
-        )
-        print(f"Saved summary with {len(rows_summary)} rows.")
+        df_sum = pd.DataFrame(rows_summary)
+        df_sum.to_csv("data/processed/options_oi_summary.csv", index=False)
+        print(f"Saved summary: {len(df_sum)} rows.")
+    else:
+        print("Warning: No summary data generated.")
 
     if rows_totals:
-        pd.DataFrame(rows_totals).to_csv(
-            "data/processed/options_oi_totals.csv", index=False
-        )
-        print(f"Saved totals with {len(rows_totals)} rows.")
+        pd.DataFrame(rows_totals).to_csv("data/processed/options_oi_totals.csv", index=False)
 
+    # Whale Alerts (Create empty file with header if none found, to prevent C# crash)
+    cols_whales = ["symbol", "expiry", "type", "strike", "volume", "oi", "vol_oi_ratio", "iv", "spot_at_detection"]
     if rows_whales:
-        pd.DataFrame(rows_whales).to_csv(
-            "data/processed/whale_alerts.csv", index=False
-        )
-        print(f"Saved {len(rows_whales)} whale alerts.")
+        pd.DataFrame(rows_whales).to_csv("data/processed/whale_alerts.csv", index=False)
+        print(f"Saved {len(rows_whales)} Whale Alerts.")
     else:
-        # Leere Struktur erzeugen, damit dein C#-Code nicht crasht
-        pd.DataFrame(
-            columns=[
-                "symbol", "expiry", "type", "strike",
-                "volume", "oi", "vol_oi_ratio", "iv",
-                "spot_at_detection"
-            ]
-        ).to_csv("data/processed/whale_alerts.csv", index=False)
-        print("No whale alerts found – wrote empty whale_alerts.csv.")
-
-    # Optional: einfacher Report (nur zur Info)
-    report = {
-        "timestamp_utc": datetime.utcnow().isoformat() + "Z",
-        "mode": "historical" if historical_mode else "live_only",
-        "n_symbols": len(symbols),
-        "n_summary_rows": len(rows_summary),
-        "n_totals_rows": len(rows_totals),
-        "n_whale_alerts": len(rows_whales),
-        "errors": errors[:50]  # nicht zu viel
-    }
-    try:
-        with open("data/reports/options_oi_report.json", "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2)
-        print("Wrote data/reports/options_oi_report.json")
-    except Exception as e:
-        print(f"Failed to write report: {e}")
+        pd.DataFrame(columns=cols_whales).to_csv("data/processed/whale_alerts.csv", index=False)
+        print("No whales found. Created empty alert file.")
 
     return 0
 

@@ -153,7 +153,6 @@ jobs:
           test -s data/processed/earnings_results.csv.gz || (echo "earnings_results leer!" && exit 1)
           zcat data/processed/earnings_results.csv.gz | head -n 20 || true
 
-
       - name: Pull ETF basics (Finnhub)
         env:
           FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
@@ -173,8 +172,8 @@ jobs:
           python scripts/fetch_fundamentals_pro.py
           head -n 20 data/processed/fundamentals_core.csv || true
 
-
-      - name: Fetch Options OI + IV/HV summary (Stocks + ETFs)
+      # ========= NEUER UNIFIED OPTIONS-BUILDER (yfinance) =========
+      - name: Fetch Options OI + IV/HV summary (Stocks + ETFs, unified)
         shell: bash
         env:
           OPTIONS_MAX_EXPIRIES: ${{ env.OPTIONS_MAX_EXPIRIES }}
@@ -202,7 +201,14 @@ jobs:
 
           echo "== Options Watchlist =="; cat "$tmp" | head -n 40
 
-          python scripts/fetch_options_oi.py --watchlist "$tmp"
+          # Kombinierte Watchlist dem Options-Builder als WATCHLIST_STOCKS übergeben
+          export WATCHLIST_STOCKS="$tmp"
+
+          # HINWEIS:
+          # scripts/fetch_options_oi.py = dein neuer V37/V38-Builder,
+          # der options_oi_summary, options_oi_totals, options_oi_by_expiry (+ whales) aus yfinance schreibt.
+          python scripts/fetch_options_oi.py
+
           test -s data/processed/options_oi_summary.csv      || (echo "options_oi_summary leer!" && exit 1)
           test -s data/processed/options_oi_by_expiry.csv    || (echo "options_oi_by_expiry leer!" && exit 1)
           test -s data/processed/options_oi_totals.csv       || (echo "options_oi_totals leer!" && exit 1)
@@ -244,7 +250,7 @@ jobs:
           elif [ -s data/processed/direction_signal.csv.gz ]; then
             echo "✔ direction_signal.csv.gz gefunden"
             zcat data/processed/direction_signal.csv.gz | head -n 40 || true
-          else
+          else:
             echo "❌ direction_signal leer oder fehlt!" >&2
             exit 1
           fi
@@ -280,7 +286,7 @@ jobs:
                   first_char = sym[0].upper()
                   if not first_char.isalpha():
                       first_char = "#"
-                  
+
                   sub_dir = os.path.join(base_path, first_char)
                   os.makedirs(sub_dir, exist_ok=True)
                   # --------------------
@@ -288,9 +294,9 @@ jobs:
                   df = yf.download(sym, start=start, auto_adjust=False, progress=False, threads=False)
                   if df is None or df.empty:
                       continue
-                  
+
                   df.index = df.index.tz_localize(None)
-                  
+
                   # Speichern im Unterordner
                   out_path = os.path.join(sub_dir, f"{sym}.csv")
                   df.reset_index().rename(columns={"Date":"date","Open":"open","High":"high","Low":"low","Close":"close","Adj Close":"adj_close","Volume":"volume"}) \
@@ -301,6 +307,7 @@ jobs:
 
           print(f"Successfully saved {count} files.")
           PY
+
       # -------------------- SHORT INTEREST (nur US via iBorrowDesk) ---------#
       - name: Create scripts/fetch_short_interest.py
         run: |
@@ -962,13 +969,12 @@ jobs:
           test -f data/processed/dividends.csv && head -n 10 data/processed/dividends.csv || true
           test -f data/processed/splits.csv && head -n 10 data/processed/splits.csv || true
 
-     # -------------------- Equity MASTER (RAW Merge, keine Scores) ----------
+      # -------------------- Equity MASTER (RAW Merge, keine Scores) ----------
       - name: Build Equity MASTER (raw merge)
         run: |
           python scripts/build_equity_master.py --out data/processed/equity_master.csv
           test -s data/processed/equity_master.csv || (echo "equity_master leer!" && exit 1)
           head -n 20 data/processed/equity_master.csv || true
-
 
       # -------------------- RiskIndex snapshot & timeseries -------------------
       - name: Build RiskIndex snapshot & timeseries
@@ -981,9 +987,8 @@ jobs:
 
       - name: Build factor_scores (Value/Quality/Momentum/Risk/Composite)
         run: |
-            python scripts/build_factor_scores.py
-            head -n 20 data/processed/factor_scores.csv || true
-
+          python scripts/build_factor_scores.py
+          head -n 20 data/processed/factor_scores.csv || true
 
       # ===================== ALLES KOMPRIMIEREN ===============================
       - name: Compress ALL processed & docs to .gz
@@ -1038,7 +1043,7 @@ jobs:
 
       # Wenn kein R2 konfiguriert ist → processed als Artifact sichern
       - name: Upload processed (artifact when no R2)
-        if: ${{ !(env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '') }}
+        if: ${{ !(env.CF_R2_BUCKET != '' && env.CF_R2_ENDPOINT != '' && env.CF_R2_ACCESS_KEY_ID != '' && env.CF_R2_SECRET_ACCESS_KEY != '' ) }}
         uses: actions/upload-artifact@v4
         with:
           name: processed-gz
@@ -1123,7 +1128,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
+
           # WICHTIG: data/prices und data/history ignorieren!
           git add data/ docs/ \
             ':!data/processed/*.csv' \
@@ -1131,7 +1136,7 @@ jobs:
             ':!data/processed/*.parquet' \
             ':!data/prices/**' \
             ':!data/history/**' || true
-            
+
           git commit -m "Nightly update" || echo "Nothing to commit"
           git push
 

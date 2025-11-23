@@ -166,8 +166,8 @@ jobs:
 
       - name: Pull FUNDAMENTALS (pro)
         env:
-          FINNHUB_API_KEY:       ${{ secrets.FINNHUB_API_KEY }}
-          FINNHUB_TOKEN:         ${{ secrets.FINNHUB_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FINNHUB_TOKEN:   ${{ secrets.FINNHUB_TOKEN }}
         run: |
           python scripts/fetch_fundamentals_pro.py
           head -n 20 data/processed/fundamentals_core.csv || true
@@ -252,8 +252,6 @@ jobs:
             exit 1
           fi
 
-
-
       # -------------------- PREISDATEN (OHLC) FÜR WATCHLIST -------------------
       - name: Fetch OHLC prices for watchlist (yfinance)
         run: |
@@ -307,7 +305,7 @@ jobs:
           print(f"Successfully saved {count} files.")
           PY
 
-      # -------------------- SHORT INTEREST (nur US via iBorrowDesk) ---------#
+      # -------------------- SHORT INTEREST (nur US via iBorrowDesk) ---------
       - name: Create scripts/fetch_short_interest.py
         run: |
           cat > scripts/fetch_short_interest.py <<'PY'
@@ -808,7 +806,7 @@ jobs:
       # -------------------- COT 20y Pulls ---------------------------
       - name: Pull COT 20y – Disaggregated (F+O Combined)
         env:
-          CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
+          CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -832,7 +830,7 @@ jobs:
 
       - name: Pull COT 20y – TFF (F+O Combined)
         env:
-          CFTC_APP_TOKEN:  ${{ secrets.CFTC_APP_TOKEN }}
+          CFTC_APP_TOKEN: ${{ secrets.CFTC_APP_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail

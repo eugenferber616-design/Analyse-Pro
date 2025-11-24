@@ -1,11 +1,11 @@
 {
-  "ts": "2025-11-23T22:23:54Z",
+  "ts": "2025-11-24T00:48:24Z",
   "dataset": "yw9f-hn96",
   "years": 20,
   "mode": "SMART",
   "rows": 14365,
-  "date_from": "2005-11-18",
-  "date_to": "2025-11-23",
+  "date_from": "2005-11-19",
+  "date_to": "2025-11-24",
   "watchlist": 49,
   "chunk_years": 4,
   "batch_markets": 10

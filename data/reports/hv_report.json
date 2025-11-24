@@ -1,5 +1,5 @@
 {
-  "timestamp": "2025-11-24T00:48:44.346979Z",
+  "timestamp": "2025-11-24T02:42:56.553430Z",
   "total_symbols": 19,
   "success": 0,
   "failed": 19,
@@ -7,14 +7,14 @@
   "output": "data/processed/hv_summary.csv.gz",
   "sample_errors": [
     "ADS.DE: unsupported operand type(s) for /: 'str' and 'str'",
-    "AAPL: unsupported operand type(s) for /: 'str' and 'str'",
     "ALV.DE: unsupported operand type(s) for /: 'str' and 'str'",
-    "BAS.DE: unsupported operand type(s) for /: 'str' and 'str'",
     "AMZN: unsupported operand type(s) for /: 'str' and 'str'",
+    "AAPL: unsupported operand type(s) for /: 'str' and 'str'",
+    "BAS.DE: unsupported operand type(s) for /: 'str' and 'str'",
     "AVGO: unsupported operand type(s) for /: 'str' and 'str'",
+    "META: unsupported operand type(s) for /: 'str' and 'str'",
+    "GOOGL: unsupported operand type(s) for /: 'str' and 'str'",
     "BAYN.DE: unsupported operand type(s) for /: 'str' and 'str'",
-    "GLD: unsupported operand type(s) for /: 'str' and 'str'",
-    "BMW.DE: unsupported operand type(s) for /: 'str' and 'str'",
-    "IFX.DE: unsupported operand type(s) for /: 'str' and 'str'"
+    "BMW.DE: unsupported operand type(s) for /: 'str' and 'str'"
   ]
 }

@@ -1025,6 +1025,7 @@ jobs:
           copy data/processed/options_oi_by_strike.csv.gz
           copy data/processed/options_oi_totals.csv.gz
           copy data/processed/short_interest.csv.gz
+          copy data/processed/options_3stage_pro.csv.gz
           copy data/processed/insider_tx.csv.gz
           copy data/processed/fund_ownership.csv.gz
           copy data/processed/hv_summary.csv.gz
@@ -1100,6 +1101,7 @@ jobs:
               "options_by_strike":     "/data/processed/options_oi_by_strike.csv.gz",
               "options_strike_max":    "/data/processed/options_oi_strike_max.csv.gz",
               "options_signals":       "/data/processed/options_signals.csv.gz",
+              "options_3stage_pro":   "/data/processed/options_3stage_pro.csv.gz",
               "direction_signal":      "/data/processed/direction_signal.csv.gz",
               "short_interest":        "/data/processed/short_interest.csv.gz",
               "insider_tx":            "/data/processed/insider_tx.csv.gz",
@@ -1114,6 +1116,7 @@ jobs:
               "equity_master":         "/data/processed/equity_master.csv.gz",
               "riskindex_snapshot":    "/data/processed/riskindex_snapshot.json.gz",
               "riskindex_timeseries":  "/data/processed/riskindex_timeseries.csv.gz"
+
             }
           }
           pathlib.Path("docs").mkdir(parents=True, exist_ok=True)

@@ -5,6 +5,7 @@ python-dateutil>=2.8.2,<3
 PyYAML>=6.0.1,<7
 numpy>=1.24,<3
 pandas>=2.2,<3
+scipy>=1.10,<2       <-- WICHTIG: Hier eingefügt für Black-Scholes / Greeks
 
 # Markets
 yfinance>=0.2.40,<1
@@ -16,13 +17,6 @@ cot-reports
 beautifulsoup4>=4.12,<5
 lxml>=4.9,<5
 
-# Parquet engines (damit der Workflow nichts nachinstallieren muss)
+# Parquet engines
 pyarrow>=15,<18
 fastparquet>=2024.2.0,<2026
-
-# --- Optional (nur bei Bedarf; NICHT vom Workflow benötigt) ---
-# transformers>=4.43,<5
-# fastapi==0.111.0
-# uvicorn==0.30.1
-# aiohttp>=3.9,<4
-# async-timeout>=4.0,<5

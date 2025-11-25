@@ -74,9 +74,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # Zusätzliche Pakete, die in Inline-Skripten genutzt werden
-          pip install --upgrade yfinance pandas_datareader requests
+          # Falls requirements.txt existiert, installieren (aber Fehler ignorieren oder vorher fixen)
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          
+          # WICHTIG: Hier scipy explizit hinzufügen!
+          pip install --upgrade yfinance pandas_datareader requests scipy
+          
           # parquet-Engines optional
           pip install --upgrade pyarrow fastparquet matplotlib
 

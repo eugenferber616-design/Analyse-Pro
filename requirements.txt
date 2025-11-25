@@ -5,7 +5,7 @@ python-dateutil>=2.8.2,<3
 PyYAML>=6.0.1,<7
 numpy>=1.24,<3
 pandas>=2.2,<3
-scipy>=1.10,<2       <-- WICHTIG: Hier eingefügt für Black-Scholes / Greeks
+scipy>=1.10,<2
 
 # Markets
 yfinance>=0.2.40,<1

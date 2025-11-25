@@ -238,22 +238,20 @@ jobs:
           test -s data/processed/options_signals.csv || (echo "options_signals leer!" && exit 1)
           head -n 40 data/processed/options_signals.csv || true
 
-      - name: Build direction_signal (kompakte Overlay-Datei)
+      - name: Build options_3stage_pro (Smart Walls Pro)
         shell: bash
         run: |
           set -euo pipefail
+          python scripts/options_3stage_pro.py
 
-          # Hauptskript aus scripts/ nutzen
-          python scripts/build_direction_signal.py
-
-          # Wir erwarten eine .csv.gz – genau das schreibt das Skript
-          if [ -s data/processed/direction_signal.csv.gz ]; then
-            echo "✔ direction_signal.csv.gz gefunden"
-            zcat data/processed/direction_signal.csv.gz | head -n 40 || true
+          if [ -s data/processed/options_3stage_pro.csv ]; then
+            echo "✔ options_3stage_pro.csv erstellt"
+            head -n 20 data/processed/options_3stage_pro.csv || true
           else
-            echo "❌ direction_signal.csv.gz fehlt oder ist leer!" >&2
+            echo "❌ options_3stage_pro.csv fehlt oder ist leer!" >&2
             exit 1
           fi
+
 
       # -------------------- PREISDATEN (OHLC) FÜR WATCHLIST -------------------
       - name: Fetch OHLC prices for watchlist (yfinance)

@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Fetch Short Interest + Float + Borrow von Finnhub
-PLUS Borrow-Daten von iBorrowDesk (Website-Scrape, nur US-Ticker).
+fetch_short_interest.py (LIGHT)
+-------------------------------
+Vereinfachte Version:
 
-Ergebnis:
+- KEIN Finnhub-Short-Interest, KEIN Float mehr.
+- Nur noch Borrow-/Fee-Daten von iBorrowDesk für US-Ticker.
+
+Output:
   data/processed/short_interest.csv
 
-Spalten (wichtig für equity_master):
+Spalten (Schema kompatibel zu vorher, damit Equity Master & Scanner nicht brechen):
   symbol, si_date, si_shares, float_shares, si_pct_float,
-  borrow_date, borrow_rate, borrow_avail
-
-Zusatzspalten zur Diagnose:
-  si_source, ibd_rebate, ibd_high_available, ibd_low_available,
+  borrow_date, borrow_rate, borrow_avail,
+  si_source,
+  ibd_rebate, ibd_high_available, ibd_low_available,
   ibd_high_fee, ibd_low_fee, ibd_high_rebate, ibd_low_rebate,
   ibd_status, fh_si_status, fh_borrow_status, fh_float_status
 """
 
 import os
 import time
-from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
 import pandas as pd
 import requests
-
-FINNHUB_BASE = "https://finnhub.io/api/v1"
-FINNHUB_TOKEN = os.getenv("FINNHUB_TOKEN") or os.getenv("FINNHUB_API_KEY")
 
 IBD_BASE = "https://iborrowdesk.com/api/ticker/"
 OUT_PATH = "data/processed/short_interest.csv"
@@ -122,84 +121,8 @@ def build_universe() -> List[str]:
             us.add(sym)
 
     uni = sorted(us)
-    print("US-Universum für Short Interest:", uni)
+    print("US-Universum für Borrow/Sentiment:", uni)
     return uni
-
-# ---------------------------------------------------------------------------
-# Finnhub-Wrapper
-# ---------------------------------------------------------------------------
-
-def fh_get(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    params = dict(params or {})
-    if FINNHUB_TOKEN:
-        params["token"] = FINNHUB_TOKEN
-    url = FINNHUB_BASE + path
-    for i in range(3):
-        try:
-            r = requests.get(url, params=params, timeout=30)
-            if r.status_code == 200:
-                return r.json() or {}
-        except Exception:
-            pass
-        time.sleep(1 + 2 * i)
-    return {}
-
-
-def fetch_finnhub_blocks(sym: str, fr: str, to: str) -> Dict[str, Any]:
-    """Holt Short-Interest, Borrow, Float von Finnhub für ein Symbol."""
-    out: Dict[str, Any] = {
-        "fh_si_status": "none",
-        "fh_borrow_status": "none",
-        "fh_float_status": "none",
-        "si_shares": None,
-        "si_date": None,
-        "float_shares": None,
-        "borrow_date_fh": None,
-        "borrow_rate_fh": None,
-        "borrow_avail_fh": None,
-    }
-
-    # Short interest
-    try:
-        si = fh_get("/stock/short-interest", {"symbol": sym, "from": fr, "to": to})
-        data = si.get("data") if isinstance(si, dict) else None
-        last = (data or [{}])[-1] if data else {}
-        if last:
-            out["fh_si_status"] = "ok"
-            out["si_shares"] = last.get("shortInterest") or last.get("short_interest")
-            out["si_date"] = last.get("date") or last.get("t")
-        else:
-            out["fh_si_status"] = "empty"
-    except Exception as e:
-        out["fh_si_status"] = f"error:{e}"
-
-    # Borrow
-    try:
-        br = fh_get("/stock/borrow", {"symbol": sym})
-        data = br.get("data") if isinstance(br, dict) else None
-        last = (data or [{}])[-1] if data else {}
-        if last:
-            out["fh_borrow_status"] = "ok"
-            out["borrow_date_fh"] = last.get("date") or last.get("t")
-            out["borrow_rate_fh"] = last.get("rate") or last.get("feeRate") or last.get("fr")
-            out["borrow_avail_fh"] = last.get("available") or last.get("shares")
-        else:
-            out["fh_borrow_status"] = "empty"
-    except Exception as e:
-        out["fh_borrow_status"] = f"error:{e}"
-
-    # Float
-    try:
-        fl = fh_get("/stock/float", {"symbol": sym})
-        if fl:
-            out["fh_float_status"] = "ok"
-            out["float_shares"] = fl.get("floatShares")
-        else:
-            out["fh_float_status"] = "empty"
-    except Exception as e:
-        out["fh_float_status"] = f"error:{e}"
-
-    return out
 
 # ---------------------------------------------------------------------------
 # iBorrowDesk-Wrapper
@@ -272,73 +195,35 @@ def fetch_ibd(sym: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def main():
-    if not FINNHUB_TOKEN:
-        print("WARN: FINNHUB_TOKEN / FINNHUB_API_KEY fehlt – Finnhub-Teil wird leer sein.")
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
 
     universe = build_universe()
     if not universe:
-        print("Keine US-Symbole für Short Interest gefunden.")
+        print("Keine US-Symbole für Borrow/Short-Sentiment gefunden.")
         return
-
-    fr = (datetime.utcnow() - timedelta(days=400)).strftime("%Y-%m-%d")
-    to = datetime.utcnow().strftime("%Y-%m-%d")
 
     rows = []
 
-    print("== Short Interest Pull (Finnhub + iBorrowDesk) für", len(universe), "US-Symbole ==")
+    print("== Borrow / Fee Pull (iBorrowDesk ONLY) für", len(universe), "US-Symbole ==")
 
     for i, sym in enumerate(universe, start=1):
         print(f"[{i}/{len(universe)}] {sym} …")
-        # Finnhub
-        fh = fetch_finnhub_blocks(sym, fr, to) if FINNHUB_TOKEN else {
-            "fh_si_status": "no_token",
-            "fh_borrow_status": "no_token",
-            "fh_float_status": "no_token",
-            "si_shares": None,
-            "si_date": None,
-            "float_shares": None,
-            "borrow_date_fh": None,
-            "borrow_rate_fh": None,
-            "borrow_avail_fh": None,
-        }
-        # iBorrowDesk
+
         ibd = fetch_ibd(sym)
 
-        # si_pct_float berechnen (nur Finnhub-Teil)
-        si_pct = None
-        try:
-            if fh.get("si_shares") is not None and fh.get("float_shares") not in (None, 0):
-                si_pct = 100.0 * float(fh["si_shares"]) / float(fh["float_shares"])
-        except Exception:
-            si_pct = None
-
-        # Quelle zusammensetzen
-        sources = []
-        if fh.get("fh_si_status") not in ("none", "empty", "no_token"):
-            sources.append("fh_si")
-        if fh.get("fh_borrow_status") not in ("none", "empty", "no_token"):
-            sources.append("fh_borrow")
-        if fh.get("fh_float_status") not in ("none", "empty", "no_token"):
-            sources.append("fh_float")
-        if ibd.get("ibd_status") == "ok":
-            sources.append("ibd")
-        si_source = "+".join(sources) if sources else "none"
-
-        # Borrow-Felder: Priorität Finnhub, Fallback iBorrowDesk
-        borrow_date = fh.get("borrow_date_fh") or ibd.get("ibd_date")
-        borrow_rate = fh.get("borrow_rate_fh") or ibd.get("ibd_fee")
-        borrow_avail = fh.get("borrow_avail_fh") or ibd.get("ibd_available")
+        borrow_date  = ibd.get("ibd_date")
+        borrow_rate  = ibd.get("ibd_fee")
+        borrow_avail = ibd.get("ibd_available")
 
         row = {
             "symbol":       sym,
-            "si_source":    si_source,
-            # Short-Interest/Float (Finnhub-basiert)
-            "si_date":      fh.get("si_date") or ibd.get("ibd_date"),
-            "si_shares":    fh.get("si_shares"),
-            "float_shares": fh.get("float_shares"),
-            "si_pct_float": si_pct,
-            # Borrow kombiniert
+            # Short-Interest/Float (NICHT mehr befüllt)
+            "si_source":    "ibd_only" if ibd.get("ibd_status") == "ok" else "none",
+            "si_date":      None,
+            "si_shares":    None,
+            "float_shares": None,
+            "si_pct_float": None,
+            # Borrow
             "borrow_date":  borrow_date,
             "borrow_rate":  borrow_rate,
             "borrow_avail": borrow_avail,
@@ -351,12 +236,14 @@ def main():
             "ibd_high_rebate":     ibd.get("ibd_high_rebate"),
             "ibd_low_rebate":      ibd.get("ibd_low_rebate"),
             "ibd_status":          ibd.get("ibd_status"),
-            "fh_si_status":        fh.get("fh_si_status"),
-            "fh_borrow_status":    fh.get("fh_borrow_status"),
-            "fh_float_status":     fh.get("fh_float_status"),
+            # Finnhub-Felder deaktiviert, aber fürs Schema drin
+            "fh_si_status":        "disabled",
+            "fh_borrow_status":    "disabled",
+            "fh_float_status":     "disabled",
         }
         rows.append(row)
-        # leichter Delay, um iBorrowDesk nicht zu stressen
+
+        # kleiner Delay, um iBorrowDesk nicht zu stressen
         time.sleep(0.3)
 
     df = pd.DataFrame(rows)

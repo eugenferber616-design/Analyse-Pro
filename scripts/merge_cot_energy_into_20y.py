@@ -128,7 +128,7 @@ def main() -> None:
     #    Socrata zuerst, Energy nur als Lückenfüller.
     merged = merged.sort_values(
         ["market_and_exchange_names", "report_date_as_yyyy_mm_dd", "source"],
-        ascending=[True, True, True],
+        ascending=[True, True, False],
     )
     merged = merged.drop_duplicates(
         subset=["market_and_exchange_names", "report_date_as_yyyy_mm_dd"],

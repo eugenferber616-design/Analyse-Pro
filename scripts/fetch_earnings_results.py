@@ -1,20 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fetch_earnings_results.py – robuste Historie von Earnings (EPS/Revenue + Surprise)
-
-Quellen / Fallback-Reihenfolge (Priorität hoch → niedrig):
-  1) Finnhub /stock/earnings (FINNHUB_TOKEN)              -> source='finnhub'      (prio 4)
-  2) Yahoo Finance earnings_dates (gratis)                 -> source='yahoo.ed'     (prio 3)
-  3) SEC Companyfacts (gratis; braucht SEC_USER_AGENT)     -> source='sec'          (prio 2)
-  4) Yahoo quarterly_earnings (EPS+Revenue, teils lücken)  -> source='yahoo.qe'     (prio 1)
-  5) Yahoo quarterly_financials (Revenue, grob)            -> source='yahoo.qf'     (prio 0)
-
-Outputs:
-  data/processed/earnings_results.csv(.gz)
-  data/reports/eu_checks/earnings_results_preview.txt
-  data/reports/eu_checks/earnings_results_missing.txt
-  data/reports/earn_errors.json
+fetch_earnings_results.py – FIXED VERSION
+Behebt den 'ValueError: Length mismatch' durch robuste Pandas-Logik.
 """
 
 from __future__ import annotations
@@ -62,10 +50,8 @@ def to_float(x):
         if x is None or (isinstance(x, float) and math.isnan(x)):
             return _nan()
         s = str(x).strip()
-        # 1.234,56 → 1234.56
         if re.match(r"^-?\d{1,3}(\.\d{3})+,\d+$", s):
             s = s.replace(".", "").replace(",", ".")
-        # 1,234.56 → 1234.56
         elif re.match(r"^-?\d{1,3}(,\d{3})+\.\d+$", s):
             s = s.replace(",", "")
         return float(s)
@@ -119,7 +105,8 @@ def load_watchlist(path: str | Path) -> List[str]:
         if "," in head or "symbol" in head.lower():
             rdr = csv.DictReader(f)
             for row in rdr:
-                s = (row.get("symbol") or row.get("ticker") or "").strip().upper()
+                # Key cleaning: Handle #symbol
+                s = (row.get("symbol") or row.get("#symbol") or row.get("ticker") or "").strip().upper()
                 if s and not s.startswith("#"):
                     syms.append(s)
         else:
@@ -152,7 +139,7 @@ def api_symbol_for(sym: str, overrides: Dict[str, str]) -> str:
     if sym in overrides:
         return overrides[sym]
     if "." in sym:
-        return sym.split(".", 1)[0]  # SAP.DE -> SAP
+        return sym.split(".", 1)[0]
     return sym
 
 # ───────────────────────────── Provider: Finnhub ─────────────────────────────
@@ -209,7 +196,7 @@ def yf_available() -> bool:
     global _YF_AVAILABLE
     if _YF_AVAILABLE is None:
         try:
-            import yfinance as yf  # noqa: F401
+            import yfinance as yf
             _YF_AVAILABLE = True
         except Exception:
             _YF_AVAILABLE = False
@@ -223,7 +210,6 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
     api_sym = symbol
     try:
         tk = yf.Ticker(symbol)
-
         # 1) earnings_dates
         try:
             ed = getattr(tk, "earnings_dates", None)
@@ -291,7 +277,7 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
         except Exception:
             pass
 
-        # 3) quarterly_financials (Revenue only)
+        # 3) quarterly_financials
         try:
             qf = getattr(tk, "quarterly_financials", None)
             if qf is not None and hasattr(qf, "T"):
@@ -349,12 +335,9 @@ def sec_cik_for_symbol(sym: str) -> str | None:
     return None
 
 def sec_fetch_companyfacts(sym: str, limit: int = 16) -> List[dict]:
-    """Grobe EPS/Revenue pro Quartal aus SEC-Facts (us-gaap) – Lückenfüller."""
-    if not SEC_UA:
-        return []
+    if not SEC_UA: return []
     cik = sec_cik_for_symbol(sym)
-    if not cik:
-        return []
+    if not cik: return []
     try:
         r = requests.get(SEC_FACTS_URL.replace("{CIK}", cik), headers=sec_headers(), timeout=30)
         r.raise_for_status()
@@ -370,8 +353,7 @@ def sec_fetch_companyfacts(sym: str, limit: int = 16) -> List[dict]:
                 arr = facts.get(unit) or []
                 for itm in arr:
                     p = parse_iso_date(itm.get("end")) or parse_iso_date(itm.get("fy"))
-                    if not p:
-                        continue
+                    if not p: continue
                     k = make_fiscal_period(None, None, p) or p
                     out[k] = to_float(itm.get("val"))
         except Exception:
@@ -452,26 +434,39 @@ def write_report(report: dict, path: Path) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
 
-# ───────────────────────────── Year/Quarter aus period ──────────────────────
+# ───────────────────────────── Fix for Year/Quarter ──────────────────────
 def infer_year_quarter_from_period(df: pd.DataFrame) -> pd.DataFrame:
-    """Füllt year/quarter aus period (z.B. '2023Q4' oder Datum), falls leer."""
-    if "period" not in df.columns or "year" not in df.columns or "quarter" not in df.columns:
+    """
+    FIXED VERSION: Füllt year/quarter aus period, robust gegen Pandas-Version.
+    Vermeidet 'Length mismatch' Error.
+    """
+    if df.empty:
         return df
+    
+    if "period" not in df.columns:
+        return df
+    
+    # Sicherstellen, dass year/quarter existieren
+    if "year" not in df.columns: df["year"] = pd.NA
+    if "quarter" not in df.columns: df["quarter"] = pd.NA
 
-    def _yq(row):
+    def _yq(row) -> Tuple[float | None, float | None]:
         y, q = row.get("year"), row.get("quarter")
         if pd.notna(y) and pd.notna(q):
-            return y, q
+            return float(y), float(q)
+        
         p = row.get("period")
         if pd.isna(p):
-            return y, q
+            return None, None
+            
         s = str(p)
+        # 1. Format: 2023Q4
         m = re.match(r"^(\d{4})Q([1-4])$", s)
         if m:
-            try:
-                return float(m.group(1)), float(m.group(2))
-            except Exception:
-                return y, q
+            try: return float(m.group(1)), float(m.group(2))
+            except: pass
+            
+        # 2. Format: 2023-12-31
         d = parse_iso_date(s)
         if d:
             try:
@@ -479,18 +474,19 @@ def infer_year_quarter_from_period(df: pd.DataFrame) -> pd.DataFrame:
                 mth = int(d[5:7])
                 qq = (mth - 1) // 3 + 1
                 return float(yy), float(qq)
-            except Exception:
-                return y, q
-        return y, q
+            except: pass
+            
+        return None, None
 
-    yq = df.apply(_yq, axis=1, result_type="expand")
-    yq.columns = ["__year_fix", "__quarter_fix"]
-    df.loc[df["year"].isna(), "year"] = yq.loc[df["year"].isna(), "__year_fix"]
-    df.loc[df["quarter"].isna(), "quarter"] = yq.loc[df["quarter"].isna(), "__quarter_fix"]
-
-    cols_to_drop = [c for c in ["__year_fix", "__quarter_fix"] if c in df.columns]
-    if cols_to_drop:
-        df = df.drop(columns=cols_to_drop)
+    # Robuste Berechnung als Liste, statt result_type="expand"
+    yq_list = df.apply(_yq, axis=1).tolist()
+    
+    # In DataFrame wandeln
+    yq_df = pd.DataFrame(yq_list, columns=["__year_fix", "__quarter_fix"], index=df.index)
+    
+    # Original aktualisieren
+    df.loc[df["year"].isna(), "year"] = yq_df.loc[df["year"].isna(), "__year_fix"]
+    df.loc[df["quarter"].isna(), "quarter"] = yq_df.loc[df["quarter"].isna(), "__quarter_fix"]
 
     return df
 
@@ -499,30 +495,19 @@ def main() -> None:
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--watchlist", default=WATCHLIST_PATH,
-                    help="Pfad zur Watchlist-Datei")
-    ap.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
-                    help="max. Quartale pro Symbol")
-    ap.add_argument("--use-yf", action="store_true",
-                    help="Yahoo Finance als Fallback verwenden")
-    ap.add_argument("--merge-existing", default="data/processed/earnings_results.csv.gz",
-                    help="Bestehende Datei für Merge (optional)")
-    ap.add_argument("--out", default=str(OUT_DIR / "earnings_results.csv.gz"),
-                    help="Output-Datei (wird zusätzlich als .csv geschrieben)")
+    ap.add_argument("--watchlist", default=WATCHLIST_PATH)
+    ap.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    ap.add_argument("--use-yf", action="store_true")
+    ap.add_argument("--merge-existing", default="data/processed/earnings_results.csv.gz")
+    ap.add_argument("--out", default=str(OUT_DIR / "earnings_results.csv.gz"))
     args = ap.parse_args()
 
     report = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "watchlist": args.watchlist,
-        "overrides": str(OVR_FILE),
-        "rows": 0,
         "symbols": 0,
-        "errors": [],
+        "rows": 0,
         "missing": 0,
-        "files": {},
-        "use_yf": bool(args.use_yf),
-        "limit": int(args.limit),
-        "sec_enabled": bool(SEC_UA),
+        "files": {}
     }
 
     watch = load_watchlist(args.watchlist)
@@ -532,31 +517,38 @@ def main() -> None:
     out_rows: List[dict] = []
     missing: List[Dict[str, str]] = []
 
+    print(f"Fetch Earnings Results for {len(watch)} symbols...")
+
     for sym in watch:
         api_sym = api_symbol_for(sym, overrides)
 
-        # Finnhub
+        # 1. Finnhub
         fin_rows: List[dict] = []
         if FINNHUB_TOKEN:
             fin_raw = finnhub_get(api_sym, limit=args.limit)
             fin_rows = normalize_finnhub_rows(sym, api_sym, fin_raw)
 
-        # Yahoo Fallbacks
+        # 2. Yahoo (Always fetch for robust dates)
         yf_rows: List[dict] = []
-        if args.use_yf and (not fin_rows or len(fin_rows) < max(4, args.limit // 4)):
+        try:
             yf_rows, _ = fetch_yf(api_sym, limit=args.limit)
+        except:
+            pass
 
-        # SEC Fallback
+        # 3. SEC Fallback
         sec_rows: List[dict] = []
-        if SEC_UA and (not fin_rows or not any(pd.notna(r.get("revenue_actual")) for r in fin_rows)) \
-                  and (not yf_rows or not any(pd.notna(r.get("revenue_actual")) for r in yf_rows)):
+        # Nur wenn gar nichts da ist (weder Finnhub noch Yahoo)
+        if not fin_rows and not yf_rows and SEC_UA:
             try:
                 sec_rows = sec_fetch_companyfacts(api_sym, limit=args.limit)
-            except Exception:
-                sec_rows = []
+            except: pass
 
         if not fin_rows and not yf_rows and not sec_rows:
             missing.append({"symbol": sym, "tried": api_sym, "status": "no-data"})
+            # print(f"  [MISSING] {sym}")
+        else:
+            # print(f"  [OK] {sym}: FH={len(fin_rows)} YF={len(yf_rows)} SEC={len(sec_rows)}")
+            pass
 
         out_rows.extend(fin_rows)
         out_rows.extend(yf_rows)
@@ -564,7 +556,7 @@ def main() -> None:
 
         sleep_ms(SLEEP_MS)
 
-    # DataFrame
+    # DataFrame bauen
     cols = [
         "symbol", "api_symbol", "period", "report_date",
         "year", "quarter", "report_time",
@@ -572,7 +564,12 @@ def main() -> None:
         "revenue_actual", "revenue_estimate", "surprise_rev_pct",
         "currency", "source",
     ]
-    df = pd.DataFrame(out_rows, columns=cols).dropna(how="all")
+    
+    if not out_rows:
+        # Leere Datei erzeugen um Fehler zu vermeiden
+        df = pd.DataFrame(columns=cols)
+    else:
+        df = pd.DataFrame(out_rows, columns=cols).dropna(how="all")
 
     # Typisieren
     for c in [
@@ -593,57 +590,51 @@ def main() -> None:
             lambda x: parse_iso_date(str(x)) if pd.notna(x) else None
         )
 
-    # Surprise-Berechnungen
-    m_eps = df["surprise_pct"].isna() & df["eps_actual"].notna() \
-        & df["eps_estimate"].notna() & (df["eps_estimate"] != 0)
-    df.loc[m_eps, "surprise_pct"] = (
-        (df.loc[m_eps, "eps_actual"] - df.loc[m_eps, "eps_estimate"])
-        / df.loc[m_eps, "eps_estimate"] * 100.0
-    )
-
-    m_eps_abs = df["eps_actual"].notna() & df["eps_estimate"].notna()
-    df.loc[m_eps_abs, "surprise_eps_abs"] = (
-        df.loc[m_eps_abs, "eps_actual"] - df.loc[m_eps_abs, "eps_estimate"]
-    )
-
-    m_rev = df["revenue_actual"].notna() & df["revenue_estimate"].notna() \
-        & (df["revenue_estimate"] != 0)
-    df.loc[m_rev, "surprise_rev_pct"] = (
-        (df.loc[m_rev, "revenue_actual"] - df.loc[m_rev, "revenue_estimate"])
-        / df.loc[m_rev, "revenue_estimate"] * 100.0
-    )
-
-    # Perioden-Fallback aus year/quarter
-    if "period" in df.columns and "year" in df.columns and "quarter" in df.columns:
-        fp_missing = df["period"].isna() & df["year"].notna() & df["quarter"].notna()
-        df.loc[fp_missing, "period"] = df.loc[fp_missing].apply(
-            lambda r: make_fiscal_period(r["year"], r["quarter"], None), axis=1
+    # Surprise
+    if not df.empty:
+        m_eps = df["surprise_pct"].isna() & df["eps_actual"].notna() \
+            & df["eps_estimate"].notna() & (df["eps_estimate"] != 0)
+        df.loc[m_eps, "surprise_pct"] = (
+            (df.loc[m_eps, "eps_actual"] - df.loc[m_eps, "eps_estimate"])
+            / df.loc[m_eps, "eps_estimate"] * 100.0
         )
 
-    # Year/Quarter aus period ableiten (zusätzlich)
+    # FIX: Year/Quarter
     df = infer_year_quarter_from_period(df)
 
     # Priorisierung & Dedupe
     priority = {"finnhub": 4, "yahoo.ed": 3, "sec": 2, "yahoo.qe": 1, "yahoo.qf": 0}
-    df["_prio"] = df["source"].map(priority).fillna(-1)
-    df = (
-        df.sort_values(["symbol", "period", "_prio"], ascending=[True, True, False])
-          .drop_duplicates(subset=["symbol", "period"], keep="first")
-          .drop(columns=["_prio"], errors="ignore")
-          .sort_values(["symbol", "period"])
-          .reset_index(drop=True)
-    )
+    
+    def get_prio(row):
+        base = priority.get(row.get("source"), 0)
+        # PENALTY für fehlendes Datum (wichtig für C# Reader)
+        if pd.isna(row.get("report_date")):
+            base -= 10
+        return base
 
-    # Merge mit bestehender Datei (optional)
+    df["_prio"] = df.apply(get_prio, axis=1)
+
+    
+    if not df.empty:
+        df = (
+            df.sort_values(["symbol", "period", "_prio"], ascending=[True, True, False])
+              .drop_duplicates(subset=["symbol", "period"], keep="first")
+              .drop(columns=["_prio"], errors="ignore")
+              .sort_values(["symbol", "period"])
+              .reset_index(drop=True)
+        )
+
+    # Merge mit bestehender Datei
     if args.merge_existing:
         old = read_existing(args.merge_existing)
-        if not old.empty:
+        if not old.empty and not df.empty:
+            # Gleiche Spalten erzwingen
             for c in cols:
-                if c not in old.columns:
-                    old[c] = pd.NA
+                if c not in old.columns: old[c] = pd.NA
             old = old[cols]
+            
             merged = pd.concat([old, df], ignore_index=True)
-            merged["_prio"] = merged["source"].map(priority).fillna(-1)
+            merged["_prio"] = merged.apply(get_prio, axis=1)
             merged = (
                 merged.sort_values(["symbol", "period", "_prio"], ascending=[True, True, False])
                       .drop_duplicates(subset=["symbol", "period"], keep="first")
@@ -652,28 +643,25 @@ def main() -> None:
                       .reset_index(drop=True)
             )
             df = merged
+        elif not old.empty:
+            df = old
 
     # Schreiben
     out_csv = OUT_DIR / "earnings_results.csv"
     out_gz = OUT_DIR / "earnings_results.csv.gz"
+    
     df.to_csv(out_csv, index=False)
-    df.to_csv(out_gz, index=False, compression="gzip")
+    try:
+        df.to_csv(out_gz, index=False, compression="gzip")
+    except: pass
 
     # Reports
     report["rows"] = int(len(df))
-    report["files"]["earnings_results_csv"] = str(out_csv)
-    report["files"]["earnings_results_gz"] = str(out_gz)
-
     preview_path = EU_DIR / "earnings_results_preview.txt"
     df_safe_head_csv(df, preview_path, n=80)
-    missing_path = EU_DIR / "earnings_results_missing.txt"
-    write_missing(missing, missing_path)
-    report["missing"] = len(missing)
-    report["files"]["preview"] = str(preview_path)
-    report["files"]["missing"] = str(missing_path)
-
-    write_report(report, REP_DIR / "earn_errors.json")
-    print(f"[summary] rows={len(df)} symbols~={df['symbol'].nunique()} out={out_csv}")
+    
+    print(f"[OK] Earnings Results: {len(df)} Zeilen gespeichert.")
+    print(f"  Datei: {out_csv}")
 
 if __name__ == "__main__":
     main()

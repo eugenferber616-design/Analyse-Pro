@@ -1,53 +1,31 @@
 # scripts/build_cds_proxy_v2.py
 # -*- coding: utf-8 -*-
 """
-CDS-Proxy je Symbol mit IG/HY-Scoring, dynamischem EU_HY-Fallback
-und optionaler HV-Gewichtung (hv_summary.csv.gz).
+CDS-Proxy V2.1 (Robust Interpolation Model)
+-------------------------------------------
+Berechnet einen Risiko-Proxy basierend auf:
+1. Markt-Level (FRED OAS Indizes für IG/HY)
+2. Firmen-Score (Fundamentals + Volatilität)
 
-Inputs:
-  --watchlist       watchlists/mylist.txt  (oder .csv mit Spalte 'symbol')
-  --fred-oas        data/processed/fred_oas.csv
-                    Spalten: date,series_id,value,bucket,region
-  --fundamentals    data/processed/fundamentals_core.csv
-                    (symbol, country, market_cap, debt_to_equity, net_margin, oper_margin, beta)
-  --hv              data/processed/hv_summary.csv.gz  (optional; Spalten: symbol,hv20,hv60,asof)
-
-Heuristischer IG/HY-Score (0..5):
-  size      : market_cap >= size_min
-  leverage  : debt_to_equity <= dte_max
-  profit    : net_margin >= nm_min
-  margin    : oper_margin >= om_min
-  beta      : beta <= beta_max
-IG wenn score >= score_cut.
-
-EU_HY:
-  - wenn EU_HY in fred_oas fehlt:
-      skaliert = US_HY * (EU_IG/US_IG)^alpha          (wenn EU_IG & US_IG da sind)
-      sonst     = US_HY + eu_hy_premium
-
-HV-Gewichtung (optional, mild):
-  gewicht = clamp( hv_ref / hv_anchor , hv_min , hv_max )
-  hv_ref  = hv20 wenn vorhanden, sonst hv60, sonst None -> 1.0
-  Default: hv_anchor=0.25 (~25% jährliche Vol), hv_min=0.85, hv_max=1.15
+Vorteil: Extrem stabil, keine Ausreißer, keine komplexen Mathe-Abstürze.
+Ideal für RiskIndex Heatmaps.
 
 Outputs:
-  - data/processed/cds_proxy.csv          (symbol, region, proxy_spread)
-  - data/reports/eu_checks/cds_proxy_preview.txt
-  - data/reports/cds_proxy_report.json
+  - data/processed/cds_proxy.csv
 """
 
 from __future__ import annotations
-import argparse, csv, json, math, os, gzip
+import argparse, csv, json, os, gzip, math
 from typing import Optional, Dict, Tuple
 import pandas as pd
 
+# Defaults
 DEF_WATCHLIST = "watchlists/mylist.txt"
 DEF_FRED_OAS  = "data/processed/fred_oas.csv"
 DEF_FUNDS     = "data/processed/fundamentals_core.csv"
-DEF_HV        = "data/processed/hv_summary.csv.gz"
+DEF_HV        = "data/processed/hv_summary.csv" # csv oder csv.gz
 
 OUT_CSV      = "data/processed/cds_proxy.csv"
-PREVIEW_TXT  = "data/reports/eu_checks/cds_proxy_preview.txt"
 REPORT_JSON  = "data/reports/cds_proxy_report.json"
 
 EU_SUFFIXES = {
@@ -58,245 +36,210 @@ EU_SUFFIXES = {
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-
 def ensure_dirs():
     os.makedirs(os.path.dirname(OUT_CSV), exist_ok=True)
-    os.makedirs(os.path.dirname(PREVIEW_TXT), exist_ok=True)
     os.makedirs(os.path.dirname(REPORT_JSON), exist_ok=True)
 
-def read_watchlist(path: str) -> pd.Series:
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Watchlist nicht gefunden: {path}")
-    if path.lower().endswith(".csv"):
-        df = pd.read_csv(path)
-        col = "symbol" if "symbol" in df.columns else df.columns[0]
-        s = df[col].astype(str).str.strip()
-    else:
-        vals = []
-        with open(path, "r", encoding="utf-8") as f:
-            for ln in f:
-                t = ln.strip()
-                if not t or t.startswith("#") or t.lower().startswith("symbol"):
-                    continue
-                vals.append(t.split(",")[0].strip())
-        s = pd.Series(vals, name="symbol")
-    return s[s!=""].drop_duplicates().reset_index(drop=True)
+def read_watchlist(path: str) -> list:
+    if not os.path.exists(path): return []
+    vals = []
+    with open(path, "r", encoding="utf-8") as f:
+        for ln in f:
+            t = ln.strip()
+            # Ignoriere Kommentare und Header, splitte bei Komma (für Proxy-Liste)
+            if not t or t.startswith("#") or t.lower().startswith("symbol"): continue
+            vals.append(t.split(",")[0].strip().upper())
+    return sorted(list(set(vals)))
 
 def load_fred_oas(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"FRED-OAS fehlt: {path}")
+    if not os.path.exists(path): return pd.DataFrame()
     df = pd.read_csv(path)
-    # Normalisieren
-    for c in ("region","bucket","series_id"):
-        if c in df.columns:
-            df[c] = df[c].astype(str)
-    if "value" in df.columns:
-        df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    if "date" in df.columns:
-        df = df.sort_values("date")
-    # jeweils letzte Observation pro (region,bucket)
-    last = df.groupby(["region","bucket"], as_index=False).tail(1)
-    return last.reset_index(drop=True)
+    # Letzten Wert pro Region/Bucket holen
+    if "date" in df.columns: df = df.sort_values("date")
+    last = df.groupby(["region", "bucket"], as_index=False).tail(1)
+    return last
 
 def load_fundamentals(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        # leeres Schema – Classifier fällt auf defaults zurück
-        return pd.DataFrame(columns=["symbol","country","market_cap","debt_to_equity","net_margin","oper_margin","beta"])
+    if not os.path.exists(path): return pd.DataFrame()
     df = pd.read_csv(path)
     df.columns = [c.lower() for c in df.columns]
-    if "symbol" not in df.columns:
-        df = df.rename(columns={df.columns[0]:"symbol"})
-    for num in ("market_cap","debt_to_equity","net_margin","oper_margin","beta"):
-        if num in df.columns:
-            df[num] = pd.to_numeric(df[num], errors="coerce")
-    if "country" not in df.columns:
-        df["country"] = None
-    return df.drop_duplicates(subset=["symbol"], keep="last")
+    cols = ["market_cap","debt_to_equity","net_margin","oper_margin","beta"]
+    for c in cols:
+        if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df.drop_duplicates(subset=["symbol"], keep="last").set_index("symbol")
 
-def load_hv_summary(path: str) -> dict[str, Tuple[Optional[float], Optional[float]]]:
-    hv: dict[str, Tuple[Optional[float], Optional[float]]] = {}
-    if not path or not os.path.exists(path):
-        return hv
-    opener = gzip.open if path.endswith(".gz") else open
-    with opener(path, "rt", encoding="utf-8") as f:
-        rdr = csv.DictReader(f)
-        for row in rdr:
-            sym = row.get("symbol","").strip()
-            if not sym: 
-                continue
-            hv20 = row.get("hv20","")
-            hv60 = row.get("hv60","")
-            hv[sym] = (
-                float(hv20) if hv20 not in ("", None, "nan", "NaN") else None,
-                float(hv60) if hv60 not in ("", None, "nan", "NaN") else None
-            )
-    return hv
+def load_hv_summary(path: str) -> Dict[str, float]:
+    out = {}
+    # Check for .csv or .csv.gz
+    real_path = path
+    if not os.path.exists(real_path) and os.path.exists(path + ".gz"): real_path += ".gz"
+    
+    if not os.path.exists(real_path): return out
+    
+    opener = gzip.open if real_path.endswith(".gz") else open
+    try:
+        # Text-Mode erzwingen für gzip
+        mode = "rt" if real_path.endswith(".gz") else "r"
+        with opener(real_path, mode, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                sym = row.get("symbol", "").upper()
+                hv60 = row.get("hv60", row.get("hv20", "0.25"))
+                try: out[sym] = float(hv60)
+                except: out[sym] = 0.25
+    except: pass
+    return out
 
-def infer_region(symbol: str, country: Optional[str]) -> str:
-    s = symbol.upper()
-    if any(s.endswith(suf) for suf in EU_SUFFIXES):
-        return "EU"
-    if country:
-        c = str(country).strip().upper()
-        if c and c not in ("US","USA","UNITED STATES","UNITED-STATES"):
-            return "EU"
+def infer_region(symbol: str) -> str:
+    if any(symbol.endswith(suf) for suf in EU_SUFFIXES): return "EU"
     return "US"
 
-def score_ig(row: pd.Series, p: argparse.Namespace) -> int:
-    """Gibt Punkte 0..5 zurück."""
-    pts = 0
-    mc  = row.get("market_cap", float("nan"))
-    dte = row.get("debt_to_equity", float("nan"))
-    nm  = row.get("net_margin", float("nan"))
-    om  = row.get("oper_margin", float("nan"))
-    bt  = row.get("beta", float("nan"))
+def get_oas_value(oas: pd.DataFrame, region: str, bucket: str) -> float:
+    # Holt den aktuellen Spread aus FRED Daten
+    row = oas[(oas["region"]==region) & (oas["bucket"]==bucket)]
+    if not row.empty:
+        val = row["value"].iloc[-1]
+        if pd.notna(val): return float(val)
+    
+    # Fallbacks falls FRED Daten fehlen
+    if region == "EU":
+        # EU Fallback auf US Werte + Premium
+        us_val = get_oas_value(oas, "US", bucket)
+        return us_val * 1.1 if us_val else (1.5 if bucket=="IG" else 4.5)
+    
+    return 1.20 if bucket == "IG" else 4.00
 
-    if pd.notna(mc)  and mc  >= p.size_min: pts += 1
-    if pd.isna(dte)  or dte <= p.dte_max:   pts += 1
-    if pd.isna(nm)   or nm  >= p.nm_min:    pts += 1
-    if pd.notna(om)  and om  >= p.om_min:   pts += 1
-    if pd.isna(bt)   or bt  <= p.beta_max:  pts += 1
-    return pts
-
-def pick_eu_hy_from_scaling(oas: pd.DataFrame, alpha: float, premium: float) -> Optional[float]:
-    def _get(reg, buck):
-        m = oas[(oas["region"]==reg) & (oas["bucket"]==buck)]
-        return float(m["value"].iloc[-1]) if len(m) and pd.notna(m["value"].iloc[-1]) else None
-    us_hy = _get("US","HY")
-    eu_ig = _get("EU","IG")
-    us_ig = _get("US","IG")
-    if us_hy is not None and eu_ig is not None and us_ig is not None and us_ig > 0:
-        scale = (eu_ig / us_ig) ** float(alpha)
-        return us_hy * scale
-    return None if us_hy is None else us_hy + premium
-
-def pick_oas(oas: pd.DataFrame, region: str, bucket: str, eu_hy_value: Optional[float]) -> Optional[float]:
-    m = oas[(oas["region"]==region) & (oas["bucket"]==bucket)]
-    if len(m):
-        v = m["value"].iloc[-1]
-        if pd.notna(v):
-            return float(v)
-    if region=="EU" and bucket=="HY" and eu_hy_value is not None:
-        return float(eu_hy_value)
-    # letzte Reserve: US_IG
-    r = oas[(oas["region"]=="US") & (oas["bucket"]=="IG")]
-    return float(r["value"].iloc[-1]) if len(r) and pd.notna(r["value"].iloc[-1]) else None
-
-def hv_weight(symbol: str, hv_map: dict[str, Tuple[Optional[float], Optional[float]]],
-              anchor: float, hv_min: float, hv_max: float) -> float:
-    hv = hv_map.get(symbol)
-    if not hv:
-        return 1.0
-    hv20, hv60 = hv
-    hv_ref = hv20 if hv20 is not None else hv60
-    if hv_ref is None or hv_ref <= 0:
-        return 1.0
-    w = hv_ref / max(1e-12, anchor)
-    # clamps
-    if hv_min is not None: w = max(hv_min, w)
-    if hv_max is not None: w = min(hv_max, w)
-    return float(w)
+def clamp(n, minn, maxn):
+    return max(min(maxn, n), minn)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Main
+# Main Logic (Interpolation)
 # ──────────────────────────────────────────────────────────────────────────────
-
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--watchlist",    default=DEF_WATCHLIST)
-    ap.add_argument("--fred-oas",     default=DEF_FRED_OAS)
-    ap.add_argument("--fundamentals", default=DEF_FUNDS)
-    ap.add_argument("--hv",           default=DEF_HV, help="optional: hv_summary.csv.gz")
-
-    # IG/HY-Scoring Parameter
-    ap.add_argument("--size-min",  type=float, default=5e9,   help="Marktkap, IG-Punkt (Default 5 Mrd)")
-    ap.add_argument("--dte-max",   type=float, default=150.0, help="Debt/Equity, IG-Punkt")
-    ap.add_argument("--nm-min",    type=float, default=0.00,  help="Net Margin, IG-Punkt")
-    ap.add_argument("--om-min",    type=float, default=0.08,  help="Operative Marge, IG-Punkt")
-    ap.add_argument("--beta-max",  type=float, default=1.30,  help="Beta, IG-Punkt")
-    ap.add_argument("--score-cut", type=int,   default=3,     help=">= Punkte ⇒ IG (0..5)")
-
-    # EU_HY Ermittlung
-    ap.add_argument("--eu-hy-alpha",    type=float, default=1.0,  help="Skalierungsexponent (EU_IG/US_IG)^alpha")
-    ap.add_argument("--eu-hy-premium",  type=float, default=0.20, help="Fallback-Premium auf US_HY (pp)")
-
-    # HV-Gewichtung (optional, mild)
-    ap.add_argument("--hv-anchor", type=float, default=0.25, help="Referenz-Vol (jährlich) für Gewicht 1.0")
-    ap.add_argument("--hv-min",    type=float, default=0.85, help="untere Klammer des Gewichts")
-    ap.add_argument("--hv-max",    type=float, default=1.15, help="obere  Klammer des Gewichts")
-
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--watchlist", default=DEF_WATCHLIST)
+    parser.add_argument("--fred-oas", default=DEF_FRED_OAS)
+    parser.add_argument("--fundamentals", default=DEF_FUNDS)
+    parser.add_argument("--hv", default=DEF_HV)
+    
+    # Dummy args für Kompatibilität mit Batch-Datei (falls dort Flags gesetzt sind)
+    parser.add_argument("--eu-hy-alpha", type=float, default=1.0)
+    parser.add_argument("--eu-hy-premium", type=float, default=0.20)
+    parser.add_argument("--hv-anchor", type=float, default=0.25)
+    parser.add_argument("--hv-min", type=float, default=0.85)
+    parser.add_argument("--hv-max", type=float, default=1.15)
+    
+    args, unknown = parser.parse_known_args()
+    
     ensure_dirs()
+    print("Building CDS Proxy V2.1 (Robust Interpolation)...")
 
+    # Load Data
     syms = read_watchlist(args.watchlist)
-    oas  = load_fred_oas(args.fred_oas)
-    fdf  = load_fundamentals(args.fundamentals).set_index("symbol", drop=False)
-    hv_map = load_hv_summary(args.hv) if args.hv else {}
+    oas_df = load_fred_oas(args.fred_oas)
+    fund_df = load_fundamentals(args.fundamentals)
+    hv_map = load_hv_summary(args.hv)
 
-    # dynamischer EU_HY-Wert (falls in OAS fehlt)
-    eu_hy_value = None
-    if not len(oas[(oas["region"]=="EU") & (oas["bucket"]=="HY")]):
-        eu_hy_value = pick_eu_hy_from_scaling(oas, args.eu_hy_alpha, args.eu_hy_premium)
-
-    out_rows, preview, errors = [], ["symbol,region,proxy_spread"], []
+    out_rows = []
+    
     for sym in syms:
-        row = fdf.loc[sym] if sym in fdf.index else pd.Series(dtype="float64")
-        region = infer_region(sym, row.get("country", None) if len(row) else None)
+        region = infer_region(sym)
+        
+        # 1. Fundamental Score (0 bis 5)
+        # -----------------------------
+        score = 0
+        has_funda = False
+        if sym in fund_df.index:
+            row = fund_df.loc[sym]
+            has_funda = True
+            
+            # Scoring Logik (Groß, Profitable, Wenig Schulden = Gut)
+            if row.get("market_cap", 0) > 10e9: score += 1      # Size
+            if row.get("net_margin", 0) > 0: score += 1         # Profit
+            if row.get("oper_margin", 0) > 0.10: score += 1     # Quality
+            if row.get("debt_to_equity", 200) < 150: score += 1 # Leverage
+            if row.get("beta", 1.5) < 1.2: score += 1           # Volatility
+        else:
+            # Ohne Daten gehen wir vom Mittelmaß (High Yield Tendenz) aus
+            score = 1 
 
-        # Score & Bucket
-        pts    = score_ig(row, args)
-        bucket = "IG" if pts >= args.score_cut else "HY"
+        # 2. Risk Ratio (0.0 = Top IG, 1.0 = Junk HY)
+        # -------------------------------------------
+        # Wir invertieren den Score: 5 Punkte -> 0 Risk, 0 Punkte -> 1 Risk
+        funda_risk = 1.0 - (score / 5.0)
+        
+        # HV Risk (Volatilität)
+        # BUGFIX: HV kommt als Prozent (z.B. 22.13), nicht als Dezimal (0.2213)
+        # Wir normieren auf 25% = neutral (1.0)
+        hv_raw = hv_map.get(sym, 25.0)  # Default 25% Vol
+        # Falls als Dezimal: umrechnen
+        if hv_raw < 1.0:
+            hv_raw = hv_raw * 100.0
+        hv_risk_factor = clamp(hv_raw / 25.0, 0.7, 1.5)  # 25% = neutral
+        
+        # NEUE FORMEL: Mehr Gewicht auf Fundamentals, weniger auf Volatilität
+        # Score 5/5 (funda_risk=0) -> base_risk = 0.0 -> Premium IG
+        # Score 0/5 (funda_risk=1) -> base_risk = 1.0 -> Junk HY
+        base_risk = funda_risk
+        
+        # HV als Multiplikator nur für mittlere Risiken
+        # Top-Firmen (Score 5) bleiben bei ~0, schlechte Firmen werden volatiler
+        total_risk = base_risk * hv_risk_factor
+        
+        # Begrenzen auf 0.0 bis 1.5 (über 1.0 = distressed)
+        t = clamp(total_risk, 0.0, 1.5) 
 
-        base = pick_oas(oas, region, bucket, eu_hy_value)
-        if base is None or pd.isna(base):
-            errors.append({"symbol": sym, "reason": "no_oas_value"})
-            preview.append(f"{sym},{region}_{bucket},nan")
-            continue
+        # 3. Interpolation mit Premium-Zone
+        # ---------------------------------
+        spread_ig = get_oas_value(oas_df, region, "IG")
+        spread_hy = get_oas_value(oas_df, region, "HY")
+        
+        # NEUE LOGIK: Top-Firmen können UNTER dem IG-Durchschnitt liegen
+        # t=0.0 -> 50% des IG-Spreads (Premium Investment Grade)
+        # t=0.5 -> 100% IG-Spread
+        # t=1.0 -> HY-Spread
+        # t>1.0 -> Über HY (Distressed)
+        if t <= 0.5:
+            # Premium Zone: zwischen 50% IG und 100% IG
+            proxy_spread = spread_ig * (0.5 + t)  # t=0 -> 0.5*IG, t=0.5 -> 1.0*IG
+        else:
+            # Normal Zone: zwischen IG und HY (und darüber)
+            t_norm = (t - 0.5) / 0.5  # Normiere 0.5-1.0 auf 0-1
+            if t <= 1.0:
+                proxy_spread = spread_ig + t_norm * (spread_hy - spread_ig)
+            else:
+                # Distressed Zone: über HY
+                t_dist = t - 1.0  # 0.0 - 0.5
+                proxy_spread = spread_hy + t_dist * spread_hy  # +50% für t=1.5
+        
+        out_rows.append({
+            "symbol": sym,
+            "region": region,
+            "proxy_spread": round(proxy_spread, 2)
+        })
 
-        # HV-Gewichtung (mild, clamp)
-        w = hv_weight(sym, hv_map, args.hv_anchor, args.hv_min, args.hv_max) if hv_map else 1.0
-        proxy = round(float(base) * float(w), 2)
-
-        out_rows.append({"symbol": sym, "region": f"{region}_{bucket}", "proxy_spread": proxy})
-        preview.append(f"{sym},{region}_{bucket},{proxy}")
-
-    # Outputs
+    # Save CSV
     with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["symbol","region","proxy_spread"])
+        w = csv.DictWriter(f, fieldnames=["symbol", "region", "proxy_spread"])
         w.writeheader()
-        for r in out_rows:
-            w.writerow(r)
+        w.writerows(out_rows)
 
-    with open(PREVIEW_TXT, "w", encoding="utf-8") as f:
-        f.write("\n".join(preview) + "\n")
+    print(f"[OK] CDS Proxy calculated for {len(out_rows)} symbols.")
+    print(f"  Output: {OUT_CSV}")
 
-    fred_map: Dict[str, Optional[float]] = {}
-    for reg in ("US","EU"):
-        for b in ("IG","HY"):
-            m = oas[(oas["region"]==reg) & (oas["bucket"]==b)]
-            fred_map[f"{reg}_{b}"] = float(m["value"].iloc[-1]) if len(m) and pd.notna(m["value"].iloc[-1]) else None
-
+    # Report
     rep = {
-        "ts": pd.Timestamp.utcnow().isoformat()+"Z",
+        "timestamp": pd.Timestamp.utcnow().isoformat(),
         "rows": len(out_rows),
-        "fred_oas_used": fred_map,
-        "eu_hy_value": eu_hy_value,
-        "params": {
-            "size_min": args.size_min, "dte_max": args.dte_max, "nm_min": args.nm_min,
-            "om_min": args.om_min, "beta_max": args.beta_max, "score_cut": args.score_cut,
-            "eu_hy_alpha": args.eu_hy_alpha, "eu_hy_premium": args.eu_hy_premium,
-            "hv_anchor": args.hv_anchor, "hv_min": args.hv_min, "hv_max": args.hv_max,
-            "hv_file": args.hv if os.path.exists(args.hv) else None
-        },
-        "errors": errors,
-        "preview": OUT_CSV
+        "model": "Robust Interpolation V2.1",
+        "spreads_used": {
+            "US_IG": get_oas_value(oas_df, "US", "IG"),
+            "US_HY": get_oas_value(oas_df, "US", "HY"),
+            "EU_IG": get_oas_value(oas_df, "EU", "IG")
+        }
     }
-    with open(REPORT_JSON, "w", encoding="utf-8") as f:
+    with open(REPORT_JSON, "w") as f:
         json.dump(rep, f, indent=2)
-
-    # Konsolen-Short
-    short = {k: rep[k] for k in ("ts","rows","fred_oas_used","eu_hy_value","preview")}
-    print(json.dumps(short, indent=2))
 
 if __name__ == "__main__":
     main()

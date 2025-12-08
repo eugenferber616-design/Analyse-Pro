@@ -1,9 +1,0 @@
-EU Coverage – 🟢 ALLES DA
-
-Watchlists: stocks(EU)=0 / etf(EU)=0
-
-🟦 fundamentals_core.csv: 0/0
-🟦 earnings_results.csv: 0/0
-🟦 etf_basics.csv: 0/0
-🟦 options_oi_totals.csv: 0/0
-🟢 fred_oas.csv: 1/1

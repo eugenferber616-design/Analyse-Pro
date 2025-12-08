@@ -1,1 +1,0 @@
-symbol,last_date,last_close

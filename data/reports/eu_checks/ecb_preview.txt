@@ -1,3 +1,0 @@
-data/macro/ecb/ciss_ea.csv,,MISSING
-data/macro/ecb/ciss_us.csv,,MISSING
-data/macro/ecb/exr_usd_eur.csv,EXR.D.USD.EUR.SP00.A,ERR

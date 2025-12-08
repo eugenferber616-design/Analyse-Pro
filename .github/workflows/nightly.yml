@@ -240,10 +240,7 @@ jobs:
 
 
 
-      - name: Fetch financials ts
-        env:
-          FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
-        run: python scripts/fetch_financials_ts.py
+
 
       # -------------------- COT ---------------------------
       - name: Pull COT 20y Data

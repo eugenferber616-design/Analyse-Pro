@@ -52,12 +52,40 @@ def read_watchlist(path: str) -> list:
     return sorted(list(set(vals)))
 
 def load_fred_oas(path: str) -> pd.DataFrame:
-    if not os.path.exists(path): return pd.DataFrame()
-    df = pd.read_csv(path)
-    # Letzten Wert pro Region/Bucket holen
-    if "date" in df.columns: df = df.sort_values("date")
-    last = df.groupby(["region", "bucket"], as_index=False).tail(1)
-    return last
+    # Handles .csv.gz automatically if .csv not found
+    if not os.path.exists(path) and os.path.exists(path + ".gz"):
+        path += ".gz"
+        
+    if not os.path.exists(path): 
+        return pd.DataFrame()
+
+    try:
+        # Load wide format (date, IG_OAS, HY_OAS)
+        df = pd.read_csv(path)
+        if df.empty: return pd.DataFrame()
+        
+        # Take latest values
+        if "date" in df.columns: 
+            df = df.sort_values("date")
+        
+        last_row = df.iloc[-1]
+        
+        # Transform to Long Format expected by get_oas_value (region, bucket, value)
+        rows = []
+        
+        # US IG
+        if "IG_OAS" in last_row:
+            rows.append({"region": "US", "bucket": "IG", "value": float(last_row["IG_OAS"])})
+            
+        # US HY
+        if "HY_OAS" in last_row:
+            rows.append({"region": "US", "bucket": "HY", "value": float(last_row["HY_OAS"])})
+            
+        return pd.DataFrame(rows)
+        
+    except Exception as e:
+        print(f"Error loading FRED OAS: {e}")
+        return pd.DataFrame()
 
 def load_fundamentals(path: str) -> pd.DataFrame:
     if not os.path.exists(path): return pd.DataFrame()

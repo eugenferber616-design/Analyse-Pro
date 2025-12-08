@@ -1,0 +1,76 @@
+name: Hourly Macro Bridge
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # Stündlich zur vollen Stunde
+  workflow_dispatch: {}
+
+jobs:
+  update-macro:
+    runs-on: ubuntu-latest
+    env:
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      # Secrets für R2 Upload
+      CF_R2_BUCKET:            ${{ secrets.CF_R2_BUCKET }}
+      CF_R2_ENDPOINT:          ${{ secrets.CF_R2_ENDPOINT }}
+      CF_R2_ACCESS_KEY_ID:     ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+      CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas yfinance fredapi
+
+      - name: Install rclone
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rclone
+
+      - name: Run Macro Bridge Universal
+        run: |
+          # Simuliere AgenaTrader Cache Pfad, damit das Skript glücklich ist
+          mkdir -p ~/Documents/AgenaTrader_QuantCache
+          
+          python scripts/macro_bridge_universal.py
+          
+          # Ordner für Upload vorbereiten
+          mkdir -p data/processed
+          if [ -f ~/Documents/AgenaTrader_QuantCache/macro_status.csv ]; then
+            cp ~/Documents/AgenaTrader_QuantCache/macro_status.csv data/processed/
+          fi
+          if [ -f ~/Documents/AgenaTrader_QuantCache/ai_context.txt ]; then
+            cp ~/Documents/AgenaTrader_QuantCache/ai_context.txt data/processed/
+          fi
+          
+          # Optional: GZip für Upload (spart Bandbreite)
+          gzip -k -f data/processed/macro_status.csv || true
+
+      - name: Sync to R2 (Macro only)
+        if: ${{ env.CF_R2_BUCKET != '' }}
+        run: |
+          cat > rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${CF_R2_ACCESS_KEY_ID}
+          secret_access_key = ${CF_R2_SECRET_ACCESS_KEY}
+          endpoint = ${CF_R2_ENDPOINT}
+          acl = public-read
+          force_path_style = true
+          no_check_bucket = true
+          EOF
+          
+          # Nur die Macro-Dateien hochladen
+          # Wir nutzen 'copy' statt 'sync', um nichts anderes zu löschen
+          rclone copy data/processed/macro_status.csv    "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket
+          rclone copy data/processed/macro_status.csv.gz "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket
+          rclone copy data/processed/ai_context.txt      "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket

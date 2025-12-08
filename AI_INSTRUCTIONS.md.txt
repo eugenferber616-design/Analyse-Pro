@@ -1,0 +1,44 @@
+# SYSTEM ARCHITEKTUR & INSTRUKTIONEN
+
+Dies ist ein Trading-System bestehend aus 3 Komponenten. 
+Du hast Zugriff auf alle drei Ordner.
+
+## 1. PYTHON BACKEND (Ordner: Analyse-Pro-main)
+- Pfad: `./scripts/`
+- Hier liegen die Logik-Skripte (z.B. `macro_bridge_universal.py`).
+- AUFGABE: Daten laden, berechnen, CSVs erstellen.
+
+## 2. DATEN OUTPUT (Ordner: AgenaTrader_QuantCache)
+- Pfad: `../AgenaTrader_QuantCache/`
+- Hier landen die Ergebnisse (z.B. `macro_status.csv`).
+- AUFGABE: Dient als Schnittstelle. Python schreibt hier rein, AgenaTrader liest hier raus.
+
+## 3. AGENATRADER FRONTEND (Ordner: UserCode)
+- Pfad: `../AgenaTrader/UserCode/`
+- Hier liegen die C# Indikatoren (z.B. `Macro_Hazard_Display.cs`).
+- AUFGABE: Liest die CSVs aus dem Cache und visualisiert sie im Chart.
+
+## DEINE AUFGABE (DER LOOP)
+Wenn ich sage "Prüfe das System" oder "Update Feature X", befolge IMMER diesen Loop:
+
+1. **PYTHON:** Bearbeite das entsprechende Python-Skript in `./scripts/`.
+2. **EXECUTE:** Führe das Skript im Terminal aus (`python scripts/mein_skript.py`).
+3. **VALIDATE:** Prüfe im Ordner `AgenaTrader_QuantCache`, ob die CSV-Datei erstellt wurde, aktuell ist und korrekte Daten enthält.
+4. **C# SYNC:** Öffne den passenden C# Indikator im `UserCode` Ordner. Prüfe, ob er das Format der CSV (Trennzeichen, Spaltenanzahl) korrekt liest. Falls sich das CSV-Format geändert hat, passe den C# Code an.
+
+## 4. CODING STANDARDS (AGENATRADER C#)
+**WICHTIG: Das Zielsystem ist .NET 4.5 / C# 5.0.**
+Du darfst KEINE modernen C# Features verwenden.
+
+**Regeln für C# Code:**
+1.  **Keine String-Interpolation:** Benutze NICHT `$"Value: {x}"`.
+    *   ✅ Richtig: `string.Format("Value: {0}", x);`
+2.  **Keine Expression-Bodied Members:** Benutze NICHT `public int X => 5;`.
+    *   ✅ Richtig: `public int X { get { return 5; } }`
+3.  **Keine Tuples:** Benutze keine `(int, int)` Rückgabewerte.
+4.  **Kein Pattern Matching:** Benutze kein `is not null`.
+    *   ✅ Richtig: `if (variable != null)`
+5.  **Properties:** Nutze die ausführliche Schreibweise für Properties mit Backing-Fields, wenn Logik erforderlich ist.
+6.  **Bibliotheken:** Nutze nur Standard `System.*` und `AgenaTrader.*` Namespaces. Keine externen NuGet-Pakete im C#-Code.
+
+Wenn du Code reparierst, prüfe immer, ob moderne Syntax verwendet wurde, und schreibe sie in klassisches C# 5.0 um.

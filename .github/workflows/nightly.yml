@@ -258,7 +258,7 @@ jobs:
 
       # -------------------- CORE / RISK ---------------------
       - name: Build HV summary
-        run: python scripts/build_hv_summary.py --watchlist "${WATCHLIST_STOCKS}" --days 252 --out data/processed/hv_summary.csv.gz --yf-fallback
+        run: python scripts/build_hv_summary.py --watchlist "${WATCHLIST_STOCKS}" --days 252 --out data/processed/hv_summary.csv.gz
 
       - name: Fetch Market & Fred Core
         env:

@@ -1,4 +1,4 @@
-symbol,proxy
+#symbol,proxy
 IFX.DE,EU_IG
 AAPL,US_IG
 MSFT,US_IG

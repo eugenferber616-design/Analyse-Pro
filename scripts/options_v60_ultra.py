@@ -344,7 +344,7 @@ def main():
     today_ymd = datetime.now().strftime('%Y-%m-%d')
     print(f"Running Options V90 Analysis for {today_ymd}...")
     
-    tickers = load_watchlist()
+    tickers = load_symbols()
 
     # -------------------------------------------------------------------------
     # 0. HISTORY / GHOST WALLS (Smart Logic)

@@ -236,15 +236,9 @@ jobs:
           python scripts/fetch_short_interest.py || echo "Short Interest Script missing or failed"
 
       # -------------------- OTHER DATA -------------------
-      - name: Fetch insider transactions
-        env:
-          FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
-        run: python scripts/fetch_insider_tx.py
 
-      - name: Fetch peers
-        env:
-          FINNHUB_TOKEN: ${{ secrets.FINNHUB_TOKEN }}
-        run: python scripts/fetch_peers.py
+
+
 
       - name: Fetch financials ts
         env:
@@ -331,7 +325,7 @@ jobs:
           copy data/processed/options_oi_totals.csv.gz
           copy data/processed/short_interest.csv.gz
           copy data/processed/options_v60_ultra.csv.gz  # <--- WICHTIG: Neue Datei
-          copy data/processed/insider_tx.csv.gz
+
           copy data/processed/hv_summary.csv.gz
           copy data/processed/market_core.csv.gz
           copy data/processed/riskindex_timeseries.csv.gz

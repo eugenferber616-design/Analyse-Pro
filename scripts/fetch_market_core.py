@@ -17,7 +17,7 @@ TICKERS = {
     "JPY=X": "USDJPY",    # Währung
     "BTC-USD": "BTC",     # Bitcoin
     "TLT": "TLT",         # Treasury Bond ETF
-    "^TNX": "DGS10",      # 10 Year Yield (als Proxy)
+    "^TNX": "TNX",        # 10 Year Yield (Yahoo/CBOE)
     "DX-Y.NYB": "DXY"     # Dollar Index
 }
 

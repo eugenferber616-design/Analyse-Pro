@@ -285,22 +285,6 @@ jobs:
           python scripts/build_riskindex.py
           python scripts/build_factor_scores.py
 
-      # ===================== MACRO BRIDGE (NEW) ===============================
-      - name: Run Macro Bridge Universal
-        run: |
-          # Create default output dir for the script
-          mkdir -p ~/Documents/AgenaTrader_QuantCache
-          python scripts/macro_bridge_universal.py
-          
-          # Move output to data/processed for R2 Upload
-          if [ -f ~/Documents/AgenaTrader_QuantCache/macro_status.csv ]; then
-            cp ~/Documents/AgenaTrader_QuantCache/macro_status.csv data/processed/
-            echo "Copied macro_status.csv"
-          fi
-          if [ -f ~/Documents/AgenaTrader_QuantCache/ai_context.txt ]; then
-            cp ~/Documents/AgenaTrader_QuantCache/ai_context.txt data/processed/
-            echo "Copied ai_context.txt"
-          fi
 
       # ===================== COMPRESS & ARCHIVE ===============================
       - name: Compress processed

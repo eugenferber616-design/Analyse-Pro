@@ -18,6 +18,9 @@ fredapi>=0.5.0,<1
 beautifulsoup4>=4.12,<5
 lxml>=4.9,<5
 
+# CLI Colors
+colorama
+
 # Parquet engines
 pyarrow>=15,<18
 fastparquet>=2024.2.0,<2026

@@ -1,172 +1,204 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-build_options_oi_summary.py
----------------------------
-Re-enriches options_oi_summary.csv so that the AgenaTrader
-OptionsData_Scanner can use it directly.
+fetch_options_oi.py
+-------------------
+Fetches Options Open Interest (OI) from Yahoo Finance.
+Builds the base summary CSVs needed for the pipeline.
 
-Input (from pipeline):
-  - data/processed/options_oi_summary.csv   (basic v60 summary)
-  - data/processed/options_oi_totals.csv   (optional, for max_oi_expiry)
-  - data/processed/options_oi_by_expiry.csv (optional fallback for expiry)
-
-Output (overwrite):
-  - data/processed/options_oi_summary.csv   (enriched)
-
-Added/derived columns:
-  - hv20, hv_20              ← hv_current
-  - call_oi, put_oi          ← total_call_oi / total_put_oi
-  - total_oi                 ← call_oi + put_oi
-  - put_call_ratio           ← pcr_total
-  - upper_bound              ← first element of call_top_strikes
-  - lower_bound              ← first element of put_top_strikes
-  - expiry                   ← max_oi_expiry (oder bestes expiry aus options_oi_by_expiry)
-  - expected_move            ← spot * hv_current * sqrt(DTE / 365)
+Outputs:
+  - data/processed/options_oi_summary.csv
+  - data/processed/options_oi_totals.csv
+  - data/processed/options_oi_by_expiry.csv
 """
 
-from pathlib import Path
-from datetime import datetime, date
-import math
-import numpy as np
+import os
+import sys
+import argparse
 import pandas as pd
+import numpy as np
+import yfinance as yf
+from datetime import datetime, timedelta
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    # Optional arguments if needed, but we mostly rely on ENV
+    return parser.parse_args()
 
-BASE = Path("data/processed")
+def get_watchlist():
+    """Load watchlist from ENV or default file"""
+    wl_path = os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt")
+    if not os.path.exists(wl_path):
+        # Fallback
+        return ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "TSLA", "AMD"]
+    
+    symbols = []
+    with open(wl_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Handle CSV format (take first column)
+            parts = line.split(',')
+            sym = parts[0].strip().upper()
+            if sym and sym != "SYMBOL":
+                symbols.append(sym)
+    return sorted(list(set(symbols)))
 
-
-def _first_from_list_string(s: str):
+def fetch_options_for_symbol(sym):
     """
-    Nimmt z.B. "[700.0, 710.0, 680.0]" und gibt 700.0 zurück.
-    Falls Parsing fehlschlägt → np.nan.
+    Fetches option chain for a symbol.
+    Returns:
+      - valid (bool)
+      - spot (float)
+      - summary_dict (dict)
+      - totals_list (list of dicts per expiry)
     """
-    if not isinstance(s, str):
-        return np.nan
-    s = s.strip()
-    if not s:
-        return np.nan
-    # Klammern entfernen
-    if s[0] == "[" and s[-1] == "]":
-        s = s[1:-1]
-    first = s.split(",")[0].strip()
-    if not first:
-        return np.nan
-    first = first.strip('"').strip("'")
     try:
-        return float(first)
-    except Exception:
+        tk = yf.Ticker(sym)
+        # Force fetch history to get spot
+        hist = tk.history(period="5d")
+        if hist.empty:
+            return False, 0, {}, []
+        
+        spot = hist["Close"].iloc[-1]
+        
         try:
-            return float(first.replace(",", "."))
-        except Exception:
-            return np.nan
+            expiries = tk.options
+        except:
+            return False, spot, {}, []
+            
+        if not expiries:
+            return False, spot, {}, []
+            
+        all_opts = []
+        totals_by_exp = []
+        
+        # Limit expiries if needed (env var)
+        # For base OI summary, we usually take ALL expiries to get total market structure
+        
+        total_call_oi = 0
+        total_put_oi = 0
+        
+        # Iterate expiries
+        for e_str in expiries:
+            try:
+                chain = tk.option_chain(e_str)
+                calls = chain.calls
+                puts = chain.puts
+                
+                c_oi = calls["openInterest"].fillna(0).sum() if not calls.empty else 0
+                p_oi = puts["openInterest"].fillna(0).sum() if not puts.empty else 0
+                
+                total_call_oi += c_oi
+                total_put_oi += p_oi
+                
+                totals_by_exp.append({
+                    "symbol": sym,
+                    "expiry": e_str,
+                    "total_call_oi": int(c_oi),
+                    "total_put_oi": int(p_oi),
+                    "total_oi": int(c_oi + p_oi)
+                })
+                
+                # Append to raw data for top strikes calc
+                if not calls.empty:
+                    calls = calls.copy()
+                    calls["kind"] = "call"
+                    calls["expiry"] = e_str
+                    all_opts.append(calls)
+                if not puts.empty:
+                    puts = puts.copy()
+                    puts["kind"] = "put"
+                    puts["expiry"] = e_str
+                    all_opts.append(puts)
+                    
+            except Exception as e:
+                continue
+                
+        if not all_opts:
+            return False, spot, {}, totals_by_exp
 
-
-def _load_totals():
-    path = BASE / "options_oi_totals.csv"
-    if path.exists():
-        df = pd.read_csv(path)
-        # erwartet: symbol, total_oi, max_oi_expiry, max_oi_value
-        return df[["symbol", "max_oi_expiry"]].rename(columns={"max_oi_expiry": "expiry"})
-    return None
-
-
-def _load_expiry_fallback():
-    """
-    Fallback, falls options_oi_totals.csv fehlt:
-    Nimm je Symbol das expiry mit dem höchsten total_oi
-    aus options_oi_by_expiry.csv.
-    """
-    path = BASE / "options_oi_by_expiry.csv"
-    if not path.exists():
-        return None
-    df = pd.read_csv(path)
-    if not {"symbol", "expiry", "total_oi"}.issubset(df.columns):
-        return None
-
-    df = (
-        df.sort_values(["symbol", "total_oi"], ascending=[True, False])
-          .groupby("symbol", as_index=False)
-          .first()[["symbol", "expiry"]]
-    )
-    return df
-
-
-def _calc_expected_move(row, today):
-    """
-    Einfache Expected-Move-Annäherung:
-      EM ≈ spot * hv_current * sqrt(DTE / 365)
-    hv_current ist annualisierte Volatilität (0.15 = 15%).
-    """
-    spot = row.get("spot", np.nan)
-    hv = row.get("hv_current", np.nan)
-    if pd.isna(spot) or pd.isna(hv):
-        return np.nan
-
-    exp = row.get("expiry", None)
-    if isinstance(exp, str):
-        try:
-            exp_dt = pd.to_datetime(exp).date()
-        except Exception:
-            exp_dt = None
-    elif isinstance(exp, pd.Timestamp):
-        exp_dt = exp.date()
-    elif isinstance(exp, date):
-        exp_dt = exp
-    else:
-        exp_dt = None
-
-    if exp_dt is not None:
-        dte = max((exp_dt - today).days, 1)
-    else:
-        # Fallback: 30 Tage
-        dte = 30
-
-    return float(spot) * float(hv) * math.sqrt(float(dte) / 365.0)
-
+        # Concat
+        df = pd.concat(all_opts, ignore_index=True)
+        df["openInterest"] = pd.to_numeric(df["openInterest"], errors="coerce").fillna(0)
+        df["strike"] = pd.to_numeric(df["strike"], errors="coerce")
+        
+        # Find Top Strikes (Global)
+        # Groups by strike + kind
+        g = df.groupby(["strike", "kind"])["openInterest"].sum().reset_index()
+        
+        # 3 Top Calls
+        top_calls = g[g["kind"]=="call"].sort_values("openInterest", ascending=False).head(3)
+        top_call_strikes = top_calls["strike"].tolist()
+        
+        # 3 Top Puts
+        top_puts = g[g["kind"]=="put"].sort_values("openInterest", ascending=False).head(3)
+        top_put_strikes = top_puts["strike"].tolist()
+        
+        summary = {
+            "symbol": sym,
+            "spot": round(spot, 2),
+            "total_call_oi": int(total_call_oi),
+            "total_put_oi": int(total_put_oi),
+            "pcr_total": round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0,
+            "call_top_strikes": str(top_call_strikes),
+            "put_top_strikes": str(top_put_strikes),
+            # Simple fallback HV if we don't have it yet
+            "hv_current": 0.16 # Default hook, will be enriched later if available
+        }
+        
+        return True, spot, summary, totals_by_exp
+        
+    except Exception as e:
+        print(f"Error fetching {sym}: {e}")
+        return False, 0, {}, []
 
 def main():
-    base_path = BASE / "options_oi_summary.csv"
-    if not base_path.exists():
-        raise SystemExit("options_oi_summary.csv not found under {}".format(base_path))
+    os.makedirs("data/processed", exist_ok=True)
+    
+    tickers = get_watchlist()
+    print(f"Fetching Options data for {len(tickers)} symbols...")
+    
+    summary_list = []
+    totals_list_flat = []
+    
+    for sym in tickers:
+        ok, spot, summ, totals = fetch_options_for_symbol(sym)
+        if ok:
+            summary_list.append(summ)
+            totals_list_flat.extend(totals)
+            print(f"  {sym}: {summ['total_call_oi']+summ['total_put_oi']} OI")
+        else:
+            print(f"  {sym}: No data")
 
-    df = pd.read_csv(base_path)
+    if not summary_list:
+        print("No data fetched.")
+        # Create empty file to prevent pipeline crash? Or fail?
+        # Better to save empty dataframe with columns
+        pd.DataFrame(columns=["symbol", "spot", "total_call_oi", "total_put_oi", "pcr_total"]).to_csv("data/processed/options_oi_summary.csv", index=False)
+        return
 
-    # --- Basismappings ---
-    if "hv_current" in df.columns:
-        df["hv20"] = df["hv_current"]
-        df["hv_20"] = df["hv_current"]
-
-    if {"total_call_oi", "total_put_oi"}.issubset(df.columns):
-        df["call_oi"] = df["total_call_oi"]
-        df["put_oi"] = df["total_put_oi"]
-        df["total_oi"] = df["total_call_oi"] + df["total_put_oi"]
-
-    if "pcr_total" in df.columns:
-        df["put_call_ratio"] = df["pcr_total"]
-
-    # Ober-/Untergrenze aus den Top-Strikes
-    if "call_top_strikes" in df.columns:
-        df["upper_bound"] = df["call_top_strikes"].apply(_first_from_list_string)
-    if "put_top_strikes" in df.columns:
-        df["lower_bound"] = df["put_top_strikes"].apply(_first_from_list_string)
-
-    # --- Expiry-Mapping ---
-    expiry_map = _load_totals()
-    if expiry_map is None:
-        expiry_map = _load_expiry_fallback()
-
-    if expiry_map is not None:
-        # falls es schon eine expiry-Spalte gibt, wird sie durch diese Variante ersetzt
-        df = df.merge(expiry_map, on="symbol", how="left")
-
-    # --- Expected Move berechnen ---
-    today = datetime.utcnow().date()
-    df["expected_move"] = df.apply(_calc_expected_move, axis=1, today=today)
-
-    # Alles wieder rausschreiben (keine Spalte geht verloren)
-    df.to_csv(base_path, index=False)
-    print("[OK] options_oi_summary.csv angereichert und gespeichert:", base_path)
-
+    # 1. Save Summary
+    df_sum = pd.DataFrame(summary_list)
+    out_sum = "data/processed/options_oi_summary.csv"
+    df_sum.to_csv(out_sum, index=False)
+    print(f"Saved {out_sum}")
+    
+    # 2. Save Totals (by expiry)
+    if totals_list_flat:
+        df_tot = pd.DataFrame(totals_list_flat)
+        out_tot = "data/processed/options_oi_by_expiry.csv"
+        df_tot.to_csv(out_tot, index=False)
+        print(f"Saved {out_tot}")
+        
+        # 3. Create options_oi_totals.csv (Max Expiry)
+        # Finds the expiry with max OI for each symbol
+        df_tot_ag = df_tot.sort_values("total_oi", ascending=False).groupby("symbol").first().reset_index()
+        df_tot_ag = df_tot_ag.rename(columns={"expiry": "max_oi_expiry", "total_oi": "max_oi_value"})
+        df_tot_ag.to_csv("data/processed/options_oi_totals.csv", index=False)
+        print("Saved data/processed/options_oi_totals.csv")
 
 if __name__ == "__main__":
     main()
+

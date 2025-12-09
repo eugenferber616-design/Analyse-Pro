@@ -550,6 +550,7 @@ def main():
             # DOMINANT EXPIRY SPLIT (Call vs Put)
             # ================================================================
             dominant_expiry = "N/A"
+            dominant_oi_expiry = "N/A" # [NEW] Max OI Expiry
             dominant_call_expiry = "N/A"
             dominant_put_expiry = "N/A"
             
@@ -558,20 +559,27 @@ def main():
                 expiry_gex_sum = df.groupby("expiry")["gex"].apply(lambda x: x.abs().sum())
                 if not expiry_gex_sum.empty:
                     dominant_expiry = expiry_gex_sum.idxmax().strftime("%Y-%m-%d")
+
+                # [NEW] Total Dominant OI
+                expiry_oi_sum = df.groupby("expiry")["openInterest"].sum()
+                if not expiry_oi_sum.empty:
+                    dominant_oi_expiry = expiry_oi_sum.idxmax().strftime("%Y-%m-%d")
                 
                 # Call Dominant
                 df_calls = df[df['kind'].str.upper().isin(['CALL', 'C'])]
                 if not df_calls.empty:
-                    call_exp_sum = df_calls.groupby("expiry")["gex"].sum() # Call GEX is usually positive
+                    call_exp_sum = df_calls.groupby("expiry")["gex"].sum() 
                     if not call_exp_sum.empty:
                         dominant_call_expiry = call_exp_sum.idxmax().strftime("%Y-%m-%d")
                         
                 # Put Dominant
                 df_puts = df[df['kind'].str.upper().isin(['PUT', 'P'])]
                 if not df_puts.empty:
-                    put_exp_sum = df_puts.groupby("expiry")["gex"].apply(lambda x: x.abs().sum()) # Put GEX is negative, taking abs
+                    put_exp_sum = df_puts.groupby("expiry")["gex"].apply(lambda x: x.abs().sum()) 
                     if not put_exp_sum.empty:
                         dominant_put_expiry = put_exp_sum.idxmax().strftime("%Y-%m-%d")
+
+
 
             # ================================================================
             # EXPORT GAMMA & OI PROFILE (Strike Level Data)
@@ -639,6 +647,7 @@ def main():
                 
                 # Dominant Expiries
                 "Dominant_Expiry": dominant_expiry,
+                "Dominant_OI_Expiry": dominant_oi_expiry,
                 "Dominant_Call_Expiry": dominant_call_expiry,
                 "Dominant_Put_Expiry": dominant_put_expiry,
                 

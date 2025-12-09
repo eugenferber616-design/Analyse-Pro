@@ -91,6 +91,10 @@ if not exist "%SCRIPT_FILE%" (
 echo [%TIME%] Starte Macro-Analyse (FRED/Yahoo)...
 "%PYTHON_EXE%" "%SCRIPT_FILE%"
 
+echo [%TIME%] Starte Options-Analyse (v60 Ultra)...
+set "OPT_SCRIPT=C:\Users\eugen\Documents\GitHub\Analyse-Pro\scripts\options_v60_ultra.py"
+"%PYTHON_EXE%" "%OPT_SCRIPT%"
+
 echo.
 echo [SLEEP] Warte %INTERVAL% Sekunden bis zum naechsten Update...
 echo (Dieses Fenster bitte im Hintergrund offen lassen.)

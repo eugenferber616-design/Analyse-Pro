@@ -330,8 +330,8 @@ def calculate_max_pain(df, strikes):
 
 def get_gamma_magnet(df, spot, max_pct=0.30):
     """
-    Find the strike with highest absolute GEX (gamma magnet)
-    Price tends to gravitate here due to dealer hedging
+    Find the strike with highest TOTAL OPEN INTEREST (Liquidity Magnet)
+    Reverted to OI logic per user request ("first variant").
     """
     if df.empty:
         return 0
@@ -344,18 +344,21 @@ def get_gamma_magnet(df, spot, max_pct=0.30):
         if sub.empty:
             return 0
         
-        # Sum absolute GEX per strike
-        strike_gex = sub.groupby("strike")["gex"].apply(lambda x: x.abs().sum())
+        # Sum TOTAL OI per strike
+        strike_oi = sub.groupby("strike")["openInterest"].sum()
         
-        if strike_gex.empty:
+        if strike_oi.empty:
             return 0
         
-        return strike_gex.idxmax()
+        return strike_oi.idxmax()
     except:
         return 0
 
 def get_smart_wall(df, spot, kind="call", max_pct=0.30):
-    """Find the strongest call/put wall based on GEX"""
+    """
+    Find the strongest call/put wall based on OPEN INTEREST (Classic/Liquidity Logic)
+    Reverted from GEX logic.
+    """
     if df.empty:
         return 0, 0
     
@@ -370,29 +373,35 @@ def get_smart_wall(df, spot, kind="call", max_pct=0.30):
             sub = sub[(sub["strike"] <= spot) & (sub["kind"] == "put")]
         
         if sub.empty:
-            return 0, 0
+            # Fallback: search wider if nothing found in immediate range
+            if kind == "call":
+                sub = df[(df["strike"] >= spot) & (df["kind"] == "call")]
+            else:
+                sub = df[(df["strike"] <= spot) & (df["kind"] == "put")]
+                
+            if sub.empty:
+                return 0, 0
         
-        sub["gex_abs"] = sub["gex"].abs()
-        sub["notional"] = sub["openInterest"] * sub["strike"]
+        # Sort by Open Interest (Descending)
+        top = sub.sort_values("openInterest", ascending=False).iloc[0]
         
-        top = sub.sort_values("gex_abs", ascending=False).iloc[0]
-        if top["gex_abs"] == 0:
-            top = sub.sort_values("notional", ascending=False).iloc[0]
-        
-        return top["strike"], top["gex"]
+        return top["strike"], top["gex"] # Return GEX just for info/metrics, but selection is OI
     except:
         return 0, 0
 
 def get_dominant_expiry_for_subset(df_subset):
-    """Find the expiry date with the most total GEX in a subset"""
+    """
+    Find the expiry date with the most total OPEN INTEREST directly (Liquidity Dominance).
+    Reverted from GEX logic.
+    """
     if df_subset.empty:
         return ""
     try:
-        # Sum absolute GEX per expiry
-        exp_gex = df_subset.groupby("expiry")["gex"].apply(lambda x: x.abs().sum())
-        if exp_gex.empty:
+        # Sum TOTAL OI per expiry
+        exp_oi = df_subset.groupby("expiry")["openInterest"].sum()
+        if exp_oi.empty:
             return ""
-        return exp_gex.idxmax().strftime("%Y-%m-%d")
+        return exp_oi.idxmax().strftime("%Y-%m-%d")
     except:
         return ""
 
@@ -737,8 +746,17 @@ def main():
             # EXPORT GAMMA & OI PROFILE (Strike Level Data)
             # ================================================================
             try:
+                # [FILTER] Exclude 0DTE/1DTE (<= 1 Day) for structural clarity (User requested)
+                # This reveals the structural profile hidden by massive 0DTE gamma.
+                df_profile = df
+                if 'dte' in df.columns:
+                    # Keep only DTE > 1
+                    filtered = df[df['dte'] > 1]
+                    if not filtered.empty:
+                        df_profile = filtered.copy()
+                    
                 # Group by Strike and Type - Aggregate GEX AND OI
-                grouped = df.groupby(['strike', 'kind'])[['gex', 'openInterest']].sum().unstack(fill_value=0)
+                grouped = df_profile.groupby(['strike', 'kind'])[['gex', 'openInterest']].sum().unstack(fill_value=0)
                 
                 # Setup GEX columns: (gex, call) -> CALL_GEX
                 gex_part = grouped['gex'].copy()

@@ -291,6 +291,11 @@ jobs:
         shell: bash
         run: |
           for f in data/processed/*.{csv,json}; do [ -f "$f" ] && gzip -f -9 "$f" || true; done
+          
+          # Compress Profiles into a single ZIP for efficient transport
+          if [ -d "data/processed/profiles" ]; then
+            (cd data/processed && zip -r -9 profiles.zip profiles/)
+          fi
 
       - name: Archive daily snapshots
         shell: bash

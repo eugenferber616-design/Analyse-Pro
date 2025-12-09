@@ -196,33 +196,7 @@ jobs:
       # -------------------- PREISDATEN -------------------
       - name: Fetch OHLC prices
         run: |
-          python - <<'PY'
-          import os, pandas as pd, yfinance as yf
-          from datetime import datetime, timedelta
-          days = int(os.getenv("PRICES_DAYS","750"))
-          base_path = "data/prices"
-          os.makedirs(base_path, exist_ok=True)
-          
-          def read_list(p):
-              if not p or not os.path.exists(p): return []
-              df = pd.read_csv(p)
-              col = "symbol" if "symbol" in df.columns else df.columns[0]
-              return [str(s).strip().upper() for s in df[col].dropna().tolist()]
-
-          wl = sorted(set(read_list(os.getenv("WATCHLIST_STOCKS")) + read_list(os.getenv("WATCHLIST_ETF"))))
-          start = (datetime.utcnow() - timedelta(days=days*1.2)).strftime("%Y-%m-%d")
-          
-          for sym in wl:
-              try:
-                  first_char = sym[0].upper() if sym[0].isalpha() else "#"
-                  sub_dir = os.path.join(base_path, first_char)
-                  os.makedirs(sub_dir, exist_ok=True)
-                  df = yf.download(sym, start=start, progress=False, threads=False)
-                  if not df.empty:
-                      df.index = df.index.tz_localize(None)
-                      df.reset_index().rename(columns={"Date":"date","Open":"open","High":"high","Low":"low","Close":"close","Adj Close":"adj_close","Volume":"volume"}).to_csv(os.path.join(sub_dir, f"{sym}.csv"), index=False)
-              except: pass
-          PY
+          python scripts/fetch_prices.py
 
       # -------------------- SHORT INTEREST -------------------
       # Script wird hier on-the-fly erstellt, falls es fehlt
@@ -337,8 +311,8 @@ jobs:
           force_path_style = true
           no_check_bucket = true
           EOF
-          rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket --include "*.gz"
-          rclone sync data/history   "r2:${CF_R2_BUCKET}/data/history"   --config rclone.conf --s3-no-check-bucket --include "**/*.gz"
+          rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket --include "{*.gz,*.zip}"
+          rclone sync data/history   "r2:${CF_R2_BUCKET}/data/history"   --config rclone.conf --s3-no-check-bucket --include "**/{*.gz,*.zip}"
           rclone sync docs           "r2:${CF_R2_BUCKET}/docs"           --config rclone.conf --s3-no-check-bucket
 
       # ===================== COMMIT & MANIFEST =========================

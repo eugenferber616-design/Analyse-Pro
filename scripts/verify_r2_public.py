@@ -22,7 +22,11 @@ EXPECTED_FILES = [
     "data/processed/equity_master.csv.gz",
     "data/processed/market_core.csv.gz",
     "data/processed/hv_summary.csv.gz",
-    "data/processed/riskindex_timeseries.csv.gz"
+    "data/processed/riskindex_timeseries.csv.gz",
+    "data/processed/profiles.zip",
+    "data/processed/macro_status.csv",
+    "data/processed/macro_status.csv.gz",
+    "data/processed/ai_context.txt"
 ]
 
 def check_file(path):

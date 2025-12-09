@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from scipy.stats import norm
+from scipy.optimize import brentq
 
 # ============================================================================
 # CONFIGURATION
@@ -200,6 +201,66 @@ def compute_charm_exposure(row, spot):
         return exposure
     except:
         return 0.0
+
+def calculate_zero_gamma_level(spot, df_options):
+    """
+    Finds the Zero Gamma Price Level (Gamma Flip) by solving for Total Market Gamma = 0.
+    """
+    try:
+        # Prepare arrays for vectorized calculation
+        strikes = df_options["strike"].values
+        dtes = df_options["dte"].values.astype(float)
+        sigmas = df_options.get("impliedVolatility", 0)
+        
+        # If series, convert to array
+        if hasattr(sigmas, "values"): sigmas = sigmas.values
+        # If scaler, broadcast
+        if np.isscalar(sigmas): sigmas = np.full(len(strikes), sigmas)
+        
+        ois = df_options["openInterest"].values.astype(float)
+        kinds = df_options["kind"].values # 'call' or 'put'
+        
+        # Pre-calc T
+        Ts = np.maximum(0.5, dtes) / 365.0
+        
+        signs = np.where((kinds == 'call') | (kinds == 'CALL') | (kinds == 'C'), 1.0, -1.0)
+        
+        # Objective function
+        def net_gamma_at_price(p):
+            if p <= 1: return -1e9
+            
+            vol_sqrt_t = sigmas * np.sqrt(Ts)
+            # Avoid division by zero
+            vol_sqrt_t[vol_sqrt_t <= 1e-6] = 1e-6
+
+            d1s = (np.log(p / strikes) + (RISK_FREE_RATE + 0.5 * sigmas**2) * Ts) / vol_sqrt_t
+            gammas = norm.pdf(d1s) / (p * vol_sqrt_t)
+            
+            # GEX contribution
+            gex_vals = gammas * (p**2) * ois * signs
+            return np.sum(gex_vals)
+
+        # Bracket search
+        lower = spot * 0.7
+        upper = spot * 1.3
+        
+        val_low = net_gamma_at_price(lower)
+        val_high = net_gamma_at_price(upper)
+        
+        if np.sign(val_low) == np.sign(val_high):
+            lower = spot * 0.5
+            upper = spot * 2.0
+            val_low = net_gamma_at_price(lower)
+            val_high = net_gamma_at_price(upper)
+        
+        if np.sign(val_low) != np.sign(val_high):
+            flip_level = brentq(net_gamma_at_price, lower, upper, xtol=0.1)
+            return flip_level
+        
+        return None
+        
+    except Exception as e:
+        return None
 
 # ============================================================================
 # UTILITIES
@@ -498,10 +559,25 @@ def main():
             # Determine regime
             if net_gex > 0:
                 gex_regime = "STABLE"
-            elif net_gex < -1e9:  # Very negative
-                gex_regime = "VOLATILE"
             else:
-                gex_regime = "NEUTRAL"
+                gex_regime = "VOLATILE"
+
+            # [NEW] Calculate Gamma Flip (Zero Gamma Level) using Root Finding
+            gamma_flip = spot # Default to spot if fails
+            try:
+                # Use only options with relevant OI to speed up / reduce noise?
+                # All options are important for total market gamma.
+                flip_calc = calculate_zero_gamma_level(spot, df)
+                if flip_calc is not None:
+                    gamma_flip = flip_calc
+                else:
+                    gamma_flip = spot # Fallback
+            except:
+                gamma_flip = spot
+                
+            # Fallback legacy logic if root finding failed completely?
+            # No, if root finding fails, it means no zero crossing in range -> very strong dominance.
+            # Stick to spot or maybe use Max Pain as proxy? Spot is safe.
             
             # ================================================================
             # MAX PAIN (all contracts)
@@ -642,6 +718,7 @@ def main():
                 # Aggregate metrics
                 "Net_GEX": int(net_gex),
                 "GEX_Regime": gex_regime,
+                "Gamma_Flip": gamma_flip, # [NEW]
                 "Total_Vanna": int(total_vanna),
                 "Total_Charm": round(total_charm, 2),
                 

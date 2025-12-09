@@ -73,7 +73,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install --upgrade yfinance pandas_datareader requests scipy pyarrow fastparquet matplotlib
+          pip install --upgrade yfinance pandas_datareader requests scipy pyarrow fastparquet matplotlib lxml
 
       - name: Init cache DB
         shell: bash
@@ -311,7 +311,7 @@ jobs:
           force_path_style = true
           no_check_bucket = true
           EOF
-          rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket --include "{*.gz,*.zip}"
+          rclone sync data/processed "r2:${CF_R2_BUCKET}/data/processed" --config rclone.conf --s3-no-check-bucket --include "{*.gz,*.zip}" --exclude "macro_status.csv*" --exclude "ai_context.txt"
           rclone sync data/history   "r2:${CF_R2_BUCKET}/data/history"   --config rclone.conf --s3-no-check-bucket --include "**/{*.gz,*.zip}"
           rclone sync docs           "r2:${CF_R2_BUCKET}/docs"           --config rclone.conf --s3-no-check-bucket
 

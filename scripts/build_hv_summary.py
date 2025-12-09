@@ -75,7 +75,11 @@ def realized_vol(returns: pd.Series, window: int) -> float:
 
 
 def compute_hv_for_symbol(sym: str):
+    first_char = sym[0].upper() if sym and sym[0].isalpha() else "#"
     price_path = os.path.join("data", "prices", f"{sym}.csv")
+    if not os.path.exists(price_path):
+        # Try subdir
+        price_path = os.path.join("data", "prices", first_char, f"{sym}.csv")
     if not os.path.exists(price_path):
         # Kein lokaler Preis -> None zurück (wird später übersprungen)
         return None

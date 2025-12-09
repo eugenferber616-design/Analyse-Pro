@@ -11,7 +11,7 @@ set "PYTHON_EXE=C:\Users\eugen\AppData\Local\Programs\Python\Python313\python.ex
 
 :: 2. Pfad zu deinem Macro-Script
 ::    (falls du macro_bridge_detailed.py oder einen anderen Namen nutzt, hier anpassen)
-set "SCRIPT_FILE=C:\Users\eugen\Desktop\ALGO\Analyse-Pro-main\Analyse-Pro-main\scripts\macro_bridge_universal.py"
+set "SCRIPT_FILE=C:\Users\eugen\Documents\GitHub\Analyse-Pro\scripts\macro_bridge_universal.py"
 
 :: 3. Pfad zu AgenaTrader
 set "AGENA_EXE=C:\Program Files\AgenaTrader\AgenaTrader.exe"

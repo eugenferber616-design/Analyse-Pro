@@ -24,9 +24,33 @@ def fetch_prices():
             return []
 
     # Load Watchlists
-    wl_stocks = read_list(os.getenv("WATCHLIST_STOCKS"))
+    wl_stocks = read_list(os.getenv("WATCHLIST_STOCKS", "watchlists/mylist.txt"))
     wl_etf = read_list(os.getenv("WATCHLIST_ETF"))
     wl = sorted(set(wl_stocks + wl_etf))
+
+    # [NEW] Auto-Discovery from options_v60_ultra.csv
+    # We want to ensure we have prices for everything we have options data for.
+    options_csv_paths = [
+        "data/processed/options_v60_ultra.csv",
+        os.path.join(os.environ.get("USERPROFILE"), "Documents", "AgenaTrader_QuantCache", "options_v60_ultra.csv")
+    ]
+    
+    extra_syms = []
+    for p in options_csv_paths:
+        if os.path.exists(p):
+            print(f"Reading extra symbols from {p}...")
+            try:
+                # Simple CSV parse to avoid pandas dep if not needed, but we have pandas
+                odf = pd.read_csv(p)
+                if "Symbol" in odf.columns:
+                    extra_syms.extend(odf["Symbol"].dropna().astype(str).str.upper().tolist())
+            except Exception as e:
+                print(f"Failed to read {p}: {e}")
+
+    if extra_syms:
+        before_len = len(wl)
+        wl = sorted(set(wl + extra_syms))
+        print(f"Added {len(wl) - before_len} symbols from options CSV.")
     
     print(f"Fetching prices for {len(wl)} symbols (Window: {days} days)...")
     

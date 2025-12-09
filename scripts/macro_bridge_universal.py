@@ -191,6 +191,12 @@ class MacroBridgeFinal:
         return total, msgs
 
     def run(self):
+        # [NEW] Time constraint: 08:00 to 23:00
+        now_h = datetime.now().hour
+        if now_h < 8 or now_h >= 23:
+            print(f"{Fore.YELLOW}[SLEEP] Außerhalb der Handelszeiten (08:00-23:00). Kein Update.{Style.RESET_ALL}")
+            return
+
         self.fetch_data()
         self.calculate_stats()
         score, msgs = self.evaluate_risk()

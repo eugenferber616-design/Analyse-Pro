@@ -396,6 +396,82 @@ def get_dominant_expiry_for_subset(df_subset):
     except:
         return ""
 
+def bs_price(S, K, T, r, sigma, kind="call"):
+    d1 = bs_d1(S, K, T, r, sigma)
+    d2 = d1 - sigma * np.sqrt(T)
+    if kind == "call":
+        return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+    else:
+        return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+
+def calculate_imp_vol(price, S, K, T, r, kind="call"):
+    """
+    Calculate Implied Volatility from option price using Brent's method.
+    """
+    if price <= 0 or T <= 0: return 0.0
+    
+    def obj(sigma):
+        return bs_price(S, K, T, r, sigma, kind) - price
+    
+    try:
+        # Check boundaries
+        low = 0.01
+        high = 5.0
+        
+        if obj(low) * obj(high) > 0:
+            return 0.0 # No solution in range
+            
+        return brentq(obj, low, high, xtol=1e-4)
+    except:
+        return 0.0
+
+def get_robust_atm_iv(df, spot):
+    """
+    Get a robust ATM IV.
+    1. Try median of provider IVs.
+    2. If provider IV is suspicious (< 10%), calculate from Price.
+    """
+    if df.empty or spot <= 0:
+        return 0.0
+        
+    try:
+        # Filter near the money
+        low = spot * 0.95
+        high = spot * 1.05
+        near = df[(df["strike"] >= low) & (df["strike"] <= high)].copy()
+        
+        if near.empty:
+            near = df[(df["strike"] >= spot*0.9) & (df["strike"] <= spot*1.1)].copy()
+            
+        if near.empty:
+            return 0.0
+
+        # Check provider IV
+        valid_ivs = near[near["impliedVolatility"] > 0.01]["impliedVolatility"]
+        median_iv = valid_ivs.median() if not valid_ivs.empty else 0.0
+        
+        # If IV seems too low (e.g. < 5% for equities is rare), recalc
+        if median_iv < 0.10: 
+            # Re-calculate IV from lastPrice for these options
+            calced_ivs = []
+            for _, row in near.iterrows():
+                p = float(row.get("lastPrice", 0))
+                k = float(row["strike"])
+                dte = float(row["dte"])
+                typ = str(row["kind"]).lower()
+                
+                if p > 0 and dte >= 1: # Calculate even for short term
+                    iv = calculate_imp_vol(p, spot, k, dte/365.0, RISK_FREE_RATE, typ)
+                    if iv > 0.01:
+                        calced_ivs.append(iv)
+            
+            if calced_ivs:
+                return np.median(calced_ivs)
+            
+        return median_iv
+    except:
+        return 0.0
+
 # ============================================================================
 # MAIN PROCESSING
 # ============================================================================
@@ -524,7 +600,7 @@ def main():
             
             # Cleanup columns
             needed = ["contractSymbol", "strike", "openInterest", "volume", 
-                      "impliedVolatility", "kind", "expiry", "dte"]
+                      "impliedVolatility", "kind", "expiry", "dte", "lastPrice"]
             for c in needed:
                 if c not in df.columns:
                     df[c] = 0
@@ -754,7 +830,7 @@ def main():
                 "Fresh_Money_Type": fresh_type,
 
                 # ATM IV (for Scanner)
-                "IV_ATM": round(df.loc[((df["strike"] - spot).abs()).idxmin()]["impliedVolatility"], 4) if not df.empty else 0,
+                "IV_ATM": round(get_robust_atm_iv(df, spot), 4),
                 "Dominant_Expiry": dominant_expiry,
 
                 # GHOST / HISTORY

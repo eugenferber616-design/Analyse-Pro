@@ -30,10 +30,13 @@ def fetch_prices():
 
     # [NEW] Auto-Discovery from options_v60_ultra.csv
     # We want to ensure we have prices for everything we have options data for.
-    options_csv_paths = [
-        "data/processed/options_v60_ultra.csv",
-        os.path.join(os.environ.get("USERPROFILE"), "Documents", "AgenaTrader_QuantCache", "options_v60_ultra.csv")
-    ]
+    options_csv_paths = ["data/processed/options_v60_ultra.csv"]
+    
+    # Optional: Check local user QuantCache (Windows specific)
+    user_profile = os.environ.get("USERPROFILE")
+    if user_profile:
+        qc_path = os.path.join(user_profile, "Documents", "AgenaTrader_QuantCache", "options_v60_ultra.csv")
+        options_csv_paths.append(qc_path)
     
     extra_syms = []
     for p in options_csv_paths:

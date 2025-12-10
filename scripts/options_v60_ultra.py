@@ -745,60 +745,61 @@ def main():
             # ================================================================
             # EXPORT GAMMA & OI PROFILE (Strike Level Data)
             # ================================================================
-            try:
-                # [FILTER] Exclude 0DTE/1DTE (<= 1 Day) for structural clarity (User requested)
-                # This reveals the structural profile hidden by massive 0DTE gamma.
-                df_profile = df
-                if 'dte' in df.columns:
-                    # Keep only DTE > 1
-                    filtered = df[df['dte'] > 1]
-                    if not filtered.empty:
-                        df_profile = filtered.copy()
-                    
-                # Group by Strike and Type - Aggregate GEX AND OI
-                grouped = df_profile.groupby(['strike', 'kind'])[['gex', 'openInterest']].sum().unstack(fill_value=0)
+            # EXPORT GAMMA & OI PROFILE (Strike Level Data)
+            # ================================================================
+            # [DEBUG] Removed try-except to expose potential errors in CI
+            print(f"[DEBUG] Exporting profile for {sym}...")
+            
+            # [FILTER] Exclude 0DTE/1DTE (<= 1 Day) for structural clarity (User requested)
+            # This reveals the structural profile hidden by massive 0DTE gamma.
+            df_profile = df
+            if 'dte' in df.columns:
+                # Keep only DTE > 1
+                filtered = df[df['dte'] > 1]
+                if not filtered.empty:
+                    df_profile = filtered.copy()
                 
-                # Setup GEX columns: (gex, call) -> CALL_GEX
-                gex_part = grouped['gex'].copy()
-                gex_part.columns = [str(c).upper() for c in gex_part.columns]
-                
-                # Handle aliases if needed (C/CALL, P/PUT)
-                if 'C' in gex_part.columns: gex_part['CALL'] = gex_part.get('CALL', 0) + gex_part['C']; gex_part.drop(columns=['C'], errors='ignore', inplace=True)
-                if 'P' in gex_part.columns: gex_part['PUT']  = gex_part.get('PUT', 0)  + gex_part['P']; gex_part.drop(columns=['P'], errors='ignore', inplace=True)
-                
-                # Ensure standard names
-                if 'CALL' not in gex_part.columns: gex_part['CALL'] = 0
-                if 'PUT'  not in gex_part.columns: gex_part['PUT']  = 0
-                
-                # Rename for export
-                gex_part.rename(columns={'CALL': 'CALL_GEX', 'PUT': 'PUT_GEX'}, inplace=True)
-                gex_part['TOTAL_GEX'] = gex_part['CALL_GEX'] + gex_part['PUT_GEX']
+            # Group by Strike and Type - Aggregate GEX AND OI
+            grouped = df_profile.groupby(['strike', 'kind'])[['gex', 'openInterest']].sum().unstack(fill_value=0)
+            
+            # Setup GEX columns: (gex, call) -> CALL_GEX
+            gex_part = grouped['gex'].copy()
+            gex_part.columns = [str(c).upper() for c in gex_part.columns]
+            
+            # Handle aliases if needed (C/CALL, P/PUT)
+            if 'C' in gex_part.columns: gex_part['CALL'] = gex_part.get('CALL', 0) + gex_part['C']; gex_part.drop(columns=['C'], errors='ignore', inplace=True)
+            if 'P' in gex_part.columns: gex_part['PUT']  = gex_part.get('PUT', 0)  + gex_part['P']; gex_part.drop(columns=['P'], errors='ignore', inplace=True)
+            
+            # Ensure standard names
+            if 'CALL' not in gex_part.columns: gex_part['CALL'] = 0
+            if 'PUT'  not in gex_part.columns: gex_part['PUT']  = 0
+            
+            # Rename for export
+            gex_part.rename(columns={'CALL': 'CALL_GEX', 'PUT': 'PUT_GEX'}, inplace=True)
+            gex_part['TOTAL_GEX'] = gex_part['CALL_GEX'] + gex_part['PUT_GEX']
 
-                # Setup OI columns: (openInterest, call) -> CALL_OI
-                oi_part = grouped['openInterest'].copy()
-                oi_part.columns = [str(c).upper() for c in oi_part.columns]
-                
-                if 'C' in oi_part.columns: oi_part['CALL'] = oi_part.get('CALL', 0) + oi_part['C']; oi_part.drop(columns=['C'], errors='ignore', inplace=True)
-                if 'P' in oi_part.columns: oi_part['PUT']  = oi_part.get('PUT', 0)  + oi_part['P']; oi_part.drop(columns=['P'], errors='ignore', inplace=True)
-                
-                if 'CALL' not in oi_part.columns: oi_part['CALL'] = 0
-                if 'PUT'  not in oi_part.columns: oi_part['PUT']  = 0
-                
-                oi_part.rename(columns={'CALL': 'CALL_OI', 'PUT': 'PUT_OI'}, inplace=True)
-                oi_part['TOTAL_OI'] = oi_part['CALL_OI'] + oi_part['PUT_OI']
-                
-                # Merge
-                profile_export = pd.concat([gex_part, oi_part], axis=1)
-                
-                # Save to specific profile file
-                profile_filename = f"profile_{sym}.csv"
-                profile_path = os.path.join("data", "processed", "profiles", profile_filename)
-                os.makedirs(os.path.dirname(profile_path), exist_ok=True)
-                profile_export.to_csv(profile_path)
-
-                
-            except Exception as e:
-                print(f"Error exporting profile for {sym}: {e}")
+            # Setup OI columns: (openInterest, call) -> CALL_OI
+            oi_part = grouped['openInterest'].copy()
+            oi_part.columns = [str(c).upper() for c in oi_part.columns]
+            
+            if 'C' in oi_part.columns: oi_part['CALL'] = oi_part.get('CALL', 0) + oi_part['C']; oi_part.drop(columns=['C'], errors='ignore', inplace=True)
+            if 'P' in oi_part.columns: oi_part['PUT']  = oi_part.get('PUT', 0)  + oi_part['P']; oi_part.drop(columns=['P'], errors='ignore', inplace=True)
+            
+            if 'CALL' not in oi_part.columns: oi_part['CALL'] = 0
+            if 'PUT'  not in oi_part.columns: oi_part['PUT']  = 0
+            
+            oi_part.rename(columns={'CALL': 'CALL_OI', 'PUT': 'PUT_OI'}, inplace=True)
+            oi_part['TOTAL_OI'] = oi_part['CALL_OI'] + oi_part['PUT_OI']
+            
+            # Merge
+            profile_export = pd.concat([gex_part, oi_part], axis=1)
+            
+            # Save to specific profile file
+            profile_filename = f"profile_{sym}.csv"
+            profile_path = os.path.join("data", "processed", "profiles", profile_filename)
+            os.makedirs(os.path.dirname(profile_path), exist_ok=True)
+            profile_export.to_csv(profile_path)
+            print(f"[DEBUG] Wrote {profile_path}")
 
             # ================================================================
             # BUILD RESULT

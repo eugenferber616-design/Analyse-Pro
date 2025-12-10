@@ -750,11 +750,9 @@ def main():
             # [DEBUG] Removed try-except to expose potential errors in CI
             print(f"[DEBUG] Exporting profile for {sym}...")
             
-            # [FILTER] Exclude 0DTE/1DTE (<= 1 Day) for structural clarity (User requested)
-            # This reveals the structural profile hidden by massive 0DTE gamma.
+            # [FILTER] Exclude 0DTE/1DTE (<= 1 Day) - User preference
             df_profile = df
             if 'dte' in df.columns:
-                # Keep only DTE > 1
                 filtered = df[df['dte'] > 1]
                 if not filtered.empty:
                     df_profile = filtered.copy()

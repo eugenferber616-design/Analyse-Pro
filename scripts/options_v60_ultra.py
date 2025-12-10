@@ -750,7 +750,7 @@ def main():
             # [DEBUG] Removed try-except to expose potential errors in CI
             print(f"[DEBUG] Exporting profile for {sym}...")
             
-            # [FILTER] Exclude 0DTE/1DTE (<= 1 Day) - User preference
+            # [FILTER] RESTORED: Exclude 0DTE/1DTE (<= 1 Day) for structural clarity
             df_profile = df
             if 'dte' in df.columns:
                 filtered = df[df['dte'] > 1]

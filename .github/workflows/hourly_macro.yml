@@ -2,7 +2,7 @@ name: Hourly Macro Bridge
 
 on:
   schedule:
-    - cron: "0 * * * *"  # Stündlich zur vollen Stunde
+    - cron: "0 7-22 * * *"  # Stündlich von 08:00 bis 23:00 Uhr (CET/UTC+1)
   workflow_dispatch: {}
 
 jobs:

@@ -801,9 +801,35 @@ def main():
             # ================================================================
             # FILTER BY HORIZON
             # ================================================================
+            # ================================================================
+            # FILTER BY HORIZON (Refined for Quarterly Cycles)
+            # ================================================================
+            # Tactical: Short term (<= 35 days) - unchanged
             df_tactical = df[df["dte"] <= DAYS_TACTICAL_MAX]
-            df_medium = df[(df["dte"] >= DAYS_MEDIUM_MIN) & (df["dte"] <= DAYS_MEDIUM_MAX)]
-            df_strategic = df[df["dte"] >= DAYS_STRATEGIC_MIN]
+
+            # Helper for Quarterly Expiries (Mar, Jun, Sep, Dec)
+            # We assume Month 3, 6, 9, 12 are the major cycles.
+            def is_quarterly_month(dt_series):
+                return dt_series.dt.month.isin([3, 6, 9, 12])
+
+            is_q = is_quarterly_month(df["expiry"])
+
+            # Medium: Next Quarterly Expiry (Swing)
+            # Must be > Tactical range to distinguish, but if major expiry is in 20 days, it's technically Tactical.
+            # User wants: "Medium = Quarterly".
+            # Logic: Select Quarterly Expiries with DTE > 20 (to avoid very short term overlap noise).
+            # If next quarterly is in 10 days, it shows up in Tactical. Medium will show the FOLLOWING one?
+            # Let's try: Medium = Quarterly Expiries with DTE > DAYS_TACTICAL_MAX (35).
+            # Max range: up to ~150 days (2 quarters out)?
+            df_medium = df[is_q & (df["dte"] > 35) & (df["dte"] <= 160)]
+
+            # Strategic: Long term Quarterly Expiries (> 160 days)
+            df_strategic = df[is_q & (df["dte"] > 160)]
+            
+            # Fallback: If Medium is empty (e.g. today is Dec 1, next quarterly Dec 20 is Tactical, next Mar 20 is > 35)
+            # If df_medium is empty, it means no quarterly in 35-160 range? Unlikely (Mar is ~90 days away).
+            # But if we correspond to standard cycles, this should work.
+
             
             # ================================================================
             # AGGREGATE METRICS (ALL EXPIRIES)

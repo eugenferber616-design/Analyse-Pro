@@ -213,7 +213,15 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
         # 1) earnings_dates
         try:
             ed = getattr(tk, "earnings_dates", None)
-            df = ed(limit=limit) if callable(ed) else None
+            if callable(ed):
+                df = ed(limit=limit)
+            else:
+                df = ed
+            
+            if df is not None:
+                 if hasattr(df, "head"):
+                     df = df.head(limit)
+
             if df is not None and hasattr(df, "reset_index"):
                 dfe = df.reset_index().rename(columns={
                     "Earnings Date": "report_date",
@@ -222,26 +230,64 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
                     "Surprise(%)": "surprise_pct",
                 })
                 for _, rr in dfe.iterrows():
-                    rd = parse_iso_date(rr.get("report_date"))
-                    rows.append({
-                        "symbol": symbol,
-                        "api_symbol": api_sym,
-                        "period": make_fiscal_period(None, None, str(rd)),
-                        "report_date": rd,
-                        "year": None,
-                        "quarter": None,
-                        "report_time": None,
-                        "eps_actual": rr.get("eps_actual"),
-                        "eps_estimate": rr.get("eps_estimate"),
-                        "surprise_pct": rr.get("surprise_pct"),
-                        "surprise_eps_abs": None,
-                        "revenue_actual": None,
-                        "revenue_estimate": None,
-                        "surprise_rev_pct": None,
-                        "currency": "",
-                        "source": "yahoo.ed",
-                    })
+                    rd_raw = rr.get("report_date")
+                    rd = parse_iso_date(rd_raw)
+                    if rd:
+                        rows.append({
+                            "symbol": symbol,
+                            "api_symbol": api_sym,
+                            "period": make_fiscal_period(None, None, str(rd)),
+                            "report_date": rd,
+                            "year": None,
+                            "quarter": None,
+                            "report_time": None,
+                            "eps_actual": rr.get("eps_actual"),
+                            "eps_estimate": rr.get("eps_estimate"),
+                            "surprise_pct": rr.get("surprise_pct"),
+                            "surprise_eps_abs": None,
+                            "revenue_actual": None,
+                            "revenue_estimate": None,
+                            "surprise_rev_pct": None,
+                            "currency": "",
+                            "source": "yahoo.ed",
+                        })
         except Exception:
+            pass
+
+        # 1b) calendar (Reliable Next Earnings Date)
+        try:
+            cal = getattr(tk, "calendar", None)
+            # Calendar can be a dict or DataFrame depending on yfinance version
+            if cal is not None:
+                # print(f"DEBUG: {symbol} calendar: {cal}")
+                # If dict: {'Earnings Date': [datetime.date(2025, 2, 6)], ...}
+                if isinstance(cal, dict):
+                     dates = cal.get("Earnings Date", [])
+                     for d in dates:
+                         rows.append({
+                            "symbol": symbol,
+                            "api_symbol": api_sym,
+                            "period": make_fiscal_period(None, None, str(d)),
+                            "report_date": str(d),
+                            "year": None,
+                            "quarter": None,
+                            "report_time": None,
+                            "eps_actual": None,
+                            "eps_estimate": cal.get("Earnings Average"),
+                            "surprise_pct": None,
+                            "surprise_eps_abs": None,
+                            "revenue_actual": None,
+                            "revenue_estimate": cal.get("Revenue Average"),
+                            "surprise_rev_pct": None,
+                            "currency": "",
+                            "source": "yahoo.cal",
+                        })
+                # If DataFrame (older versions)
+                elif hasattr(cal, "T"):
+                     # Process dataframe... logic similar to above if needed, but dict is standard now
+                     pass
+        except Exception as e:
+            print(f"  [DEBUG] {symbol} yahoo.cal failed: {e}")
             pass
 
         # 2) quarterly_earnings
@@ -277,7 +323,10 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
         except Exception:
             pass
 
-        # 3) quarterly_financials
+        # 3. quarterly_financials (Revenues/Financials only - NO REPORT DATES)
+        # These dates are FISCAL PERIOD END dates, not EARNINGS REPORT dates.
+        # We fetch them for revenue data/history, but explicitly set report_date=None
+        # so they don't mess up the "Next Earnings" calendar.
         try:
             qf = getattr(tk, "quarterly_financials", None)
             if qf is not None and hasattr(qf, "T"):
@@ -286,12 +335,12 @@ def fetch_yf(symbol: str, limit: int = 16) -> Tuple[List[dict], str]:
                     rev = row.get("Total Revenue") or row.get("TotalRevenue") or row.get("Revenue")
                     if pd.notna(rev):
                         p = make_fiscal_period(None, None, str(idx))
-                        rd = parse_iso_date(str(idx))
+                        # rd = parse_iso_date(str(idx)) # DO NOT USE AS REPORT DATE
                         rows.append({
                             "symbol": symbol,
                             "api_symbol": api_sym,
                             "period": p,
-                            "report_date": rd,
+                            "report_date": None, # Explicitly NONE
                             "year": None,
                             "quarter": None,
                             "report_time": None,
@@ -603,7 +652,7 @@ def main() -> None:
     df = infer_year_quarter_from_period(df)
 
     # Priorisierung & Dedupe
-    priority = {"finnhub": 4, "yahoo.ed": 3, "sec": 2, "yahoo.qe": 1, "yahoo.qf": 0}
+    priority = {"finnhub": 5, "yahoo.cal": 4, "yahoo.ed": 3, "sec": 2, "yahoo.qe": 1, "yahoo.qf": 0}
     
     def get_prio(row):
         base = priority.get(row.get("source"), 0)

@@ -409,6 +409,155 @@ def get_dominant_expiry_for_subset(df_subset):
     except:
         return ""
 
+def fmt_strike(x: float) -> str:
+    """Format strike nicely: 505 or 505.5 (no trailing zeros)"""
+    if x is None or np.isnan(x):
+        return ""
+    return str(int(x)) if abs(x - round(x)) < 1e-9 else f"{x:.1f}".rstrip("0").rstrip(".")
+
+def _dominant_expiry(df: pd.DataFrame):
+    """Find the expiry with highest total OI"""
+    if "expiry" not in df.columns or df.empty:
+        return None
+    g = df.groupby("expiry")["openInterest"].sum()
+    return g.idxmax() if not g.empty else None
+
+def _estimate_tick(strikes: np.ndarray) -> float:
+    """Estimate the strike tick size from available strikes"""
+    strikes = np.unique(strikes[~np.isnan(strikes)])
+    if len(strikes) < 3:
+        return 1.0
+    diffs = np.diff(np.sort(strikes))
+    diffs = diffs[diffs > 1e-9]
+    if len(diffs) == 0:
+        return 1.0
+    return float(np.median(diffs))
+
+def _nearest_strike(target: float, idx: np.ndarray, tol: float):
+    """Find nearest strike within tolerance"""
+    if idx.size == 0:
+        return None
+    j = int(np.argmin(np.abs(idx - target)))
+    if abs(idx[j] - target) <= tol:
+        return float(idx[j])
+    return None
+
+def detect_likely_strategy(df: pd.DataFrame, spot: float) -> str:
+    """
+    [V2] OI-based strategy heuristic (not flow!).
+    Runs on DOMINANT EXPIRY only (prevents cross-expiry mixing).
+    Uses concentration (share of total OI) for robust detection.
+    
+    Priority: Straddle > Strangle > Iron Condor > Spreads > Walls
+    """
+    if df.empty or spot <= 0:
+        return ""
+
+    try:
+        # --- 1) Only dominant expiry (fixes expiry-mix bug) ---
+        exp = _dominant_expiry(df)
+        if exp is not None:
+            d = df[df["expiry"] == exp].copy()
+        else:
+            d = df.copy()
+
+        calls = d[d["kind"] == "call"].copy()
+        puts  = d[d["kind"] == "put"].copy()
+        if calls.empty and puts.empty:
+            return ""
+
+        call_oi = calls.groupby("strike")["openInterest"].sum().sort_values(ascending=False)
+        put_oi  = puts.groupby("strike")["openInterest"].sum().sort_values(ascending=False)
+
+        total_call = float(call_oi.sum()) if not call_oi.empty else 0.0
+        total_put  = float(put_oi.sum()) if not put_oi.empty else 0.0
+
+        strikes_all = np.array(list(set(call_oi.index.tolist() + put_oi.index.tolist())), dtype=float)
+        tick = _estimate_tick(strikes_all)
+        tol = max(tick * 0.51, spot * 0.001)  # half tick or 0.1%
+
+        # Helper: Concentration of a strike (share of total OI)
+        def conc(side_total, side_series, strike):
+            if side_total <= 0 or side_series.empty or strike not in side_series.index:
+                return 0.0
+            return float(side_series[strike]) / float(side_total)
+
+        # Top strikes (not too many)
+        top_calls = np.array(call_oi.head(6).index.values, dtype=float) if not call_oi.empty else np.array([])
+        top_puts  = np.array(put_oi.head(6).index.values, dtype=float)  if not put_oi.empty else np.array([])
+
+        # --- 2) STRADDLE (ATM, same strike for Call & Put) ---
+        if top_calls.size > 0 and not put_oi.empty:
+            atm_call = float(top_calls[np.argmin(np.abs(top_calls - spot))])
+            if abs(atm_call - spot) <= max(spot * 0.01, 2 * tick):  # ~1% or 2 ticks
+                put_strikes = np.array(put_oi.index.values, dtype=float)
+                atm_put = _nearest_strike(atm_call, put_strikes, tol)
+                if atm_put is not None:
+                    c_conc = conc(total_call, call_oi, atm_call)
+                    p_conc = conc(total_put,  put_oi,  atm_put)
+                    # Both must be significant and balanced
+                    if c_conc >= 0.18 and p_conc >= 0.18:
+                        return f"Straddle {fmt_strike(atm_call)}"
+
+        # --- 3) STRANGLE (OTM Put + OTM Call) ---
+        if top_puts.size > 0 and top_calls.size > 0:
+            otm_puts = [s for s in top_puts if s <= spot - 2*tick]
+            otm_calls = [s for s in top_calls if s >= spot + 2*tick]
+            if otm_puts and otm_calls:
+                best_put = max(otm_puts)   # closest below spot
+                best_call = min(otm_calls) # closest above spot
+                if conc(total_put, put_oi, best_put) >= 0.15 and conc(total_call, call_oi, best_call) >= 0.15:
+                    return f"Strangle {fmt_strike(best_put)}/{fmt_strike(best_call)}"
+
+        # --- 4) IRON CONDOR (2 Puts below + 2 Calls above) ---
+        put_below = sorted([s for s in top_puts if s < spot], reverse=True)
+        call_above = sorted([s for s in top_calls if s > spot])
+        if len(put_below) >= 2 and len(call_above) >= 2:
+            put_high, put_low = put_below[0], put_below[1]    # high closer to spot
+            call_low, call_high = call_above[0], call_above[1]
+            if put_low < put_high < spot < call_low < call_high:
+                # Require concentration at all 4 legs
+                if (conc(total_put, put_oi, put_high) >= 0.10 and conc(total_put, put_oi, put_low) >= 0.08 and
+                    conc(total_call, call_oi, call_low) >= 0.10 and conc(total_call, call_oi, call_high) >= 0.08):
+                    return f"Iron Condor {fmt_strike(put_low)}/{fmt_strike(put_high)}/{fmt_strike(call_low)}/{fmt_strike(call_high)}"
+
+        # --- 5) SPREADS (Call dominated or Put dominated) ---
+        ratio = (total_call / total_put) if total_put > 0 else 9.0
+
+        # Bull Call: two relevant Call-Strikes above spot
+        if ratio > 1.3 and len(call_above) >= 2:
+            low, high = call_above[0], call_above[1]
+            if (conc(total_call, call_oi, low) + conc(total_call, call_oi, high)) >= 0.30:
+                return f"Bull Call {fmt_strike(low)}/{fmt_strike(high)}"
+
+        # Bear Put: two relevant Put-Strikes below spot
+        if ratio < 0.7 and len(put_below) >= 2:
+            high, low = put_below[0], put_below[1]
+            if (conc(total_put, put_oi, high) + conc(total_put, put_oi, low)) >= 0.30:
+                return f"Bear Put {fmt_strike(high)}/{fmt_strike(low)}"
+
+        # --- 6) WALLS: dominant strike relative to total OI (fixes wall-check bug) ---
+        if top_calls.size > 0:
+            c_top = top_calls[0]
+            if conc(total_call, call_oi, c_top) >= 0.12:
+                return f"Call Wall {fmt_strike(c_top)}"
+
+        if top_puts.size > 0:
+            p_top = top_puts[0]
+            if conc(total_put, put_oi, p_top) >= 0.12:
+                return f"Put Wall {fmt_strike(p_top)}"
+
+        # --- 7) FALLBACK: Structure based on PCR ---
+        if ratio > 1.2:
+            return "Bullish Structure"
+        elif ratio < 0.8:
+            return "Bearish Structure"
+        else:
+            return "Neutral Structure"
+    except:
+        return ""
+
+
 def bs_price(S, K, T, r, sigma, kind="call"):
     d1 = bs_d1(S, K, T, r, sigma)
     d2 = d1 - sigma * np.sqrt(T)
@@ -885,6 +1034,13 @@ def main():
                     np.sign(net_gex) +                   # GEX regime
                     np.sign(spot - gamma_flip)           # Spot vs Flip
                 ) if tac_gamma_magnet > 0 and gamma_flip > 0 else 0,
+
+                # [NEW] Likely institutional strategy detected from OI patterns - per Horizon
+                "Likely_Strategy_Tac": detect_likely_strategy(df_tactical, spot),
+                "Likely_Strategy_Med": detect_likely_strategy(df_medium, spot),
+                "Likely_Strategy_Str": detect_likely_strategy(df_strategic, spot),
+                # Keep default (Tactical) for backward compatibility
+                "Likely_Strategy": detect_likely_strategy(df_tactical, spot),
 
                 # GHOST / HISTORY
                 "Prev_Tac_Call_Wall": 0,

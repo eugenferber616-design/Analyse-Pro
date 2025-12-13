@@ -359,11 +359,11 @@ def get_oi_magnet(df, spot, max_pct=0.30):
 
 def get_smart_wall(df, spot, kind="call", max_pct=0.30):
     """
-    Find the strongest call/put wall based on OPEN INTEREST (Classic/Liquidity Logic)
-    Reverted from GEX logic.
+    Find the strongest call/put wall based on OPEN INTEREST (Classic/Liquidity Logic).
+    [FIX 4] Returns (strike, oi, gex) for clarity.
     """
     if df.empty:
-        return 0, 0
+        return 0, 0, 0
     
     try:
         low = spot * (1.0 - max_pct)
@@ -383,14 +383,15 @@ def get_smart_wall(df, spot, kind="call", max_pct=0.30):
                 sub = df[(df["strike"] <= spot) & (df["kind"] == "put")]
                 
             if sub.empty:
-                return 0, 0
+                return 0, 0, 0
         
         # Sort by Open Interest (Descending)
         top = sub.sort_values("openInterest", ascending=False).iloc[0]
         
-        return top["strike"], top["gex"] # Return GEX just for info/metrics, but selection is OI
+        # [FIX 4] Return OI explicitly for transparency
+        return top["strike"], int(top["openInterest"]), top["gex"]
     except:
-        return 0, 0
+        return 0, 0, 0
 
 def get_dominant_expiry_for_subset(df_subset):
     """
@@ -498,11 +499,18 @@ def main():
     # -------------------------------------------------------------------------
     # 0. HISTORY / GHOST WALLS (Smart Logic)
     # -------------------------------------------------------------------------
+    # LOAD HISTORY FOR "GHOST" LEVELS (Previous Day's Walls)
+    # -------------------------------------------------------------------------
     prev_map = {}
     history_file = "data/processed/options_v60_ultra.csv"
     if os.path.exists(history_file):
         try:
             df_old = pd.read_csv(history_file)
+            
+            # [FIX 1] Stable history: Sort by Date and take latest per Symbol
+            if "Date" in df_old.columns and "Symbol" in df_old.columns:
+                df_old["Date"] = pd.to_datetime(df_old["Date"], errors="coerce")
+                df_old = df_old.sort_values(["Symbol", "Date"]).groupby("Symbol").tail(1)
             
             # Helper to safely get value (handle NaN)
             def safe_get(row, col):
@@ -512,17 +520,18 @@ def main():
 
             # Iterate old rows to build prev_map
             for _, row in df_old.iterrows():
+                # [FIX 1] Check column exists BEFORE accessing
+                if "Symbol" not in row:
+                    continue
                 s_sym = str(row["Symbol"]).upper().strip()
-                if "Symbol" not in row: continue
                 
                 # Check Date of the OLD record
-                old_date = str(row.get("Date", "1900-01-01"))
+                old_date = str(row.get("Date", "1900-01-01"))[:10]  # Truncate to YYYY-MM-DD
                 
                 entry = {}
                 
                 if old_date == today_ymd:
                     # RERUN SAME DAY: Keep the EXISTING Prev_ values
-                    # Do NOT shift current to prev, otherwise we lose true history
                     entry["Prev_Tac_Call_Wall"] = safe_get(row, "Prev_Tac_Call_Wall")
                     entry["Prev_Tac_Put_Wall"]  = safe_get(row, "Prev_Tac_Put_Wall")
                     entry["Prev_Med_Call_Wall"] = safe_get(row, "Prev_Med_Call_Wall")
@@ -545,7 +554,8 @@ def main():
 
     print(f"[Quant Pro] Processing {len(tickers)} symbols with multi-horizon analysis...")
     
-    now = datetime.utcnow()
+    # [FIX 2] Use date-only for DTE calculation to avoid off-by-one
+    today_date = datetime.utcnow().date()
     results = []
     
     for sym in tickers:
@@ -583,7 +593,8 @@ def main():
             for e_str in exps:
                 try:
                     dt = datetime.strptime(e_str, "%Y-%m-%d")
-                    dte = (dt - now).days
+                    # [FIX 2] Use date-only DTE calculation
+                    dte = (dt.date() - today_date).days
                     if dte < 0:
                         continue
                     
@@ -623,8 +634,16 @@ def main():
             df["strike"] = pd.to_numeric(df["strike"], errors='coerce')
             df["impliedVolatility"] = pd.to_numeric(df["impliedVolatility"], errors='coerce').fillna(0)
             
+            # [FIX 7] Performance: Filter before Greeks calculation
+            # Remove options with zero OI (no liquidity, no hedging impact)
+            # and limit to DTE<=365 (LEAPS rarely impact near-term hedging)
+            df = df[(df["openInterest"] > 0) & (df["dte"] <= 365) & (df["strike"].notna())]
+            
+            if df.empty:
+                continue
+            
             # ================================================================
-            # CALCULATE ALL GREEKS
+            # CALCULATE ALL GREEKS (now on filtered, smaller dataset)
             # ================================================================
             df["gex"] = df.apply(lambda row: compute_gex(row, spot), axis=1)
             df["vanna"] = df.apply(lambda row: compute_vanna_exposure(row, spot), axis=1)
@@ -677,24 +696,24 @@ def main():
             # TACTICAL METRICS (≤35 days) - Day Trading
             # ================================================================
             tac_gamma_magnet = get_oi_magnet(df_tactical, spot)
-            tac_call_wall, tac_call_gex = get_smart_wall(df_tactical, spot, "call")
-            tac_put_wall, _ = get_smart_wall(df_tactical, spot, "put")
+            tac_call_wall, tac_call_oi, tac_call_gex = get_smart_wall(df_tactical, spot, "call")
+            tac_put_wall, tac_put_oi, _ = get_smart_wall(df_tactical, spot, "put")
             tac_expiry = get_dominant_expiry_for_subset(df_tactical)
             
             # ================================================================
             # MEDIUM METRICS (36-90 days) - Swing Trading
             # ================================================================
             med_gamma_magnet = get_oi_magnet(df_medium, spot)
-            med_call_wall, med_call_gex = get_smart_wall(df_medium, spot, "call")
-            med_put_wall, _ = get_smart_wall(df_medium, spot, "put")
+            med_call_wall, med_call_oi, med_call_gex = get_smart_wall(df_medium, spot, "call")
+            med_put_wall, med_put_oi, _ = get_smart_wall(df_medium, spot, "put")
             med_net_gex = df_medium["gex"].sum() if not df_medium.empty else 0
             med_expiry = get_dominant_expiry_for_subset(df_medium)
             
             # ================================================================
             # STRATEGIC METRICS (>90 days) - Position Trading
             # ================================================================
-            strat_call_target, _ = get_smart_wall(df_strategic, spot, "call", max_pct=0.5)
-            strat_put_target, _ = get_smart_wall(df_strategic, spot, "put", max_pct=0.5)
+            strat_call_target, _, _ = get_smart_wall(df_strategic, spot, "call", max_pct=0.5)
+            strat_put_target, _, _ = get_smart_wall(df_strategic, spot, "put", max_pct=0.5)
             strat_expiry = get_dominant_expiry_for_subset(df_strategic)
             
             # ================================================================
@@ -829,12 +848,16 @@ def main():
                 "Tac_Call_Wall": tac_call_wall,
                 "Tac_Put_Wall": tac_put_wall,
                 "Tac_Call_GEX": int(tac_call_gex),
+                "Tac_Call_OI": tac_call_oi,  # [NEW] Explicit OI for transparency
+                "Tac_Put_OI": tac_put_oi,    # [NEW]
                 
                 # Medium (36-90 days) - SWING
                 "Med_Gamma_Magnet": med_gamma_magnet,
                 "Med_Call_Wall": med_call_wall,
                 "Med_Put_Wall": med_put_wall,
                 "Med_Net_GEX": int(med_net_gex),
+                "Med_Call_OI": med_call_oi,  # [NEW]
+                "Med_Put_OI": med_put_oi,    # [NEW]
                 
                 # Strategic (>90 days)
                 "Strat_Call_Target": strat_call_target,
@@ -851,7 +874,17 @@ def main():
 
                 # ATM IV (for Scanner)
                 "IV_ATM": round(get_robust_atm_iv(df, spot), 4),
-                "Dominant_Expiry": dominant_expiry,
+                # [FIX 5] Removed duplicate Dominant_Expiry here
+                
+                # [FIX 6] BiasScore: -3 to +3 based on Magnet + GEX Regime + Gamma Flip
+                # Component 1: Magnet vs Spot (+1 if magnet > spot, -1 if below)
+                # Component 2: Net GEX sign (+1 if positive/stable, -1 if negative/volatile)
+                # Component 3: Spot vs Gamma Flip (+1 if above flip, -1 if below)
+                "Bias_Score": int(
+                    np.sign(tac_gamma_magnet - spot) +  # Magnet direction
+                    np.sign(net_gex) +                   # GEX regime
+                    np.sign(spot - gamma_flip)           # Spot vs Flip
+                ) if tac_gamma_magnet > 0 and gamma_flip > 0 else 0,
 
                 # GHOST / HISTORY
                 "Prev_Tac_Call_Wall": 0,

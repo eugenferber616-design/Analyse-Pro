@@ -21,3 +21,4 @@ venv/
 # ── Daten (ALLES ignorieren)
 data/
 
+.github/workflows/image.png

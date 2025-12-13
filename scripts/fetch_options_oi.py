@@ -53,23 +53,24 @@ def fetch_options_for_symbol(sym):
       - spot (float)
       - summary_dict (dict)
       - totals_list (list of dicts per expiry)
+      - strikes_list (list of dicts per strike/expiry) [NEW]
     """
     try:
         tk = yf.Ticker(sym)
         # Force fetch history to get spot
         hist = tk.history(period="5d")
         if hist.empty:
-            return False, 0, {}, []
+            return False, 0, {}, [], []
         
         spot = hist["Close"].iloc[-1]
         
         try:
             expiries = tk.options
         except:
-            return False, spot, {}, []
+            return False, spot, {}, [], []
             
         if not expiries:
-            return False, spot, {}, []
+            return False, spot, {}, [], []
             
         all_opts = []
         totals_by_exp = []
@@ -117,7 +118,7 @@ def fetch_options_for_symbol(sym):
                 continue
                 
         if not all_opts:
-            return False, spot, {}, totals_by_exp
+            return False, spot, {}, totals_by_exp, []
 
         # Concat
         df = pd.concat(all_opts, ignore_index=True)
@@ -148,11 +149,28 @@ def fetch_options_for_symbol(sym):
             "hv_current": 0.16 # Default hook, will be enriched later if available
         }
         
-        return True, spot, summary, totals_by_exp
+        # [NEW] Build per-strike data for enrichment
+        # Group by (expiry, strike) and pivot call/put OI
+        strikes_list = []
+        for e_str in df["expiry"].unique():
+            exp_df = df[df["expiry"] == e_str]
+            for strike in exp_df["strike"].unique():
+                strike_df = exp_df[exp_df["strike"] == strike]
+                call_oi = strike_df[strike_df["kind"] == "call"]["openInterest"].sum()
+                put_oi = strike_df[strike_df["kind"] == "put"]["openInterest"].sum()
+                strikes_list.append({
+                    "symbol": sym,
+                    "expiry": e_str,
+                    "strike": strike,
+                    "call_oi": int(call_oi),
+                    "put_oi": int(put_oi)
+                })
+        
+        return True, spot, summary, totals_by_exp, strikes_list
         
     except Exception as e:
         print(f"Error fetching {sym}: {e}")
-        return False, 0, {}, []
+        return False, 0, {}, [], []
 
 def main():
     os.makedirs("data/processed", exist_ok=True)
@@ -162,12 +180,14 @@ def main():
     
     summary_list = []
     totals_list_flat = []
+    strikes_list_flat = []  # [NEW]
     
     for sym in tickers:
-        ok, spot, summ, totals = fetch_options_for_symbol(sym)
+        ok, spot, summ, totals, strikes = fetch_options_for_symbol(sym)
         if ok:
             summary_list.append(summ)
             totals_list_flat.extend(totals)
+            strikes_list_flat.extend(strikes)  # [NEW]
             print(f"  {sym}: {summ['total_call_oi']+summ['total_put_oi']} OI")
         else:
             print(f"  {sym}: No data")
@@ -198,6 +218,13 @@ def main():
         df_tot_ag = df_tot_ag.rename(columns={"expiry": "max_oi_expiry", "total_oi": "max_oi_value"})
         df_tot_ag.to_csv("data/processed/options_oi_totals.csv", index=False)
         print("Saved data/processed/options_oi_totals.csv")
+    
+    # 4. [NEW] Save per-strike OI data
+    if strikes_list_flat:
+        df_strikes = pd.DataFrame(strikes_list_flat)
+        out_strikes = "data/processed/options_oi_by_strike.csv"
+        df_strikes.to_csv(out_strikes, index=False)
+        print(f"Saved {out_strikes} ({len(df_strikes)} rows)")
 
 if __name__ == "__main__":
     main()

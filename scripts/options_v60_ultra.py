@@ -4,16 +4,16 @@
 Options Data V90 QUANT PRO - Professional Quant Metrics
 --------------------------------------------------------
 Multi-timeframe analysis with:
-- Tactical (≤14 days): Day trading / Scalping
-- Medium (15-60 days): Swing Trading
-- Strategic (>60 days): Position Trading
+- Tactical (≤35 days): Day trading / Scalping (includes next Monthly)
+- Medium (36-90 days): Swing Trading
+- Strategic (>90 days): Position Trading
 
 Metrics:
 - GEX (Gamma Exposure) per horizon
 - Net GEX (aggregate, positive = stable, negative = volatile)
 - Vanna (delta sensitivity to IV changes)
 - Charm (delta decay over time)
-- Gamma Magnet per horizon
+- OI Magnet per horizon (Strike with highest Open Interest - NOT Gamma!)
 - Call/Put Walls per horizon
 - Max Pain
 """
@@ -328,9 +328,12 @@ def calculate_max_pain(df, strikes):
     except:
         return 0
 
-def get_gamma_magnet(df, spot, max_pct=0.30):
+def get_oi_magnet(df, spot, max_pct=0.30):
     """
-    Find the strike with highest TOTAL OPEN INTEREST (Liquidity Magnet)
+    Find the strike with highest TOTAL OPEN INTEREST (Liquidity Magnet / OI Pin).
+    
+    NOTE: This is NOT a Gamma-based metric! It finds where the most contracts are,
+    which can act as a "pin" or "magnet" due to dealer hedging dynamics.
     Reverted to OI logic per user request ("first variant").
     """
     if df.empty:
@@ -671,24 +674,24 @@ def main():
             max_pain = calculate_max_pain(df, rel_strikes)
             
             # ================================================================
-            # TACTICAL METRICS (≤14 days) - Day Trading
+            # TACTICAL METRICS (≤35 days) - Day Trading
             # ================================================================
-            tac_gamma_magnet = get_gamma_magnet(df_tactical, spot)
+            tac_gamma_magnet = get_oi_magnet(df_tactical, spot)
             tac_call_wall, tac_call_gex = get_smart_wall(df_tactical, spot, "call")
             tac_put_wall, _ = get_smart_wall(df_tactical, spot, "put")
             tac_expiry = get_dominant_expiry_for_subset(df_tactical)
             
             # ================================================================
-            # MEDIUM METRICS (15-60 days) - Swing Trading
+            # MEDIUM METRICS (36-90 days) - Swing Trading
             # ================================================================
-            med_gamma_magnet = get_gamma_magnet(df_medium, spot)
+            med_gamma_magnet = get_oi_magnet(df_medium, spot)
             med_call_wall, med_call_gex = get_smart_wall(df_medium, spot, "call")
             med_put_wall, _ = get_smart_wall(df_medium, spot, "put")
             med_net_gex = df_medium["gex"].sum() if not df_medium.empty else 0
             med_expiry = get_dominant_expiry_for_subset(df_medium)
             
             # ================================================================
-            # STRATEGIC METRICS (>60 days) - Position Trading
+            # STRATEGIC METRICS (>90 days) - Position Trading
             # ================================================================
             strat_call_target, _ = get_smart_wall(df_strategic, spot, "call", max_pct=0.5)
             strat_put_target, _ = get_smart_wall(df_strategic, spot, "put", max_pct=0.5)
@@ -821,19 +824,19 @@ def main():
                 "Dominant_Call_Expiry": dominant_call_expiry,
                 "Dominant_Put_Expiry": dominant_put_expiry,
                 
-                # Tactical (≤14 days)
+                # Tactical (≤35 days)
                 "Tac_Gamma_Magnet": tac_gamma_magnet,
                 "Tac_Call_Wall": tac_call_wall,
                 "Tac_Put_Wall": tac_put_wall,
                 "Tac_Call_GEX": int(tac_call_gex),
                 
-                # Medium (15-60 days) - SWING
+                # Medium (36-90 days) - SWING
                 "Med_Gamma_Magnet": med_gamma_magnet,
                 "Med_Call_Wall": med_call_wall,
                 "Med_Put_Wall": med_put_wall,
                 "Med_Net_GEX": int(med_net_gex),
                 
-                # Strategic (>60 days)
+                # Strategic (>90 days)
                 "Strat_Call_Target": strat_call_target,
                 "Strat_Put_Target": strat_put_target,
                 
